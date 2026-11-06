@@ -20,6 +20,7 @@ import {
   messagesOf,
   readTitles,
   renderLookup,
+  titleTextOf,
   toIso,
   truncateText,
 } from '../lib/service.mjs';
@@ -113,10 +114,18 @@ function fakeQuery(overrides = {}) {
         'child-1': '子代理：检查标注脚本',
         'grand-1': '孙代理：跑一次抽样',
       };
+      // 0.2.2 的形状：观察里的 `title` 是 SessionTitleSnapshot 对象，不是字符串。
+      const snapshotOf = (text) => ({
+        title: text,
+        messageSeqs: [1],
+        source: { kind: 'fallback' },
+        eventSeq: 14,
+        updatedAt: 1_700_000_950_000,
+      });
       return ids.map((sessionId) =>
         titles[sessionId] === undefined
           ? { status: 'fulfilled', sessionId, value: { session: { id: sessionId } } }
-          : { status: 'fulfilled', sessionId, value: { session: { id: sessionId }, title: titles[sessionId] } },
+          : { status: 'fulfilled', sessionId, value: { session: { id: sessionId }, title: snapshotOf(titles[sessionId]) } },
       );
     },
     async readSurface(sessionId) {
@@ -166,13 +175,26 @@ test('flattenDescendants 递归展开、父在前、深度正确', () => {
   assert.deepEqual(flattenDescendants(undefined), []);
 });
 
+test('titleTextOf 认得 0.2.2 的 SessionTitleSnapshot 对象，也容忍纯字符串', () => {
+  assert.equal(titleTextOf({ title: '简单算术问题', messageSeqs: [8], source: { kind: 'provider' }, eventSeq: 18, updatedAt: 1 }), '简单算术问题');
+  assert.equal(titleTextOf('纯字符串标题'), '纯字符串标题');
+  assert.equal(titleTextOf(undefined), '');
+  assert.equal(titleTextOf({}), '');
+  assert.equal(titleTextOf({ title: 42 }), '');
+});
+
 test('readTitles 逐条吞掉 rejected 观察，整批失败也不抛', async () => {
   const titles = await readTitles(
     {
       async readTitleSnapshots(ids) {
         return [
           { status: 'rejected', sessionId: ids[0], reason: new Error('boom') },
-          { status: 'fulfilled', sessionId: ids[1], value: { session: { id: ids[1] }, title: '有标题' } },
+          // 0.2.2：title 是 SessionTitleSnapshot 对象。
+          {
+            status: 'fulfilled',
+            sessionId: ids[1],
+            value: { session: { id: ids[1] }, title: { title: '有标题', messageSeqs: [], source: { kind: 'fallback' }, eventSeq: 1, updatedAt: 2 } },
+          },
         ];
       },
     },
@@ -219,6 +241,70 @@ test('messagesOf 取最后 N 条', () => {
     messages.map((message) => message.seq),
     [2, 4],
   );
+});
+
+test('messagesOf 按 data.source.kind 滤掉 0.2.2 的框架注入（runtime-context / skill-catalog / time-context）', () => {
+  // 0.2.2 的注入事件：文本前缀不一定命中老的前缀表，但 source.kind 一定会。
+  const runtimeContext = {
+    seq: 9,
+    type: 'user/message',
+    time: 1_700_000_910_000,
+    data: {
+      role: 'user',
+      source: { kind: 'runtime-context', form: 'snapshot' },
+      content: [{ type: 'text', text: 'Current runtime context. This snapshot supersedes earlier runtime-context snapshots.\n\nCurrent working directory: …' }],
+    },
+  };
+  const skillCatalog = {
+    seq: 10,
+    type: 'user/message',
+    time: 1_700_000_920_000,
+    data: {
+      role: 'user',
+      source: { kind: 'skill-catalog', form: 'catalog' },
+      content: [{ type: 'text', text: '<system-reminder>\nA skill is a reusable set of task-specific instructions.' }],
+    },
+  };
+  // 0.2.1-alpha.1 起新增的 time-context：文本首行 `Time sampled while preparing …`。
+  const timeContext = {
+    seq: 11,
+    type: 'user/message',
+    time: 1_700_000_930_000,
+    data: {
+      role: 'user',
+      source: { kind: 'time-context', form: 'snapshot' },
+      content: [{ type: 'text', text: 'Time sampled while preparing turn 1, step 1: 2026-11-06T10:49:08+08:00[Asia/Shanghai]\nBrowser time zone for this request: Asia/Shanghai.' }],
+    },
+  };
+  // 真实用户消息：source.kind === 'user'，必须保留。
+  const realUser = {
+    seq: 8,
+    type: 'user/message',
+    time: 1_700_000_900_000,
+    data: {
+      role: 'user',
+      source: { kind: 'user', rpcId: 'x' },
+      content: [{ type: 'text', text: '用一句话回答：1+1 等于几？' }],
+    },
+  };
+  const messages = messagesOf({ events: [runtimeContext, skillCatalog, timeContext, realUser, ASSISTANT_EVENT] }, 10);
+  assert.deepEqual(
+    messages.map((message) => [message.seq, message.role]),
+    [
+      [8, 'user'],
+      [2, 'assistant'],
+    ],
+  );
+});
+
+test('messagesOf 对没有 source 字段的老日志仍按文本前缀滤注入', () => {
+  const injected = {
+    seq: 12,
+    type: 'user/message',
+    time: 1_700_000_940_000,
+    data: { content: [{ type: 'text', text: 'Time sampled while preparing turn 2, step 1: 2026-11-06T11:00:00+08:00[Asia/Shanghai]' }] },
+  };
+  assert.deepEqual(messagesOf({ events: [injected, USER_EVENT] }, 10).map((message) => message.seq), [1]);
 });
 
 test('truncateText 只在超长时截断并保留原长提示', () => {

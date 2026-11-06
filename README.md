@@ -247,9 +247,15 @@ continue;   // ← 回到同一 turn/step 的模型请求
 | web 沙箱（真实 HTTP） | RPC `share.create` → 公开页 200（约 4.5 KB，含消息与只读徽标）→ `?download=1` 返回 `attachment` → 未知 token 404 → `POST` 405 → 撤销后再访问 404；CSP 头存在 | 通过 |
 | UI 沙箱 | 真实浏览器：标题栏分享/复制按钮可见；分享对话框创建/复制/停止全流程；重试覆盖层在无失败态时是隐藏占位（注册成功）、composer 区域正常 | 通过 |
 | 2.0.0 拆分回归 | 单测 101/101；headless 真实 Loader 两工具均可用；UI 沙箱「设置 → 插件 → 会话增强」显示**包含的组件 共 3 个 · 3 运行中**，三行标题/描述分别来自包根、`share/locale/`、`retry/locale/` | 通过 |
+| 2.1.0 / DSH 0.2.2-rc.1 | 单测 **106/106**；devkit web 沙箱（真实 Chrome + 真实 sub2api/deepseek-flash）：三个 client 半进页面清单、控制台 0 错误；复制会话 ID toast；分享链接 200 且渲染标题+消息；「停止 → 重试」turn 正常完成；`time-context` 注入不再出现在消息里 | 通过 |
 
 > 0.2.0 回归里抓到并修掉两个真 bug：`share.create` 拿不到地址时先落盘留下孤儿记录；
 > `shares.json` 带 UTF-8 BOM 时被当成损坏文件导致分享功能锁死。
+>
+> 2.1.0（DSH 0.2.2-rc.1 回归）修掉三处，注意分层：**只有 `time-context` 注入过滤是跟新版组合的适配**
+> （该行 0.2.1-alpha.1 起随附组合新增）；另两处是**0.2.1 时代就已存在、本次真实回归才暴露的潜伏缺陷**
+> ——`agent.followup()` 的 user 消息漏 `role`（重试必失败 **且**该会话之后读不出来）、
+> `SessionTitleObservation.title` 被当成字符串（标题从来没渲染过）。详见 CHANGELOG 的 2.1.0 一节。
 
 ## 开发笔记
 

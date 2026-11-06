@@ -51,7 +51,13 @@ function fakeQuery() {
     },
     async readTitleSnapshots(ids) {
       const titles = { 'session-ok': '会话增强：分享功能', 'child-1': '子代理：写测试' };
-      return ids.map((sessionId) => ({ status: 'fulfilled', sessionId, value: { session: { id: sessionId }, ...(titles[sessionId] === undefined ? {} : { title: titles[sessionId] }) } }));
+      // 0.2.2：观察里的 title 是 SessionTitleSnapshot 对象，不是字符串。
+      const snapshotOf = (text) => ({ title: text, messageSeqs: [1], source: { kind: 'fallback' }, eventSeq: 14, updatedAt: 1_700_000_950_000 });
+      return ids.map((sessionId) => ({
+        status: 'fulfilled',
+        sessionId,
+        value: { session: { id: sessionId }, ...(titles[sessionId] === undefined ? {} : { title: snapshotOf(titles[sessionId]) }) },
+      }));
     },
     async readSurface() {
       return {

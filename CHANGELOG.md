@@ -3,6 +3,66 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 2.1.0 — 2026-11-06
+
+本轮工作在 DSH **0.2.2-rc.1** 的真实 Loader + 真实浏览器里做了完整回归，结果是两层改动，
+**别混为一谈**：
+
+1. **适配 0.2.2-rc.1（跟新版组合的行为变化）**：随附组合自 `0.2.1-alpha.1` 起新增了一行
+   `time-context`，它把「本轮时间采样」作为一条 `user/message` 注入（文本首行
+   `Time sampled while preparing turn N, step M: …`）。本插件的注入过滤表不认识它，于是它出现在
+   「最近消息」与分享页里（每条上千字符的框架噪音）。现在**优先按 `data.source.kind` 过滤**
+   （`runtime-context` / `skill-catalog` / `time-context`），文本前缀只作为**没有 source 的老日志**兜底。
+2. **顺带修掉的潜伏缺陷（0.2.1 时代就已存在，本次真实回归才暴露）**：下面两条**不是 0.2.2 引入的
+   回归**，也不是 0.2.2 改了协议 —— 是插件长期违反随附包契约，这一版按 0.2.2 源码的类型与校验对齐。
+
+> 为什么这次才抓到：这两条在「离线单测全绿 + 只点一下按钮」的验证里都看不出来，必须真的跑
+> 「停止 → 重试 → 分享」整条链路，且要有真实凭据让重试真的发出去（无凭据时提供方先报缺 key，
+> 轮不到 `missing field 'role'` 这一层）。
+
+### 修复（潜伏缺陷 ①：`agent.followup()` 的 user 消息漏 `role`）
+
+`agent.followup(input)` 的声明一直是 `UserMessage`（`{ id, role: 'user', content, source }`，
+`@deepseek-ai/dsh-llm/message`；`dsh-session` 的 `MESSAGE_ROLE_BY_TYPE` 校验在 `0.2.1-rc.5` 的
+`packages/core/session/src/index.ts` 里就已存在），原实现只给了 `id` / `content` / `source`。
+后果有两层：
+
+1. 请求里的这条消息没有 role → 提供方直接 400（实测 sub2api：
+   `Failed to deserialize the JSON body … missing field 'role'`），即**「停止后重试」必然失败**，
+   界面显示成「模型调用失败」；
+2. 它已经落进会话日志 → 该日志在 seed/load 边界被 `dsh-session` 拒绝
+   （`seed user/message at index N message must have role "user"`）→ **这条会话此后再也读不出来**：
+   `sessionQuery.readSurface()` 与 `readTitleSnapshots()` 走同一条日志校验，于是分享页显示
+   「0 条消息」、标题退回「会话分享」，`session_lookup` 里消息与标题同样为空。
+
+修复：消息形状由导出的 `createRetryUserMessage()` 统一构造，单测直接钉住（含 `id` 每次唯一 ——
+inbox 按 `message.id` 去重）。
+
+### 修复（潜伏缺陷 ②：标题从来没渲染过）
+
+`sessionQuery.readTitleSnapshots()` 返回的 `SessionTitleObservation.title` 是
+**`SessionTitleSnapshot` 对象**（`{ title, messageSeqs, source, eventSeq, updatedAt }`），不是字符串
+（`0.2.1-rc.5` 的 `packages/session-query/session-query/src/index.ts` 即如此）。旧代码按
+`typeof value.title === 'string'` 读 → **所有标题都被丢掉**：分享页 h1 永远是「会话分享」、
+`session_lookup` 永远显示「（尚未生成标题）」。现在按 0.2.2 的形状取 `value.title.title`
+（同时容忍已经是字符串的观察）。
+
+### 验证
+
+- 单测：`npm test` → **106/106**（2.0.3 为 101；新增 5 条：标题对象形状、`source.kind` 过滤、
+  无 source 日志的前缀兜底、`createRetryUserMessage` 形状与 id 唯一性、停止后重试的 followup 载荷断言）。
+- devkit **web 沙箱** `uib-ui`（web 模板 + headless Chrome；沙箱 `DSH_HOME` 内放真实凭据 store，
+  真跑 sub2api/deepseek-flash）：
+  - 三个 client 半都进页面清单（`dsh-session-id@2.1.0 is loaded`），**控制台 0 错误**；
+  - 「复制会话 ID」→ toast「会话 ID 已复制」（`aria-label="复制会话 ID"` 的 title 即会话 id）；
+  - 「分享会话」→ 创建链接 → `GET /share/<token>` 返回 200，页面渲染**标题 + 消息**；
+  - 「停止生成」→ 覆盖层按钮 `重试 — 已停止 —— 点击重试` → 点击后 turn 3 正常完成（800 字回答），
+    修复前这次重试会被提供方 400 拒掉并显示「模型调用失败」；
+  - 修完后重跑「停止 → 重试 → 分享」：分享页标题「地球到月球的平均距离」、5 条消息、
+    `time-context` 噪音消失。
+- 复现与定位用的原始证据（修复前）：分享页 `0 条消息`；会话日志里
+  `user/message seq=36 {"content":[…],"source":{"kind":"user"}}`——**没有 `role` 键**。
+
 ## 2.0.2 — 2026-10-28
 
 修「停止后重试」会**弄崩官方消息队列 dock** 的问题（界面报 `slot entry crashed in

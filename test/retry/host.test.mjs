@@ -18,7 +18,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { installTurnRetry as apply, sessionIdOf, shouldGate } from '../../lib/retry/host.mjs';
+import {
+  CONTINUE_PROMPT,
+  createRetryUserMessage,
+  installTurnRetry as apply,
+  sessionIdOf,
+  shouldGate,
+} from '../../lib/retry/host.mjs';
 import { RPC_CHANNEL } from '../../lib/retry/rpc.mjs';
 
 /**
@@ -47,10 +53,12 @@ function makeCtx(options = {}) {
 
   const services = {
     agents:
-      options.roots === undefined
+      options.roots === undefined && options.agent === undefined
         ? undefined
         : {
-            roots: () => options.roots,
+            roots: () => options.roots ?? (options.agent === undefined ? [] : [options.agent]),
+            // driveRetry 走 `agents.get(id)` 拿 live agent；真实服务有这个入口。
+            get: (id) => (options.agent !== undefined && options.agent.session?.id === id ? options.agent : undefined),
           },
     typertGateway:
       options.provideGateway === false
@@ -371,5 +379,52 @@ test('同一会话重复失败不会堆积多个闸门（旧的被 superseded）
 
   await callRpc(env.routes, 'cancel', { sessionId: 's6' });
   assert.equal(await second, undefined);
+  env.runCleanups();
+});
+
+test('createRetryUserMessage 是完整的 DSH UserMessage（role 不能漏，且 id 每次唯一）', () => {
+  const first = createRetryUserMessage();
+  const second = createRetryUserMessage();
+
+  // DSH 0.2.2 的 `agent.followup(input: UserMessage)` 形状：
+  // `{ id, role: 'user', content, source }`。少 role 时事件仍会落进日志，
+  // 但 dsh-session 在 seed/load 边界会拒绝它，整条会话从此读不出来。
+  assert.equal(first.role, 'user');
+  assert.equal(typeof first.id, 'string');
+  assert.ok(first.id.length > 0);
+  assert.deepEqual(first.content, [{ type: 'text', text: CONTINUE_PROMPT }]);
+  assert.deepEqual(first.source, { kind: 'user' });
+  assert.notEqual(first.id, second.id, 'inbox 按 message.id 去重，重复会抛 already pending');
+});
+
+test('停止后重试：followup 拿到的消息带 role="user"（0.2.2 日志校验要求）', async () => {
+  const captured = [];
+  const agent = {
+    session: { id: 's7' },
+    async followup(input) {
+      captured.push(input);
+    },
+  };
+  const env = makeCtx({ hasLiveClient: true, roots: [agent], agent });
+  apply(env.ctx);
+
+  // 记录一次「用户点了停止」：turn/end 的 reason 是 aborted + user。
+  env.handlers.get('session/event')({ id: 's7' }, {
+    type: 'turn/end',
+    data: { turn: 3, reason: { kind: 'aborted', reason: { kind: 'user' } } },
+  });
+
+  const pending = await callRpc(env.routes, 'pending', { sessionId: 's7' });
+  assert.equal(pending.value.recoverable?.turn, 3);
+
+  const retried = await callRpc(env.routes, 'retry', { sessionId: 's7' });
+  assert.deepEqual(retried, { ok: true, value: { retried: true, via: 'followup' } });
+
+  assert.equal(captured.length, 1);
+  const input = captured[0];
+  assert.equal(input.role, 'user');
+  assert.deepEqual(input.content, [{ type: 'text', text: CONTINUE_PROMPT }]);
+  assert.deepEqual(input.source, { kind: 'user' });
+  assert.equal(typeof input.id, 'string');
   env.runCleanups();
 });

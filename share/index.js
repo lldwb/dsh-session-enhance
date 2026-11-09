@@ -1,5 +1,5 @@
 /**
- * 「会话分享」组件的 Host 半（Loader 行 `dsh-session-inspect/share`）。
+ * 「会话分享」组件的 Host 半（Loader 行 `dsh-session-enhance/share`）。
  *
  * ## 它做什么
  *
@@ -7,12 +7,12 @@
  *    要求**时也能分享；
  * 2. 免登录只读路由 `GET /share/<token>`：24 字节随机 token、每次请求现读会话日志
  *    （撤销即 404）、严格 CSP、页面不含会话 id / cwd / token / 工具参数；
- * 3. 认证 RPC 通道 `/dsh-session-inspect`（`connection.admit` 校验）：浏览器半用的
+ * 3. 认证 RPC 通道 `/dsh-session-enhance`（`connection.admit` 校验）：浏览器半用的
  *    `share.status` / `share.create` / `share.revoke`。
  *
  * ## 存储
  *
- * 分享记录写在 `<DSH_HOME>/dsh-session-inspect/shares.json`，只存
+ * 分享记录写在 `<DSH_HOME>/dsh-session-enhance/shares.json`，只存
  * `{ sessionId, createdAt, includeDescendants }`——不存会话内容，撤销即彻底失效。
  *
  * ## 依赖
@@ -28,17 +28,17 @@
  * 启用/停用"，而这三件事互相依赖（没有 webServer 就没有可分享的链接），拆开只会
  * 制造半残状态。
  *
- * @module dsh-session-inspect/share
+ * @module dsh-session-enhance/share
  */
 
 import { BUILD } from '../lib/build.mjs';
 import { mountShareRoutes } from '../lib/public.mjs';
 import { mountShareRpc } from '../lib/rpc.mjs';
-import { createShareStore, legacySharesFilePath, resolveDshHome, sharesFilePath } from '../lib/shares.mjs';
+import { createShareStore, legacySharesFilePaths, resolveDshHome, sharesFilePath } from '../lib/shares.mjs';
 import { buildShareTool } from '../lib/tools/share.mjs';
 
 /** Cordis 插件名：与 Loader 行的 `name` 一致。 */
-export const name = 'dsh-session-inspect/share';
+export const name = 'dsh-session-enhance/share';
 
 /** `tools` 是硬依赖：注册工具是这个组件的存在理由。 */
 export const inject = ['tools'];
@@ -77,11 +77,11 @@ export function apply(ctx) {
    */
   const serviceOf = (key) => (typeof ctx?.get === 'function' ? ctx.get(key) : undefined);
 
-  // 2.x 的旧记录目录作为只读回退：改名（3.0.0）不迁移、不删除用户已有的分享记录。
+  // 历史包名（3.x / 2.x）的记录目录作为只读回退：改名不迁移、不删除用户已有的分享记录。
   const dshHome = resolveDshHome();
   const store = createShareStore({
     storeFile: sharesFilePath(dshHome),
-    legacyStoreFile: legacySharesFilePath(dshHome),
+    legacyStoreFiles: legacySharesFilePaths(dshHome),
   });
   const sessionQuery = () => serviceOf('sessionQuery');
   const sessions = () => serviceOf('sessions');
@@ -102,10 +102,10 @@ export function apply(ctx) {
   };
 
   const definition = buildShareTool({ store, sessionQuery, originOf });
-  ctx.effect(() => ctx.tools.register(definition), 'dsh-session-inspect: tool session_share');
+  ctx.effect(() => ctx.tools.register(definition), 'dsh-session-enhance: tool session_share');
 
   mountShareRpc(ctx, { store, sessionQuery, sessions, originOf });
   mountShareRoutes(ctx, { store, sessionQuery, sessions, logger: ctx.logger });
 
-  ctx.logger?.info?.(`dsh-session-inspect/share: ready (1 tool, build=${BUILD})`);
+  ctx.logger?.info?.(`dsh-session-enhance/share: ready (1 tool, build=${BUILD})`);
 }

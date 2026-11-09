@@ -3,6 +3,44 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 4.0.0 — 2026-11-09
+
+**破坏性改名（major）**：包名/仓库名 `dsh-session-inspect` → `dsh-session-enhance`，
+显示名回到 **「会话增强」**（英文 Session Enhance）。三个组件与工具名不变。
+
+### 为什么改
+
+这个包是「一包三组件」的会话能力合集：会话检视（按 ID 查会话/子代理 + 复制 ID）、会话分享、
+失败重试。3.0 按"唯一有使用痕迹的能力"改成了 `dsh-session-inspect` /「会话检视」，
+但它是按**组件**命名、丢掉了包整体的定位；用户明确要求名称应是「会话增强」——即按
+**包**的用途命名，三个组件都算在内。所以 4.0 用 `dsh-session-enhance` /「会话增强」。
+
+### 变更（结构性）
+
+- 包名/仓库名改为 `dsh-session-enhance`；三个 Loader 行 `id`/`name` 同步改为
+  `dsh-session-enhance` / `dsh-session-enhance/share` / `dsh-session-enhance/retry`。
+- 分享 RPC 前缀 `/dsh-session-inspect` → `/dsh-session-enhance`；重试通道 `/dsh-turn-retry`
+  **刻意保留旧名**。
+- 浏览器半模块 id、locale 命名空间、卡片标题（包根「会话增强」/ Session Enhance）同步。
+- 分享记录目录改为 `<DSH_HOME>/dsh-session-enhance/`；按 **3.x → 2.x** 顺序只读回退历史
+  `shares.json`，首次写入复制到新路径、旧文件原样保留。
+- 构建戳 `2026-11-09.3`，`CLIENT_VERSION=4.0.0`。
+
+### 用户要做什么
+
+1. 从 profile 的 `dsh.profile.bundles` 与 `dependencies` 删掉旧包 `dsh-session-inspect`
+   （或更旧的 `dsh-session-id`），删除 `profiles/<profile>/plugins/<旧包名>/`；
+2. 用新包重新 `dsh plugin add dsh-session-enhance`（或本地目录 link）后 `pnpm install`；
+3. 曾停用「失败重试」组件的：补丁层里的 `- id: dsh-session-inspect-retry` 要改成
+   `- id: dsh-session-enhance-retry`（本机当前是启用状态，无此 override）；
+4. 重启 DSH（client 清单是服务器启动时的快照）。
+
+### 保留兼容（刻意不改）
+
+- 重试 RPC 前缀 `/dsh-turn-retry`；`RETRY_SOURCE_KIND = 'dsh-session-id'`；followup 消息 id
+  前缀 `dsh-session-id-retry-`；界面 `data-*` 选择器；`exports` 子路径结构。
+- 历史 CHANGELOG 条目（2.x / 3.x 的包名与显示名）保持原样，作为当时的事实记录。
+
 ## 3.1.0 — 2026-11-09
 
 ### 修「模型不可用/失败之后看不到重试按钮」

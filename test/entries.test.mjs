@@ -6,7 +6,7 @@
  * 组件」显示几行，属于沙箱回归的范围（`devkit_sandbox_compose` / UI 沙箱），
  * `node --test` 看不到。
  *
- * @module dsh-session-inspect/test/entries
+ * @module dsh-session-enhance/test/entries
  */
 
 import assert from 'node:assert/strict';
@@ -60,9 +60,9 @@ function mockCtx(services = {}) {
 }
 
 test('三个入口都导出 name / inject / apply，且 name 与 Loader 行的 specifier 对应', () => {
-  assert.equal(copyEntry.name, 'dsh-session-inspect');
-  assert.equal(shareEntry.name, 'dsh-session-inspect/share');
-  assert.equal(retryEntry.name, 'dsh-session-inspect/retry');
+  assert.equal(copyEntry.name, 'dsh-session-enhance');
+  assert.equal(shareEntry.name, 'dsh-session-enhance/share');
+  assert.equal(retryEntry.name, 'dsh-session-enhance/retry');
 
   for (const entry of [copyEntry, shareEntry, retryEntry]) {
     assert.equal(typeof entry.apply, 'function');
@@ -86,7 +86,7 @@ test('会话 ID 行只注册 session_lookup', () => {
 
 test('分享行只注册 session_share，并挂上两条路由（RPC 前缀 + 公开页）', async () => {
   const previousHome = process.env.DSH_HOME;
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-session-inspect-entries-'));
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-session-enhance-entries-'));
   process.env.DSH_HOME = home;
   try {
     const ctx = mockCtx({ sessionQuery: {}, sessions: {} });
@@ -105,7 +105,7 @@ test('分享行只注册 session_share，并挂上两条路由（RPC 前缀 + �
     const listed = await ctx.collected.tools[0].execute({ action: 'list' }, {});
     assert.equal(listed.ok, true);
     assert.deepEqual(listed.shares, []);
-    assert.equal(fs.existsSync(path.join(home, 'dsh-session-inspect', 'shares.json')), false, '纯查询不该落盘');
+    assert.equal(fs.existsSync(path.join(home, 'dsh-session-enhance', 'shares.json')), false, '纯查询不该落盘');
   } finally {
     if (previousHome === undefined) delete process.env.DSH_HOME;
     else process.env.DSH_HOME = previousHome;

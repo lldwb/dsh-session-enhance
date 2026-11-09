@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { createShareStore, legacySharesFilePath, mintToken, sharesFilePath, TOKEN_PATTERN } from '../lib/shares.mjs';
+import { createShareStore, legacySharesFilePaths, mintToken, sharesFilePath, TOKEN_PATTERN } from '../lib/shares.mjs';
 import { escapeHtml, formatTime, renderErrorDocument, renderShareDocument, SHARE_MESSAGE_LIMIT } from '../lib/render.mjs';
 import { loadShareView } from '../lib/shareview.mjs';
 import { tokenFromPath } from '../lib/public.mjs';
@@ -21,7 +21,7 @@ import { validateSchemaNode, validateValue } from './strict-schema.mjs';
 
 /** 建一个临时目录。 */
 function temporaryDir() {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-session-inspect-test-'));
+  return fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-session-enhance-test-'));
 }
 
 /** 一个已存在会话的假查询服务。 */
@@ -50,7 +50,7 @@ function fakeQuery() {
       };
     },
     async readTitleSnapshots(ids) {
-      const titles = { 'session-ok': '会话检视：分享功能', 'child-1': '子代理：写测试' };
+      const titles = { 'session-ok': '会话增强：分享功能', 'child-1': '子代理：写测试' };
       // 0.2.2：观察里的 title 是 SessionTitleSnapshot 对象，不是字符串。
       const snapshotOf = (text) => ({ title: text, messageSeqs: [1], source: { kind: 'fallback' }, eventSeq: 14, updatedAt: 1_700_000_950_000 });
       return ids.map((sessionId) => ({
@@ -132,33 +132,59 @@ test('createShareStore：带 UTF-8 BOM 的文件仍可读（Windows 编辑器常
   }
 });
 
-test('createShareStore：3.0 改名后 2.x 旧目录只读回退，首次写入复制到新路径（旧文件不动）', () => {
+test('createShareStore：4.0 改名后按 3.x → 2.x 顺序只读回退历史目录，首次写入复制到新路径', () => {
   const dir = temporaryDir();
   const storeFile = sharesFilePath(dir);
-  const legacyFile = legacySharesFilePath(dir);
+  const [legacy3x, legacy2x] = legacySharesFilePaths(dir);
   try {
-    fs.mkdirSync(path.dirname(legacyFile), { recursive: true });
+    // 2.x 与 3.x 都有历史记录：优先读 3.x（较新）。
+    fs.mkdirSync(path.dirname(legacy2x), { recursive: true });
     fs.writeFileSync(
-      legacyFile,
-      JSON.stringify({
-        version: 1,
-        shares: { 'legacytoken0123456789': { sessionId: 'session-old', createdAt: 1, includeDescendants: false } },
-      }),
+      legacy2x,
+      JSON.stringify({ version: 1, shares: { 'legacytoken2x0123456789': { sessionId: 'session-2x', createdAt: 1, includeDescendants: false } } }),
       'utf8',
     );
-    const store = createShareStore({ storeFile, legacyStoreFile: legacyFile });
-    assert.equal(store.error(), null);
-    assert.equal(store.loadedFromLegacy(), true);
-    assert.equal(store.get('legacytoken0123456789').sessionId, 'session-old');
+    fs.mkdirSync(path.dirname(legacy3x), { recursive: true });
+    fs.writeFileSync(
+      legacy3x,
+      JSON.stringify({ version: 1, shares: { 'legacytoken3x0123456789': { sessionId: 'session-3x', createdAt: 2, includeDescendants: false } } }),
+      'utf8',
+    );
 
-    // 第一次写入：记录落到新文件（旧记录被带上），旧文件原样保留。
+    const store = createShareStore({ storeFile, legacyStoreFiles: legacySharesFilePaths(dir) });
+    assert.equal(store.error(), null);
+    assert.equal(store.loadedFromLegacy(), legacy3x, '优先使用较新的 3.x 记录');
+    assert.equal(store.get('legacytoken3x0123456789').sessionId, 'session-3x');
+    // 3.x 文件存在时不应回退读 2.x（只读一份）。
+    assert.equal(store.get('legacytoken2x0123456789'), undefined);
+
+    // 第一次写入：记录落到新文件（带上读到的旧记录），旧文件原样保留。
     const created = store.create({ sessionId: 'session-new' });
-    assert.ok(fs.existsSync(storeFile), '新记录应写入 3.0 的新路径');
-    assert.equal(fs.readFileSync(legacyFile, 'utf8').includes('legacytoken0123456789'), true, '旧文件不应被改写');
-    const fresh = createShareStore({ storeFile, legacyStoreFile: legacyFile });
-    assert.equal(fresh.loadedFromLegacy(), false, '新文件存在后不再回退到旧文件');
-    assert.equal(fresh.get('legacytoken0123456789').sessionId, 'session-old');
+    assert.ok(fs.existsSync(storeFile), '新记录应写入 4.0 的新路径');
+    assert.equal(fs.readFileSync(legacy3x, 'utf8').includes('legacytoken3x0123456789'), true, '旧文件不应被改写');
+    const fresh = createShareStore({ storeFile, legacyStoreFiles: legacySharesFilePaths(dir) });
+    assert.equal(fresh.loadedFromLegacy(), null, '新文件存在后不再回退到历史文件');
+    assert.equal(fresh.get('legacytoken3x0123456789').sessionId, 'session-3x');
     assert.equal(fresh.get(created.token).sessionId, 'session-new');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('createShareStore：3.x 目录不存在时回退到 2.x 历史记录', () => {
+  const dir = temporaryDir();
+  const storeFile = sharesFilePath(dir);
+  const [, legacy2x] = legacySharesFilePaths(dir);
+  try {
+    fs.mkdirSync(path.dirname(legacy2x), { recursive: true });
+    fs.writeFileSync(
+      legacy2x,
+      JSON.stringify({ version: 1, shares: { 'legacytoken2x0123456789': { sessionId: 'session-2x', createdAt: 1, includeDescendants: false } } }),
+      'utf8',
+    );
+    const store = createShareStore({ storeFile, legacyStoreFiles: legacySharesFilePaths(dir) });
+    assert.equal(store.loadedFromLegacy(), legacy2x);
+    assert.equal(store.get('legacytoken2x0123456789').sessionId, 'session-2x');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -264,7 +290,7 @@ test('presentShare 拼出 URL，origin 缺失时为空串', () => {
 test('loadShareView：产出标题、消息与子代理（不含 id/cwd）', async () => {
   const loaded = await loadShareView({ sessionQuery: fakeQuery(), sessionId: 'session-ok', includeDescendants: true });
   assert.equal(loaded.ok, true);
-  assert.equal(loaded.view.title, '会话检视：分享功能');
+  assert.equal(loaded.view.title, '会话增强：分享功能');
   assert.equal(loaded.view.messages.length, 2, '工具结果应被过滤');
   assert.deepEqual(loaded.view.messages.map((message) => message.role), ['user', 'assistant']);
   assert.equal(loaded.view.subagents.length, 1);

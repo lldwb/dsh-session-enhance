@@ -1,5 +1,5 @@
 /**
- * `dsh-session-id` —— 浏览器半：会话标题栏的「分享会话」「复制会话 ID」与 composer 的
+ * `dsh-session-inspect` —— 浏览器半：会话标题栏的「分享会话」「复制会话 ID」与 composer 的
  * 「失败重试」三个组件。
  *
  * ## 这个 bundle 里有三个组件
@@ -31,7 +31,7 @@
  * ## 为什么是手写 bundle（而不是构建产物）
  *
  * `dsh.client` 只要求 `exports["./client"]` 解析出一个 JS 文件，DSH 的模块清单会在
- * `/plugins/dsh-session-id/client.js` 上提供它。而 `require` 只能解析 shell 静态模块表
+ * `/plugins/dsh-session-inspect/client.js` 上提供它。而 `require` 只能解析 shell 静态模块表
  * 里的两个说明符（见工厂里的注释），所以这里没有 `import`、没有 JSX 语法、没有任何
  * npm 依赖：元素一律用 `jsx`/`jsxs` 工厂函数构造，样式一律内联（CSS 变量 + fallback），
  * 不引任何模块私有 CSS class —— 那些 class 随版本变，且只在浏览器里才会发现它们没了。
@@ -55,7 +55,7 @@
  * ## 分享为什么走 RPC、停止为什么要两段式
  *
  * 分享的存储、token 与免登录只读页都在 Host 半（浏览器插件拿到不磁盘、也拿不到
- * webServer 的 origin），所以浏览器半只调 `/dsh-session-id` 前缀路由上的
+ * webServer 的 origin），所以浏览器半只调 `/dsh-session-inspect` 前缀路由上的
  * `share.status` / `share.create` / `share.revoke`。分享 url 由 Host 拼好返回，
  * 本文件**不拼任何 url**（只有「下载 HTML」按契约追加一个 `download=1` 查询参数）。
  *
@@ -64,7 +64,7 @@
  * footer 里：第一次点变「确认停止分享」，再点才真正执行，旁边给「取消」。
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-session-id',
+  id: 'dsh-session-inspect',
   factory: (require) => {
     var module = { exports: {} };
     var exports = module.exports;
@@ -153,7 +153,7 @@ window.__ModuleLoader__.load({
      * 与 Loader 行 id 同名是刻意的：一个字符串既能当槽位词典键，也便于在开发者工具
      * 里定位。它是 locale 服务里的独立键，不与其他命名空间冲突。
      */
-    const NS = 'dsh-session-id';
+    const NS = 'dsh-session-inspect';
 
     /**
      * 槽位名：会话标题栏右侧那组小按钮（「⋯」也在里面）。
@@ -186,7 +186,7 @@ window.__ModuleLoader__.load({
      * 客户端不能 import Host 包，所以这个字符串在这里重复一遍；改名时必须同时改
      * `lib/rpc.mjs` 里的前缀，否则按钮点了只会报「操作失败」。
      */
-    const RPC_CHANNEL = '/dsh-session-id';
+    const RPC_CHANNEL = '/dsh-session-inspect';
 
     /**
      * 图标按钮的样式。
@@ -297,7 +297,7 @@ window.__ModuleLoader__.load({
      *
      * 浏览器半是**包级一份**（`dsh.client` 不能按行拆），只要承载它的第一行还在，
      * 它就一定被加载。而 Host 侧的「会话分享」「失败重试」是两条独立的 Loader 行，
-     * 可以在「设置 → 插件 → 会话增强 → 包含的组件」里单独停用。停用之后它们注册的
+     * 可以在「设置 → 插件 → 会话检视 → 包含的组件」里单独停用。停用之后它们注册的
      * RPC 前缀路由不再存在，请求会落到 SPA fallback —— 于是按钮还挂在标题栏 /
      * composer 上，点一下却永远失败。这才是"组件拆了但边界没生效"。
      *
@@ -305,7 +305,7 @@ window.__ModuleLoader__.load({
      *
      * Host 的 prefix 路由只在对应行启用时注册。实测（2026-10-28，真实 Loader）：
      *
-     * - 组件在 → `POST /dsh-session-id`（或 `/dsh-turn-retry`）返回 **200** + 业务信封；
+     * - 组件在 → `POST /dsh-session-inspect`（或 `/dsh-turn-retry`）返回 **200** + 业务信封；
      * - 组件停用 → 落到 SPA fallback，返回 **405**、空 body。
      *
      * 所以 `200 = 在`、`405 = 停用`。其它状态（401 / 5xx / 网络异常）无法判定，
@@ -911,7 +911,7 @@ window.__ModuleLoader__.load({
        * 在控制台执行 `document.documentElement.dataset.dshTurnRetry` 就能确认页面里
        * 加载的到底是哪一版，不必翻网络面板。
        */
-      const CLIENT_VERSION = '0.2.3';
+      const CLIENT_VERSION = '3.0.0';
 
       /**
        * 槽位：composer card 内部的绝对定位锚点。
@@ -1782,7 +1782,7 @@ window.__ModuleLoader__.load({
      */
     function apply(ctx) {
       const t = ctx.locale.bind(NS);
-      ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-session-id: 词典');
+      ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-session-inspect: 词典');
 
       // 组件能力探测：只探测一次，结果写进 capabilityStore；两个 UI 贡献都订阅它。
       //

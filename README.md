@@ -1,13 +1,15 @@
-# 会话增强 · dsh-session-id
+# 会话检视 · dsh-session-inspect
 
-**一个插件包，三个可单独启停的组件**：复制会话 ID、会话分享、失败重试。
+**一个插件包，三个可单独启停的组件**：按 ID 检视会话（标题栏附带复制会话 ID）、会话分享、失败重试。
 
-> 开源（MIT）。仓库地址：<https://github.com/lldwb/dsh-session-id>
+> 开源（MIT）。仓库地址：<https://github.com/lldwb/dsh-session-inspect>
 >
-> 插件显示名是**会话增强**；包名与仓库名保留 `dsh-session-id`（沿用已有安装路径与链接，
-> 不改名不会让 `dsh plugin add`、`link:` 依赖或外部引用失效）。
+> **3.0.0 起包名/仓库名由 `dsh-session-id` 改为 `dsh-session-inspect`，显示名由「会话增强」
+> 改为「会话检视」**——真实使用数据里，这个包唯一有使用痕迹的能力是「按 ID 查看会话与它的
+> 子代理」；分享长期零使用、重试组件被单独停用，旧名只覆盖三组件之一且只描述"拿到 id"这个
+> 手段。改名理由、迁移步骤与刻意保留的兼容标识见下方 [3.0 改名](#30-改名)。
 >
-> **2.0.0 起拆成三个 Loader 行**：「设置 → 插件 → 会话增强 → 包含的组件」里会看到 3 个
+> **2.0.0 起拆成三个 Loader 行**：「设置 → 插件 → 会话检视 → 包含的组件」里会看到 3 个
 > 组件，每个都有独立开关。1.x 只有一行（三件事捆在一起，只能整体开关）。
 >
 > **原「失败重试」插件（`dsh-turn-retry`）已于 1.0.0 并入本插件**：它的目录、profile 行与
@@ -17,25 +19,55 @@
 
 | 组件（界面显示名） | Loader 行 | 提供什么 |
 |---|---|---|
-| 会话增强 | `dsh-session-id` | 会话标题栏复制按钮 + 工具 `session_lookup`（按 id 查会话与全部子代理） |
-| 会话分享 | `dsh-session-id/share` | 标题栏分享按钮 + 工具 `session_share` + 免登录只读页 `/share/<token>` |
-| 失败重试 | `dsh-session-id/retry` | composer 的「重试」覆盖层 + `agent/request-error` 闸门 |
+| 会话检视 | `dsh-session-inspect` | 会话标题栏复制按钮 + 工具 `session_lookup`（按 id 查会话与全部子代理） |
+| 会话分享 | `dsh-session-inspect/share` | 标题栏分享按钮 + 工具 `session_share` + 免登录只读页 `/share/<token>` |
+| 失败重试 | `dsh-session-inspect/retry` | composer 的「重试」覆盖层 + `agent/request-error` 闸门 |
 
-> **为什么第一个组件叫「会话增强」而不是「会话 ID」**：浏览器半（三块界面）只能挂在
+> **为什么第一个组件叫「会话检视」而不是「会话 ID」**：浏览器半（三块界面）只能挂在
 > **精确包名**那一行上——`@deepseek-ai/dsh-client-modules` 的 `locatePkgJson()` 只接受
 > 精确包名，子路径 specifier 直接返回 `undefined`，那一行就不会有 client 半。所以第一行
-> 必须是 `dsh-session-id`，它的组件标题只能等于包根 `locale/`（也就是卡片标题「会话增强」）。
+> 必须是 `dsh-session-inspect`，它的组件标题只能等于包根 `locale/`（也就是卡片标题「会话检视」）。
 > 另外两行是子路径，各自有 `share/locale/`、`retry/locale/`，所以能叫「会话分享」「失败重试」。
 
 三部分互相独立：只装 Host 半也能查会话，只装浏览器半也能复制 id / 分享 / 重试。
 
-### 停用某个组件之后
+## 3.0 改名
+
+| 项 | 2.x | 3.0.0 |
+|---|---|---|
+| 包名 / 仓库 | `dsh-session-id` | `dsh-session-inspect` |
+| 显示名 | 会话增强 | 会话检视（英文 Session Inspector） |
+| Loader 行 id | `dsh-session-id` / `-share` / `-retry` | `dsh-session-inspect` / `-share` / `-retry` |
+| 分享 RPC 通道 | `/dsh-session-id` | `/dsh-session-inspect` |
+| 分享记录目录 | `<DSH_HOME>/dsh-session-id/` | `<DSH_HOME>/dsh-session-inspect/`（旧文件只读回退） |
+
+**升级必须做的**（破坏性，major）：
+
+1. 从 profile 的 `dsh.profile.bundles` 与 `dependencies` 里删掉旧包 `dsh-session-id`，删掉
+   `profiles/<profile>/plugins/dsh-session-id/`；
+2. 用新包重新 `dsh plugin add dsh-session-inspect`（或本地目录 link），执行 `pnpm install`；
+3. **如果你曾停用「失败重试」组件**：profile 补丁层里的 `- id: dsh-session-id-retry` 必须改成
+   `- id: dsh-session-inspect-retry`，否则新包插入的 retry 行不会被这条 override 命中，
+   重试组件会**静默重新启用**；
+4. 重启 DSH（client 清单是服务器启动时的快照，刷新页面不够）。
+
+**刻意保留的兼容标识**（改名不改它们，避免无谓回归与历史断层）：
+
+- 重试动作通道仍是 `/dsh-turn-retry`（并入自 `dsh-turn-retry` 时就是旧名）；
+- `RETRY_SOURCE_KIND = 'dsh-session-id'` 与 followup 消息 id 前缀 `dsh-session-id-retry-`；
+- 界面选择器 `data-session-share` / `data-turn-retry` / `data-dsh-turn-retry-button` 等；
+- `exports` 子路径（`./share`、`./retry`、`./client`、`./locale/*.json`）结构不变。
+
+分享记录不会丢：新路径没有文件时会只读加载 2.x 的 `shares.json`；一旦有新写入就落到新路径，
+旧文件原样保留（回滚到 2.x 也能继续读）。
+
+## 停用某个组件之后
 
 浏览器半只有一份（`dsh.client` 是包级声明，不能按行拆），它会跟着第一行一起加载。为了
 不让被停用的组件留下"点了没反应"的按钮，浏览器半启动时会各发一次**能力探测**请求：
 
 - Host 的 RPC 前缀路由只在对应行启用时才注册；
-- 组件在 → `POST /dsh-session-id`（或 `/dsh-turn-retry`）返回 **200**（缺参数的业务信封也是 200）；
+- 组件在 → `POST /dsh-session-inspect`（或 `/dsh-turn-retry`）返回 **200**（缺参数的业务信封也是 200）；
 - 组件停用 → 请求落到 SPA fallback，返回 **405**。
 
 探测不阻塞 UI 注册、最多退避重试 3 次；判定不了的（网络异常、非 200/405）一律乐观保留，
@@ -43,14 +75,14 @@
 
 - 停用**会话分享** → 标题栏分享按钮换成隐藏占位（`data-session-share="disabled"`）；
 - 停用**失败重试** → 覆盖层换成隐藏占位（`data-turn-retry="disabled"`），按钮不渲染；
-- 停用**会话增强**（第一行）→ 三块界面随 client 半一起消失，`session_lookup` 也不可用；
+- 停用**会话检视**（第一行）→ 三块界面随 client 半一起消失，`session_lookup` 也不可用；
 - 重新启用后刷新页面，按钮自动回来（探测只做一次，不写任何持久缓存）。
 
 ## 安装
 
 ```powershell
-git clone https://github.com/lldwb/dsh-session-id.git
-cd dsh-session-id
+git clone https://github.com/lldwb/dsh-session-inspect.git
+cd dsh-session-inspect
 # 装进当前 profile（例如 desktop）
 dsh plugin add .
 ```
@@ -135,7 +167,8 @@ origin；两者都拿不到时创建会明确报错，而不是给一个打不�
 - 点击后图标旋转、按钮置灰；重试会再跑一整轮，期间按钮消失。
 - 没有可重试状态时覆盖层不可见，官方按钮原样可用。
 - **等待上限 120 秒**：失败挂起后没人点就自动放行，按原有语义让这一轮以错误结束。
-- **孤儿保护**：开闸后 5 秒内若没有任何浏览器半来查 `pending`（典型：插件刚装、页面还没刷新），立刻按原生语义结束，不会白等两分钟。
+- **孤儿保护**：开闸后 5 秒内若没有任何浏览器半来查 `pending`（典型：插件刚装、页面还没刷新），
+  立刻按原生语义结束，不会白等两分钟。
 - 状态**按会话各一份**，两个会话互不影响；只在「看起来可能可重试」时才向 Host 查一次，其余时候零请求。
 - 等待期间每 8 秒向 Host 复查一次「闸门还在吗」；Host 已经没有闸门时按钮会立即收起，避免「按钮还在但点了没用」。
 
@@ -202,7 +235,7 @@ Host 半的 `execute(args, exec)` 则从 `exec.agent.session.id` 取调用方会
 会话内容）。
 
 创建/查询/撤销这些**有副作用**的接口则走认证通道：`connection.admit(req)` 校验后才会
-执行，浏览器半用 `ctx.connection.rpc.call('/dsh-session-id', …)` 调用。
+执行，浏览器半用 `ctx.connection.rpc.call('/dsh-session-inspect', …)` 调用。
 
 ### 重试怎么做到"不追加消息"
 
@@ -234,20 +267,22 @@ continue;   // ← 回到同一 turn/step 的模型请求
 
 ### 存储
 
-`<DSH_HOME>/dsh-session-id/shares.json`，只存 `{ sessionId, createdAt, includeDescendants }`。
+`<DSH_HOME>/dsh-session-inspect/shares.json`，只存 `{ sessionId, createdAt, includeDescendants }`。
 原子写（临时文件 + rename）。文件损坏时**拒绝写入并报错**而不是覆盖（避免把用户已有的
-分享记录清空）；读取时容忍 UTF-8 BOM（Windows 编辑器常见）。
+分享记录清空）；读取时容忍 UTF-8 BOM（Windows 编辑器常见）。2.x 的
+`<DSH_HOME>/dsh-session-id/shares.json` 仅作只读回退。
 
 ## 验证记录
 
 | 层 | 内容 | 结果 |
 |---|---|---|
-| 离线单测 | `node --test`：严格 JSON-Schema 子集、required 覆盖、返回值自校验、消息过滤、血缘拍平、分享存储（幂等/撤销/持久化/损坏文件/BOM）、HTML 转义、分享视图、`session_share` 全流程；**并入的重试半 48 个用例**（闸门状态机含孤儿保护、恢复记录 TTL、RPC 信封与两条重试路径、mock-ctx 集成） | **95/95 通过** |
+| 离线单测 | `node --test`：严格 JSON-Schema 子集、required 覆盖、返回值自校验、消息过滤、血缘拍平、分享存储（幂等/撤销/持久化/损坏文件/BOM/旧目录只读回退）、HTML 转义、分享视图、`session_share` 全流程；**并入的重试半 48 个用例**（闸门状态机含孤儿保护、恢复记录 TTL、RPC 信封与两条重试路径、mock-ctx 集成） | **95/95 通过** |
 | headless 沙箱 | 真实 Loader：`session_lookup`（无参数 / 不存在 id）；真实 `subagent` 派生后反查 `role=subagent`、`parentSessionId`；`session_share` 在无 web server 的部署里返回结构化失败；重试闸门在无活跃客户端时 fail-closed（不挂起） | 通过 |
 | web 沙箱（真实 HTTP） | RPC `share.create` → 公开页 200（约 4.5 KB，含消息与只读徽标）→ `?download=1` 返回 `attachment` → 未知 token 404 → `POST` 405 → 撤销后再访问 404；CSP 头存在 | 通过 |
 | UI 沙箱 | 真实浏览器：标题栏分享/复制按钮可见；分享对话框创建/复制/停止全流程；重试覆盖层在无失败态时是隐藏占位（注册成功）、composer 区域正常 | 通过 |
 | 2.0.0 拆分回归 | 单测 101/101；headless 真实 Loader 两工具均可用；UI 沙箱「设置 → 插件 → 会话增强」显示**包含的组件 共 3 个 · 3 运行中**，三行标题/描述分别来自包根、`share/locale/`、`retry/locale/` | 通过 |
 | 2.1.0 / DSH 0.2.2-rc.1 | 单测 **106/106**；devkit web 沙箱（真实 Chrome + 真实 sub2api/deepseek-flash）：三个 client 半进页面清单、控制台 0 错误；复制会话 ID toast；分享链接 200 且渲染标题+消息；「停止 → 重试」turn 正常完成；`time-context` 注入不再出现在消息里 | 通过 |
+| 3.0.0 改名 / DSH 0.2.2-rc.1 | 单测；devkit headless 沙箱：三行 Loader 行名与 patch id 正确、`session_lookup` 可调用；web/UI 沙箱：client 半进页面清单、组件标题「会话检视 / 会话分享 / 失败重试」、分享 RPC `/dsh-session-inspect` 可用；活 profile 升级后重启复核 | 见本次提交说明 |
 
 > 0.2.0 回归里抓到并修掉两个真 bug：`share.create` 拿不到地址时先落盘留下孤儿记录；
 > `shares.json` 带 UTF-8 BOM 时被当成损坏文件导致分享功能锁死。
@@ -260,7 +295,7 @@ continue;   // ← 回到同一 turn/step 的模型请求
 ## 开发笔记
 
 ```
-index.js            组件①「会话增强」Host 半：注册 session_lookup（同时是包根导出）
+index.js            组件①「会话检视」Host 半：注册 session_lookup（同时是包根导出）
 share/index.js      组件②「会话分享」Host 半：session_share + /share 路由 + 分享 RPC
 retry/index.js      组件③「失败重试」Host 半：agent/request-error 闸门 + 重试 RPC
 locale/             包根词典：卡片标题与组件①的标题/描述（两者共用这一份）
@@ -274,8 +309,8 @@ lib/tools/share.mjs   session_share 的参数与输出 schema
 lib/tools/schema.mjs  两个工具共用的 schema 构造器
 lib/shareview.mjs   分享页的数据装载（复用 service 的消息折叠）
 lib/render.mjs      自包含只读 HTML（转义、CSP、深浅色、打印友好）
-lib/shares.mjs      shares.json 存储（原子写、容忍 BOM、损坏不覆盖）
-lib/rpc.mjs         分享的认证 RPC 通道（/dsh-session-id）
+lib/shares.mjs      shares.json 存储（原子写、容忍 BOM、损坏不覆盖、2.x 旧目录只读回退）
+lib/rpc.mjs         分享的认证 RPC 通道（/dsh-session-inspect）
 lib/public.mjs      免登录的 /share/<token> 只读路由
 lib/retry/host.mjs  重试半 Host 侧：agent/request-error 闸门、停止记录、RPC 接线
 lib/retry/gate.mjs  重试等待闸门（按会话去重、等待上限、孤儿保护；纯 JS）
@@ -301,8 +336,9 @@ test/               分享/会话视图/三入口测试；test/retry/ 是并入�
   被回退吃掉"，得在真实 Loader 与真实浏览器里各跑一遍。
 - **浏览器半只能挂在「精确包名」那一行**：`dsh-client-modules` 的 `locatePkgJson()` 对
   `pkg/sub` 这种子路径 specifier 直接返回 `undefined`（`exactPackageSpecifier` 不认），
-  于是该行没有 client 半。2.0 拆三行时第一行因此必须写 `dsh-session-id`——这也是它的
-  组件标题只能等于卡片标题的原因。改 patch 时别把第一行换成子路径，否则界面按钮会整体消失。
+  于是该行没有 client 半。第一行因此必须写精确包名（2.x 是 `dsh-session-id`，3.0 起是
+  `dsh-session-inspect`）——这也是它的组件标题只能等于卡片标题的原因。改 patch 时别把
+  第一行换成子路径，否则界面按钮会整体消失。
 - **组件行文案走的是另一套逻辑**：`dsh-app-boot` 的 `readPluginMeta()` 对子路径 specifier
   **不读** `specifier/package.json`，标题/描述只来自 `<specifier>/locale/en.json` 的
   `meta`，并且 `exports` 必须暴露 `<子路径>/locale/*.json`（否则静默回退到裸 specifier）。

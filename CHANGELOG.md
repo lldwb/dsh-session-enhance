@@ -3,6 +3,62 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 3.0.0 — 2026-11-09
+
+**破坏性改名（major）**：包名/仓库名 `dsh-session-id` → `dsh-session-inspect`，
+显示名「会话增强」→「会话检视」。三个组件与 `session_lookup` / `session_share` 工具名不变。
+
+### 为什么改
+
+按真实使用盘点（2026-11-04 → 11-09，157 个会话日志、47,411 帧、15,291 次 tool/call、
+0 解压错误、0 坏行）：
+
+- `session_lookup` **13 次 / 7 个会话**——三个工具能力里唯一有使用痕迹的；
+- `session_share` **0 次**，`<DSH_HOME>/dsh-session-id/shares.json` **从未创建**（分享全时间零使用）；
+- 失败重试组件被用户单独停用，157 会话里 0 条重试注入消息；
+- 「复制 ID → 粘贴 → 问 Agent」闭环：全部 user/message 中没有出现会话 id。
+
+旧名只覆盖三个组件之一，且只描述"拿到 id"这个手段；显示名「会话增强」是零信息量占位词。
+新名对齐实际用途：**按 ID 检视会话与它的全部子代理**（复制 ID 是它的入口，附件是分享与重试）。
+
+### 变更（结构性）
+
+- 包名/仓库名改为 `dsh-session-inspect`；三个 Loader 行 `id`/`name` 同步改为
+  `dsh-session-inspect` / `dsh-session-inspect/share` / `dsh-session-inspect/retry`。
+- 分享 RPC 前缀 `/dsh-session-id` → `/dsh-session-inspect`；重试通道 `/dsh-turn-retry`
+  **刻意保留旧名**（并入自 `dsh-turn-retry`，改名零收益、纯回归风险）。
+- 浏览器半的模块 id、locale 命名空间、卡片标题/描述、`client.js` 版本戳同步。
+- 卡片/组件文案：包根「会话检视 / Session Inspector」，`share/locale/` 与 `retry/locale/`
+  仍叫「会话分享」「失败重试」。
+- 分享记录目录改为 `<DSH_HOME>/dsh-session-inspect/`；新文件不存在时**只读回退** 2.x 的
+  `<DSH_HOME>/dsh-session-id/shares.json`，首次写入把记录复制到新文件、旧文件原样保留
+  （回滚到 2.x 仍可读）。本机该文件此前不存在，无迁移数据。
+- 构建戳对齐：`BUILD`/`RETRY_BUILD` = `2026-11-09.1`，`CLIENT_VERSION` = `3.0.0`。
+  2.1.0 改了重试行为却没有递增构建戳（违反 `lib/build.mjs` 自己的约定，导致"活进程跑的是
+  哪一版"只能靠 SHA256 比对），本次一并修正。
+
+### 用户要做什么
+
+1. 从 profile 的 `dsh.profile.bundles` 与 `dependencies` 删除 `dsh-session-id`，
+   删除 `profiles/<profile>/plugins/dsh-session-id/`；
+2. 用新包重新 `dsh plugin add dsh-session-inspect`（或本地目录 link）后 `pnpm install`；
+3. **曾停用「失败重试」组件的**：profile 补丁层里的 `- id: dsh-session-id-retry` 必须改成
+   `- id: dsh-session-inspect-retry`，否则新行不会被 override 命中、重试会静默重新启用；
+4. 重启 DSH（client 清单是服务器启动时的快照，刷新页面不够）。
+
+### 保留兼容（刻意不改）
+
+- 重试 RPC 前缀 `/dsh-turn-retry`；`RETRY_SOURCE_KIND = 'dsh-session-id'`；followup 消息 id
+  前缀 `dsh-session-id-retry-`；界面 `data-*` 选择器；`exports` 子路径结构。
+
+### 顺带修掉的重试问题（接 2.1.0）
+
+- 活 profile 此前一直跑 **2.0.2 拷贝**（2.1.0 的 `agent.followup()` `role:'user'` 修复从未安装），
+  本次升级把修复带进实际运行环境；重试组件在活 profile 中被用户停用的状态**尊重原设置**保留
+  （新 id 的 `disabled: true` override 同步改写）。
+- 诊断要点记在 README「失败重试」与本次提交说明：模型失败闸门在会话不可见时会 5 秒孤儿放行，
+  可见时会等待最多 120 秒——两者都是设计取舍，不是本次改名的行为变化。
+
 ## 2.1.0 — 2026-11-06
 
 本轮工作在 DSH **0.2.2-rc.1** 的真实 Loader + 真实浏览器里做了完整回归，结果是两层改动，

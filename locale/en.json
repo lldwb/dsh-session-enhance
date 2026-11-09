@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Session Enhance",
-    "description": "Copy the session ID, look up a session and its subagents, share a session as a read-only link, and retry a failed or stopped model call with one click."
+    "title": "Session Inspector",
+    "description": "Inspect any session and all of its subagents by ID (plus a title-bar copy-ID button), share a session as a read-only link, and retry a failed or stopped model call with one click."
   }
 }

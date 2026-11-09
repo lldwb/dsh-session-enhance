@@ -114,6 +114,8 @@ window.__ModuleLoader__.load({
       // 上下文用量 + 手动压缩
       'context.label': 'Context',
       'context.compact': 'Compact',
+      'context.compactRow': 'Compact context',
+      'context.compactTitle': 'Summarize older history now to free context space.',
       'context.compacting': 'Compacting…',
       'context.title': 'Context usage {used} / {window} ({pct}%)\nClick Compact to summarize older history now.',
       'context.compacted': 'Compacted {items} items, freed about {tokens} tokens',
@@ -160,6 +162,8 @@ window.__ModuleLoader__.load({
       // 上下文用量 + 手动压缩
       'context.label': '上下文',
       'context.compact': '压缩',
+      'context.compactRow': '压缩上下文',
+      'context.compactTitle': '立即摘要较早的历史，释放上下文空间',
       'context.compacting': '压缩中…',
       'context.title': '上下文用量 {used} / {window}（{pct}%）\n点击「压缩」立即摘要较早的历史、释放上下文空间。',
       'context.compacted': '已压缩 {items} 项，释放约 {tokens} tokens',
@@ -937,7 +941,7 @@ window.__ModuleLoader__.load({
        * 在控制台执行 `document.documentElement.dataset.dshTurnRetry` 就能确认页面里
        * 加载的到底是哪一版，不必翻网络面板。
        */
-      const CLIENT_VERSION = '4.1.0';
+      const CLIENT_VERSION = '4.2.0';
 
       /**
        * 槽位：composer card 内部的绝对定位锚点。
@@ -1789,28 +1793,108 @@ window.__ModuleLoader__.load({
     })();
     // #endregion
 
-    // #region 上下文用量 + 手动压缩
+    // #region 上下文：官方 ContextMeter 面板内的「压缩」动作
+    //
+    // DSH 0.2.2 起，composer 卡片下方自带一个官方「上下文已用」meter（圆环 + 百分比 +
+    // 点击弹出的 panel：系统提示词 / 工具定义 / 对话消息）。它由
+    // `dsh-client-ui-conversation` 内置渲染，**没有对外 slot**，所以不能按普通槽位
+    // 追加内容。这里改成：监听那个 panel（portal 到 body 的 role=dialog + <dl>），
+    // 在 panel 末尾注入一行与官方 `.row` 同字号/同色板的「压缩上下文」动作。
+    //
+    // 之所以不用自己的百分比小部件：官方 meter 已经展示用量，重复显示反而杂乱；
+    // 用户要的是「压缩」这个动作出现在看到用量的地方。
     /** 上下文组件的 RPC 通道（Host 半见 lib/context/host.mjs）。 */
     const CONTEXT_RPC_CHANNEL = '/dsh-session-enhance-context';
 
-    /** 槽位：composer 左侧控件区（`+` 与权限模式旁边），`list` / session scope。 */
+    /** 槽位只用来跟踪"当前挂载的会话"（composer 挂载哪个会话，面板动作就操作哪个）。 */
     const CONTEXT_SLOT_NAME = 'conversation.input.left';
     const CONTEXT_SLOT_ID = 'session-context';
     const CONTEXT_SLOT_ORDER = 0;
 
-    /** 用量复查节奏与事件触发的去抖。 */
-    const CONTEXT_REFRESH_MS = 10_000;
-    const CONTEXT_REFRESH_DEBOUNCE_MS = 1_200;
-    /** 压缩结果/失败提示的停留时间。 */
-    const CONTEXT_NOTE_MS = 6_000;
+    /** 当前激活会话 id：由 session tracker 的挂载/卸载维护。 */
+    let activeContextSessionId = '';
+
+    /** 面板动作的瞬时状态。 */
+    const contextActionState = { busy: false, note: '' };
+
+    /** 动作行/提示的 DOM 标记（只命中本插件自己的节点，不碰官方 DOM）。 */
+    const CONTEXT_ACTIONS_ATTR = 'data-dsh-enhance-context-actions';
+    const CONTEXT_COMPACT_ATTR = 'data-dsh-enhance-context-compact';
+    const CONTEXT_LABEL_ATTR = 'data-dsh-enhance-context-label';
+
+    /** 压缩可用性探测结果：null = 还没探测到。 */
+    let contextCanCompact = null;
+    let contextObserver = null;
+    let contextInterval = null;
+    let contextNoteTimer;
 
     /**
-     * token 数的人类可读格式。
+     * 判断一个 `role=dialog` 元素是不是官方上下文 panel。
+     *
+     * 特征：内部有 `<dl>`（三行 breakdown）且文本里带 `NN%`。本插件自己的分享对话框
+     * 没有 `<dl>`，不会被误判。
+     *
+     * @param {Element} node - 候选节点。
+     * @returns {boolean} 是否官方上下文 panel。
+     */
+    function isContextPanel(node) {
+      if (node === null || node === undefined) return false;
+      if (node.getAttribute('role') !== 'dialog') return false;
+      if (node.querySelector('dl') === null) return false;
+      return /\d+%/.test(node.textContent ?? '');
+    }
+
+    /**
+     * 找当前打开的官方上下文 panel。
+     *
+     * @returns {Element | null} panel 或 null。
+     */
+    function findContextPanel() {
+      if (typeof document === 'undefined') return null;
+      const dialogs = document.querySelectorAll('[role="dialog"]');
+      for (const node of dialogs) {
+        if (isContextPanel(node)) return node;
+      }
+      return null;
+    }
+
+    /**
+     * 向文档注入一次「压缩」动作行的样式（与官方 ContextMeter 同字号/行高/色板）。
+     *
+     * 只写本插件自己的 `data-dsh-enhance-*` 选择器，卸载时整条移除。
+     *
+     * @returns {() => void} 清理函数。
+     */
+    function installContextActionStyle() {
+      if (typeof document === 'undefined') return () => {};
+      const style = document.createElement('style');
+      style.setAttribute('data-dsh-enhance-context-style', '');
+      style.textContent = [
+        `[${CONTEXT_ACTIONS_ATTR}]{display:flex;align-items:center;justify-content:space-between;gap:12px;`,
+        'margin-top:6px;padding-top:8px;border-top:1px solid var(--dsw-alias-border-l1);',
+        'font-size:12px;line-height:20px;color:var(--dsw-alias-label-secondary);}',
+        `[${CONTEXT_LABEL_ATTR}]{display:inline-flex;align-items:center;gap:6px;min-width:0;}`,
+        `[${CONTEXT_COMPACT_ATTR}]{font:inherit;font-size:12px;line-height:20px;padding:1px 8px;`,
+        'border:none;border-radius:var(--dsw-radius-sm);background:transparent;',
+        'color:var(--dsw-alias-label-primary);cursor:pointer;white-space:nowrap;}',
+        `[${CONTEXT_COMPACT_ATTR}]:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);}`,
+        `[${CONTEXT_COMPACT_ATTR}]:disabled{opacity:.5;cursor:default;}`,
+        `[${CONTEXT_COMPACT_ATTR}][data-busy]{opacity:.6;cursor:default;}`,
+        `[data-dsh-enhance-context-note]{color:var(--dsw-alias-label-tertiary);}`
+      ].join('');
+      document.head.appendChild(style);
+      return () => {
+        style.remove();
+      };
+    }
+
+    /**
+     * token 数的人类可读格式（与官方 ContextMeter 的 `formatTokens` 同口径）。
      *
      * @param {unknown} value - token 数。
      * @returns {string} `12k` / `1.2M` / `—`。
      */
-    function formatTokens(value) {
+    function formatCompactTokens(value) {
       const num = typeof value === 'number' ? value : Number(value);
       if (!Number.isFinite(num) || num < 0) return '—';
       if (num >= 1_000_000) {
@@ -1822,287 +1906,266 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 每个会话一份的「上下文用量」快照源。
+     * 按当前状态渲染/更新官方 panel 里的动作行（幂等）。
      *
-     * 首次订阅时向 Host 查一次，之后每 10 秒复查、并在会话事件后去抖复查。
-     * Hook 形状与 shell 的 `useSyncExternalStore` 一致；最后一个订阅者离开时清掉
-     * 全部定时器与订阅（与重试覆盖层同一套生命周期约定）。
+     * @param {any} ctx - 浏览器插件上下文（用 connection 发 RPC）。
+     * @param {(key: string, params?: any) => string} t - 词典绑定。
+     * @returns {void}
+     */
+    function renderContextAction(ctx, t) {
+      const panel = findContextPanel();
+      if (panel === null) return;
+      let row = panel.querySelector(`[${CONTEXT_ACTIONS_ATTR}]`);
+      if (row === null) {
+        row = document.createElement('div');
+        row.setAttribute(CONTEXT_ACTIONS_ATTR, '');
+        const label = document.createElement('span');
+        label.setAttribute(CONTEXT_LABEL_ATTR, '');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.setAttribute(CONTEXT_COMPACT_ATTR, '');
+        button.addEventListener('click', () => {
+          void runContextCompact(ctx, t);
+        });
+        row.append(label, button);
+        panel.append(row);
+      }
+      const label = row.querySelector(`[${CONTEXT_LABEL_ATTR}]`);
+      const button = row.querySelector(`[${CONTEXT_COMPACT_ATTR}]`);
+      if (label === null || button === null) return;
+      // ⚠️ 只在值变化时写 DOM：`textContent =` 每次都会产生新文本节点，而我们的
+      // MutationObserver 观察的是整棵 body —— 无条件重写会「写→观察→再写」无限循环，
+      // 直接把页面主线程卡死（本次沙箱验证踩到过）。幂等写入才能让观察器收敛。
+      const nextLabel = contextActionState.note === '' ? t('context.compactRow') : contextActionState.note;
+      if (label.textContent !== nextLabel) label.textContent = nextLabel;
+      const nextButtonText = contextActionState.busy ? t('context.compacting') : t('context.compact');
+      if (button.textContent !== nextButtonText) button.textContent = nextButtonText;
+      const nextDisabled = contextActionState.busy || contextCanCompact === false;
+      if (button.disabled !== nextDisabled) button.disabled = nextDisabled;
+      const nextTitle = contextCanCompact === false ? t('context.unavailable') : t('context.compactTitle');
+      if (button.title !== nextTitle) button.title = nextTitle;
+    }
+
+    /** 让动作行在下一帧重新渲染（panel 重渲染把行冲掉时会补回来）。 */
+    function scheduleContextActionRender(ctx, t) {
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => renderContextAction(ctx, t));
+      } else {
+        setTimeout(() => renderContextAction(ctx, t), 16);
+      }
+    }
+
+    /**
+     * 调 Host 做一次手动压缩；结果写进动作行（释放 token 数 / 错误码）。
      *
      * @param {any} ctx - 浏览器插件上下文。
-     * @param {string} sessionId - 当前会话 id。
-     * @returns {any} `{ getSnapshot, subscribe, compact, dispose }`。
+     * @param {(key: string, params?: any) => string} t - 词典绑定。
+     * @returns {Promise<void>} 完成。
      */
-    function createContextUsage(ctx, sessionId) {
-      const initialState = { kind: 'hidden' };
-      const base = createSnapshotStore(initialState);
-      let listeners = 0;
-      let binding;
-      let unsubscribeEvents;
-      let refreshTimer;
-      let debounceTimer;
-      let noteTimer;
-      let inflight = false;
-      let disposed = false;
-
-      const emit = (next) => base.set(next);
-
-      const call = async (method, payload) => {
-        const connection = ctx.connection;
-        if (connection === undefined || connection === null) return undefined;
-        const rpc = connection.rpc;
-        if (rpc === undefined || rpc === null || typeof rpc.call !== 'function') return undefined;
-        return rpc.call(CONTEXT_RPC_CHANNEL, method, payload);
-      };
-
-      /** 在 ready 快照上挂一条临时提示（压缩结果 / 错误码）。 */
-      const showNote = (note) => {
-        const current = base.getSnapshot();
-        if (current.kind !== 'ready') return;
-        emit({ ...current, note });
-        if (noteTimer !== undefined) clearTimeout(noteTimer);
-        noteTimer = setTimeout(() => {
-          noteTimer = undefined;
-          const latest = base.getSnapshot();
-          if (latest.kind === 'ready') emit({ ...latest, note: null });
-        }, CONTEXT_NOTE_MS);
-      };
-
-      /** 向 Host 查当前用量；没有 live agent / 没有测量结果时隐藏。 */
-      const refresh = async () => {
-        if (disposed || inflight || sessionId === '') return;
-        inflight = true;
-        try {
-          const result = await call('get', { sessionId });
-          if (disposed) return;
-          const value =
-            result !== null && typeof result === 'object' && result.ok === true ? result.value : undefined;
-          const current = base.getSnapshot();
-          if (value === undefined || value.available !== true) {
-            if (current.kind !== 'hidden') emit(initialState);
-            return;
-          }
-          const windowSize =
-            typeof value.contextWindow === 'number' && value.contextWindow > 0 ? value.contextWindow : null;
-          const used = typeof value.pressureTokens === 'number' ? value.pressureTokens : null;
-          if (windowSize === null) {
-            if (current.kind !== 'hidden') emit(initialState);
-            return;
-          }
-          emit({
-            kind: 'ready',
-            used,
-            window: windowSize,
-            canCompact: value.canCompact === true,
-            busy: current.kind === 'ready' ? current.busy === true : false,
-            note: current.kind === 'ready' ? (current.note ?? null) : null
-          });
-        } catch {
-          // 传输层失败按"未就绪"处理；下一轮事件 / 定时器再试。
-          if (!disposed && base.getSnapshot().kind === 'ready') emit(initialState);
-        } finally {
-          inflight = false;
-        }
-      };
-
-      const scheduleRefresh = () => {
-        if (debounceTimer !== undefined) return;
-        debounceTimer = setTimeout(() => {
-          debounceTimer = undefined;
-          void refresh();
-        }, CONTEXT_REFRESH_DEBOUNCE_MS);
-      };
-
-      /** 点「压缩」：调 Host 手动压缩，结果以提示显示并刷新用量。 */
-      const compact = async () => {
-        if (disposed) return;
-        const current = base.getSnapshot();
-        if (current.kind !== 'ready' || current.busy === true || current.canCompact !== true) return;
-        emit({ ...current, busy: true, note: null });
-        try {
-          const result = await call('compact', { sessionId });
-          if (disposed) return;
-          const latest = base.getSnapshot();
-          if (latest.kind !== 'ready') return;
-          if (result !== null && typeof result === 'object' && result.ok === true) {
-            const value = result.value ?? {};
-            emit({ ...latest, busy: false });
-            if (value.compacted === true) {
-              showNote({ code: 'compacted', items: value.items, tokens: value.tokensSaved });
-              void refresh();
-            } else {
-              showNote({ code: 'noRange' });
-            }
-            return;
-          }
+    async function runContextCompact(ctx, t) {
+      if (contextActionState.busy) return;
+      if (activeContextSessionId === '') {
+        setContextNote(t('context.failed', { code: 'NO_LIVE_AGENT' }), ctx, t);
+        return;
+      }
+      const connection = ctx.connection;
+      const rpc = connection !== undefined && connection !== null ? connection.rpc : undefined;
+      if (rpc === undefined || rpc === null || typeof rpc.call !== 'function') {
+        setContextNote(t('context.transport'), ctx, t);
+        return;
+      }
+      contextActionState.busy = true;
+      contextActionState.note = '';
+      scheduleContextActionRender(ctx, t);
+      try {
+        const result = await rpc.call(CONTEXT_RPC_CHANNEL, 'compact', { sessionId: activeContextSessionId });
+        const value = result !== null && typeof result === 'object' && result.ok === true ? result.value : undefined;
+        if (value !== undefined && value.compacted === true) {
+          setContextNote(
+            t('context.compacted', {
+              items: value.items === null || value.items === undefined ? '?' : value.items,
+              tokens: formatCompactTokens(value.tokensSaved)
+            }),
+            ctx,
+            t
+          );
+        } else if (value !== undefined && value.reason === 'NO_RANGE') {
+          setContextNote(t('context.noRange'), ctx, t);
+        } else {
           const error = result !== null && typeof result === 'object' ? result.error : undefined;
           const code =
             error !== null && typeof error === 'object' && typeof error.code === 'string'
               ? error.code
               : 'FAILED';
-          emit({ ...latest, busy: false });
-          showNote({ code });
-        } catch {
-          const latest = base.getSnapshot();
-          if (!disposed && latest.kind === 'ready') emit({ ...latest, busy: false });
-          showNote({ code: 'TRANSPORT' });
+          setContextNote(contextNoteForCode(t, code), ctx, t);
         }
-      };
+      } catch {
+        setContextNote(t('context.transport'), ctx, t);
+      } finally {
+        contextActionState.busy = false;
+        scheduleContextActionRender(ctx, t);
+      }
+    }
 
-      const start = () => {
-        const sessions = ctx.sessions;
-        if (sessions === undefined || sessions === null || typeof sessions.binding !== 'function') return;
-        binding = sessions.binding(sessionId);
-        if (binding === undefined || binding === null) return;
-        if (
-          binding.eventSource !== undefined &&
-          binding.eventSource !== null &&
-          typeof binding.eventSource.subscribe === 'function'
-        ) {
-          unsubscribeEvents = binding.eventSource.subscribe(scheduleRefresh);
-        }
-        void refresh();
-        refreshTimer = setInterval(() => {
-          void refresh();
-        }, CONTEXT_REFRESH_MS);
-      };
+    /**
+     * 把错误码转成一句人话（与 Host 的稳定机器码对齐）。
+     *
+     * @param {(key: string, params?: any) => string} t - 词典绑定。
+     * @param {string} code - 错误码。
+     * @returns {string} 提示文案。
+     */
+    function contextNoteForCode(t, code) {
+      if (code === 'COMPACTION_UNAVAILABLE') return t('context.unavailable');
+      if (code === 'BUSY') return t('context.busy');
+      if (code === 'CANCELLED') return t('context.cancelled');
+      if (code === 'TRANSPORT') return t('context.transport');
+      return t('context.failed', { code });
+    }
 
-      const stop = () => {
-        if (unsubscribeEvents !== undefined) {
-          unsubscribeEvents();
-          unsubscribeEvents = undefined;
-        }
-        if (refreshTimer !== undefined) {
-          clearInterval(refreshTimer);
-          refreshTimer = undefined;
-        }
-        if (debounceTimer !== undefined) {
-          clearTimeout(debounceTimer);
-          debounceTimer = undefined;
-        }
-        if (noteTimer !== undefined) {
-          clearTimeout(noteTimer);
-          noteTimer = undefined;
-        }
-        binding = undefined;
-      };
+    /**
+     * 写一条动作提示，N 秒后清掉并重渲染。
+     *
+     * @param {string} note - 提示文本。
+     * @param {any} ctx - 浏览器插件上下文。
+     * @param {(key: string, params?: any) => string} t - 词典绑定。
+     * @returns {void}
+     */
+    function setContextNote(note, ctx, t) {
+      contextActionState.note = note;
+      scheduleContextActionRender(ctx, t);
+      if (contextNoteTimer !== undefined) clearTimeout(contextNoteTimer);
+      contextNoteTimer = setTimeout(() => {
+        contextNoteTimer = undefined;
+        contextActionState.note = '';
+        scheduleContextActionRender(ctx, t);
+      }, 6000);
+    }
 
+    /**
+     * 判断一条 mutation 是否只发生在我们的动作行内部（行内文本/属性变化）。
+     *
+     * 这类变更不需要触发重渲染：`renderContextAction` 本身是幂等写，重复调用会收敛，
+     * 但观察器回调→渲染→再触发观察的链路仍应以“只处理行外变更”为准，避免无谓开销。
+     * 注意：行被整体移除/新增要视为“行外变更”，否则 panel 重渲染冲掉行后补不回来。
+     *
+     * @param {MutationRecord} record - 变更记录。
+     * @returns {boolean} 是否仅发生在动作行内部。
+     */
+    function isInsideContextAction(record) {
+      const nodes = [...record.addedNodes, ...record.removedNodes];
+      if (nodes.some((node) => node instanceof Element && node.matches(`[${CONTEXT_ACTIONS_ATTR}]`))) {
+        return false;
+      }
+      const target = record.target;
+      return target instanceof Element && target.closest(`[${CONTEXT_ACTIONS_ATTR}]`) !== null;
+    }
+
+    /**
+     * 启动官方 panel 的观察器：panel 打开时注入动作行，关闭后自然消失。
+     *
+     * 同时探测一次 `context/diag`，判断压缩服务是否在场（不在场就把按钮置灰）。
+     *
+     * @param {any} ctx - 浏览器插件上下文。
+     * @param {(key: string, params?: any) => string} t - 词典绑定。
+     * @returns {void}
+     */
+    function startContextPanelInjector(ctx, t) {
+      if (typeof document === 'undefined' || typeof MutationObserver !== 'function') return;
+      contextObserver = new MutationObserver((records) => {
+        if (records.every((record) => isInsideContextAction(record))) return;
+        renderContextAction(ctx, t);
+      });
+      contextObserver.observe(document.body, { childList: true, subtree: true });
+      // 兜底轮询：个别渲染路径不一定触发 childList（例如 panel 内容原地更新）。
+      contextInterval = setInterval(() => {
+        renderContextAction(ctx, t);
+      }, 800);
+      // 探测压缩服务是否可用（只探一次；结果用于置灰，不影响动作行出现）。
+      const connection = ctx.connection;
+      const rpc = connection !== undefined && connection !== null ? connection.rpc : undefined;
+      if (rpc !== undefined && rpc !== null && typeof rpc.call === 'function') {
+        void rpc
+          .call(CONTEXT_RPC_CHANNEL, 'diag', {})
+          .then((result) => {
+            const value = result !== null && typeof result === 'object' && result.ok === true ? result.value : undefined;
+            contextCanCompact = value !== undefined && value.hasCompaction === true;
+            renderContextAction(ctx, t);
+          })
+          .catch(() => {
+            contextCanCompact = false;
+          });
+      }
+    }
+
+    /** 停止 panel 观察器并移除已注入的节点。 */
+    function stopContextPanelInjector() {
+      if (contextObserver !== null) {
+        contextObserver.disconnect();
+        contextObserver = null;
+      }
+      if (contextInterval !== null) {
+        clearInterval(contextInterval);
+        contextInterval = null;
+      }
+      if (contextNoteTimer !== undefined) {
+        clearTimeout(contextNoteTimer);
+        contextNoteTimer = undefined;
+      }
+      if (typeof document !== 'undefined') {
+        for (const row of document.querySelectorAll(`[${CONTEXT_ACTIONS_ATTR}]`)) row.remove();
+        for (const style of document.querySelectorAll('[data-dsh-enhance-context-style]')) style.remove();
+      }
+      contextActionState.busy = false;
+      contextActionState.note = '';
+    }
+
+    /**
+     * 每会话一份的「当前会话」跟踪器。
+     *
+     * 槽位 inject 是按会话缓存的：composer 挂载哪个会话，它的订阅者先出现。第一个
+     * 订阅者出现时把 `activeContextSessionId` 指到该会话，最后一个订阅者离开且仍是
+     * 它时清空。官方 panel 里的压缩动作据此知道要压缩哪个会话。
+     *
+     * @param {string} sessionId - 会话 id。
+     * @returns {{ getSnapshot: () => number, subscribe: (listener: () => void) => () => void }} 快照源。
+     */
+    function createContextSessionTracker(sessionId) {
+      const store = createSnapshotStore(0);
+      let listeners = 0;
       return {
-        getSnapshot: base.getSnapshot,
+        getSnapshot: store.getSnapshot,
         subscribe: (listener) => {
           listeners += 1;
-          if (listeners === 1) start();
-          const unsubscribe = base.subscribe(listener);
+          if (listeners === 1 && sessionId !== '') activeContextSessionId = sessionId;
+          const unsubscribe = store.subscribe(listener);
           return () => {
             unsubscribe();
             listeners -= 1;
-            if (listeners === 0) stop();
+            if (listeners === 0 && activeContextSessionId === sessionId) activeContextSessionId = '';
           };
-        },
-        compact,
-        dispose: () => {
-          disposed = true;
-          stop();
         }
       };
     }
 
     /**
-     * composer 左侧的「上下文 12% · 压缩」小部件。
-     *
-     * 没有用量数据时渲染一个隐藏占位（保持挂载，订阅不因 renderer 卸载而断掉），
-     * 有数据时显示百分比 + 「压缩」按钮；按钮在会话忙 / 压缩插件未挂载时置灰。
+     * 隐藏的会话跟踪组件：不渲染任何可见 UI（官方 meter 已负责展示用量）。
      *
      * @param {any} props - 槽位注入的 props。
-     * @returns {any} 组件。
+     * @returns {any} 隐藏占位。
      */
-    function ContextUsage(props) {
-      // hooks 必须在任何提前 return 之前调用（hooks 顺序不能变）。
-      const state = props.useContextUsage((value) => value);
-      if (state === null || state === undefined || state.kind !== 'ready') {
-        return jsx('div', { style: { display: 'none' }, 'data-session-context': 'hidden' });
-      }
-      const t = props.t;
-      const used = state.used;
-      const windowSize = state.window;
-      const pct =
-        typeof used === 'number' && windowSize > 0
-          ? Math.max(0, Math.round((used / windowSize) * 100))
-          : null;
-      const tone = pct === null ? 'normal' : pct >= 85 ? 'danger' : pct >= 70 ? 'warn' : 'normal';
-      const color =
-        tone === 'danger'
-          ? 'var(--dsw-alias-label-danger, #d92d20)'
-          : tone === 'warn'
-            ? 'var(--dsw-alias-label-warning, #b54708)'
-            : 'var(--dsw-alias-label-secondary, #667085)';
-      const title = t('context.title', {
-        used: used === null || used === undefined ? '—' : formatTokens(used),
-        window: formatTokens(windowSize),
-        pct: pct === null ? '—' : String(pct)
-      });
-      const note = state.note;
-      let noteText = '';
-      if (note !== null && note !== undefined) {
-        if (note.code === 'compacted') {
-          noteText = t('context.compacted', {
-            items: note.items === null || note.items === undefined ? '?' : note.items,
-            tokens: formatTokens(note.tokens)
-          });
-        } else if (note.code === 'noRange') noteText = t('context.noRange');
-        else if (note.code === 'COMPACTION_UNAVAILABLE') noteText = t('context.unavailable');
-        else if (note.code === 'BUSY') noteText = t('context.busy');
-        else if (note.code === 'CANCELLED') noteText = t('context.cancelled');
-        else if (note.code === 'TRANSPORT') noteText = t('context.transport');
-        else noteText = t('context.failed', { code: note.code });
-      }
-      const disabled = state.busy === true || state.canCompact !== true;
-      return jsxs('div', {
-        'data-session-context': 'ready',
-        title,
-        style: {
-          display: 'inline-flex',
-          alignItems: 'center',
-          gap: '6px',
-          fontSize: '12px',
-          lineHeight: '18px',
-          color,
-          whiteSpace: 'nowrap',
-          userSelect: 'none'
-        },
-        children: [
-          jsx('span', {
-            'data-session-context-usage': '',
-            children: `${t('context.label')} ${pct === null ? '—' : `${pct}%`}`
-          }),
-          jsx('button', {
-            type: 'button',
-            'data-session-context-compact': '',
-            disabled,
-            title: state.canCompact === true ? t('context.compact') : t('context.unavailable'),
-            onClick: () => {
-              void props.contextUsage.compact();
-            },
-            style: {
-              padding: '0',
-              margin: '0',
-              border: 'none',
-              background: 'transparent',
-              color: 'inherit',
-              font: 'inherit',
-              fontSize: '12px',
-              lineHeight: '18px',
-              cursor: disabled ? 'default' : 'pointer',
-              opacity: disabled ? '0.45' : '1',
-              textDecoration: disabled ? 'none' : 'underline'
-            },
-            children: state.busy === true ? t('context.compacting') : t('context.compact')
-          }),
-          noteText === '' ? null : jsx('span', { 'data-session-context-note': '', children: noteText })
-        ]
-      });
+    function ContextSessionTracker(props) {
+      props.useContextSession((value) => value);
+      return jsx('div', { style: { display: 'none' }, 'data-session-context': 'tracker' });
     }
     // #endregion
 
+    // #region 插件入口
+    /**
+     * 浏览器半用到的服务：槽位（挂按钮）、词典、以及到 Host 的 RPC 通道。
+     *
+     * `connection` 是 RPC carrier（与其他调用宿主服务的 UI 插件用法一致）；不带它时
+     * 分享按钮会一直停在「操作失败」，所以这里是硬依赖。
+     */
     // #region 插件入口
     /**
      * 浏览器半用到的服务：槽位（挂按钮）、词典、以及到 Host 的 RPC 通道。
@@ -2351,8 +2414,12 @@ window.__ModuleLoader__.load({
         )
       );
 
-      // 第四个能力：composer 左侧的上下文用量 + 手动压缩。Host 通道挂在第一行
-      // （见 index.js），所以只要 client 半在，它就和复制/分享/重试一起可用。
+      // 上下文：官方 ContextMeter 面板里的「压缩」动作。
+      //
+      // 官方 meter 已经显示用量（系统提示词 / 工具定义 / 对话消息），所以这里不再
+      // 重复做一个百分比小部件；只用一个隐藏的 session tracker 记住"当前会话是谁"，
+      // 再把「压缩」动作注入官方 panel（panel 是 portal 到 body 的 role=dialog，
+      // 没有 slot，只能按 DOM 特征挂载）。
       ctx.slots.inject(CONTEXT_SLOT_NAME, () =>
         ctx.slots.register(
           {
@@ -2361,16 +2428,24 @@ window.__ModuleLoader__.load({
             order: CONTEXT_SLOT_ORDER,
             locale: NS,
             inject: (sessionId) => {
-              const usage = createContextUsage(
-                ctx,
+              const tracker = createContextSessionTracker(
                 String(sessionId === undefined || sessionId === null ? '' : sessionId)
               );
-              return { hooks: { contextUsage: usage }, contextUsage: usage };
+              return { hooks: { contextSession: tracker }, contextSession: tracker };
             }
           },
-          ContextUsage
+          ContextSessionTracker
         )
       );
+      // 注入器：官方 panel 打开时追加动作行；卸载时清理观察器/样式/节点。
+      ctx.effect(() => {
+        const disposeStyle = installContextActionStyle();
+        startContextPanelInjector(ctx, t);
+        return () => {
+          stopContextPanelInjector();
+          disposeStyle();
+        };
+      }, 'dsh-session-enhance: context panel action');
 
       // 第三个组件：composer 的失败重试覆盖层。它自己注册槽位、词典、样式表与加载
       // 标记，所以这里只需要把同一个 ctx 交过去（IIFE 内是它原来的 apply）。
@@ -2383,8 +2458,7 @@ window.__ModuleLoader__.load({
     // 纯函数与组件导出：离线冒烟（没有浏览器、没有真实 renderer）靠它们检查合并后的
     // bundle 形状；不影响运行时。
     exports.RetryButton = retryHalf.RetryButton;
-    exports.ContextUsage = ContextUsage;
-    exports.formatTokens = formatTokens;
+    exports.ContextSessionTracker = ContextSessionTracker;
     exports.lastModelEventIsFailure = retryHalf.lastModelEventIsFailure;
     exports.justEnded = retryHalf.justEnded;
     exports.attemptFinishedWithError = retryHalf.attemptFinishedWithError;

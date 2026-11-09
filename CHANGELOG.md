@@ -3,6 +3,43 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 4.2.0 — 2026-11-09
+
+### 手动压缩改到官方「上下文已用」面板里（对齐官方风格）
+
+4.1.0 在 composer 左侧自绘了一个「上下文 42% · 压缩」小部件；但 DSH 0.2.2 起官方
+composer 下方自带 ContextMeter（圆环 + 百分比 + 点开的明细面板：系统提示词 / 工具定义 /
+对话消息），自己再显示一遍百分比既重复又不像官方。本版：
+
+- **移除**左侧自绘的百分比/压缩小部件；
+- 在官方 ContextMeter 面板**末尾注入一行「压缩上下文 [压缩]」动作**，字号 / 行高 / 色板 /
+  分隔线全部沿用官方 ContextMeter 的 token（`--dsw-alias-label-secondary`、
+  `--dsw-alias-border-l1`、`12px/20px`、`--dsw-radius-sm`），外观与官方 row 一致；
+- 点击行为不变：Host `ctx.compaction.compactNow()`（与官方 `/compact` 同一实现）；
+  行内先显示「压缩中…」，完成后「已压缩 N 项，释放约 M tokens」，无范围时「没有可压缩的历史」，
+  压缩服务缺失时按钮置灰并提示；
+- **实现方式**：官方面板由 `dsh-client-ui-conversation` 内置渲染、portal 到 body，
+  没有对外 slot，因此按稳定 DOM 特征识别（`role=dialog` + `<dl>` + 文本含百分比），
+  用 `MutationObserver` + 800ms 兜底轮询注入；面板关闭/重渲染自动补回，卸载时清理
+  观察器 / 样式 / 节点。官方换结构时最坏只是这一行不出现，不影响官方 meter；
+- 空会话跟踪：仍在 `conversation.input.left` 挂一个隐藏的 session tracker（记录"当前会话
+  是谁"，压缩动作按它发 RPC），但不渲染任何可见内容。
+
+### 修复（开发期踩坑）
+
+- 注入行最初无条件重写 `textContent`，而 `MutationObserver` 观察整棵 body →
+  「写 → 观察 → 再写」无限循环，直接把页面主线程卡死（沙箱里实测到 60s 无响应）。
+  现在只在值变化时写 DOM，并忽略仅发生在动作行内部的 mutation，观察器可收敛。
+
+### 验证
+
+- 单测 **123/123**；`node --check client.js` 通过。
+- devkit web/UI 沙箱：`dsh-session-enhance@4.1.0` 升级后 client 半加载 0 console 错误；
+  用与官方同形状的模拟面板（`role=dialog` + `<dl>` + 62%）验证：动作行被追加到面板末尾、
+  文案「压缩上下文 / 压缩」、title 正确；点击后 Host 真实执行 `compactNow` 并回显
+  「没有可压缩的历史」（沙箱无模型 key，属预期的业务结果）。
+- 真实官方面板的外观需要在有 contextPressure 的实机上确认（本版用户截图即该面板）。
+
 ## 4.1.0 — 2026-11-09
 
 ### 新能力：composer 的「上下文用量 + 手动压缩」

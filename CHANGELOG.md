@@ -3,6 +3,12 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 3.0.1 — 2026-11-09
+
+文档与验证记录更新（无行为变更）：README 的 3.0.0 验证表补上实测证据（单测 107/107；headless 沙箱三行
+Loader 行与 session_lookup；web/UI 沙箱 client 半清单、dshTurnRetry=3.0.0、设置页三组件运行中；
+活 profile 升级后 /dsh-session-inspect 路由 401、session_lookup 实调通过；重试行按用户设置保持停用）。
+
 ## 3.0.0 — 2026-11-09
 
 **破坏性改名（major）**：包名/仓库名 `dsh-session-id` → `dsh-session-inspect`，

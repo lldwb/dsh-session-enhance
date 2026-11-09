@@ -911,7 +911,7 @@ window.__ModuleLoader__.load({
        * 在控制台执行 `document.documentElement.dataset.dshTurnRetry` 就能确认页面里
        * 加载的到底是哪一版，不必翻网络面板。
        */
-      const CLIENT_VERSION = '3.0.0';
+      const CLIENT_VERSION = '3.1.0';
 
       /**
        * 槽位：composer card 内部的绝对定位锚点。
@@ -987,6 +987,7 @@ window.__ModuleLoader__.load({
       const en = {
         'action.retry': 'Retry',
         'hint.failed': 'Model call failed — click to retry',
+        'hint.failedTurn': 'Previous turn failed — click to retry',
         'hint.stopped': 'Stopped — click to retry',
         'hint.retrying': 'Retrying…',
         'hint.failedToRetry': 'Retry did not take effect'
@@ -996,6 +997,7 @@ window.__ModuleLoader__.load({
       const zh = {
         'action.retry': '重试',
         'hint.failed': '模型调用失败 —— 点击重试',
+        'hint.failedTurn': '上一轮失败 —— 点击重试',
         'hint.stopped': '已停止 —— 点击重试',
         'hint.retrying': '正在重试…',
         'hint.failedToRetry': '重试未生效'
@@ -1019,7 +1021,7 @@ window.__ModuleLoader__.load({
        * @returns {object} 快照源（含 retry/dispose）。
        */
       function createRetryNotice(ctx, sessionId) {
-        /** @type {{ kind: 'hidden' } | { kind: 'waiting', mode: 'gate' | 'recoverable' } | { kind: 'busy' } | { kind: 'failed', code: string }} */
+        /** @type {{ kind: 'hidden' } | { kind: 'waiting', mode: 'gate' | 'recoverable', cause?: string } | { kind: 'busy' } | { kind: 'failed', code: string }} */
         let snapshot = { kind: 'hidden' };
         const listeners = new Set();
 
@@ -1092,16 +1094,20 @@ window.__ModuleLoader__.load({
          * 抽出来是为了让两处共用同一段 RPC 语义（且不交叉依赖 `confirming` 重入保护）：
          * `confirm()` 的首次判定/递增补查，以及 `scheduleRecheck()` 的定期复查。
          *
-         * @returns {Promise<{ pending: boolean, recoverable: boolean } | undefined>} 无 RPC 通道时为 undefined。
+         * `recoverable` 不再只是布尔：Host 会带上 `causeKind`（`error` = 上一轮模型失败
+         * 后保留的可重试入口，`user` = 用户点了停止）。界面据此显示不同提示。
+         *
+         * @returns {Promise<{ pending: boolean, recoverable: { causeKind?: string } | null } | undefined>} 无 RPC 通道时为 undefined。
          */
         const askHost = async () => {
           const connection = ctx.connection;
           if (connection === undefined || connection === null || !connection.rpc) return undefined;
           const result = await connection.rpc.call(RPC_CHANNEL, 'pending', { sessionId });
           const value = result && result.ok === true ? result.value : undefined;
+          const record = value && value.recoverable !== null && value.recoverable !== undefined ? value.recoverable : null;
           return {
             pending: !!(value && value.pending === true),
-            recoverable: !!(value && value.recoverable !== null && value.recoverable !== undefined)
+            recoverable: record === null ? null : { causeKind: typeof record.causeKind === 'string' ? record.causeKind : undefined }
           };
         };
 
@@ -1124,13 +1130,13 @@ window.__ModuleLoader__.load({
             }
             const pending = probe.pending;
             const recoverable = probe.recoverable;
-            trace('confirm.result', { attempt, pending, recoverable });
+            trace('confirm.result', { attempt, pending, recoverable: recoverable !== null });
             if (pending) {
               emit({ kind: 'waiting', mode: 'gate' });
               return;
             }
-            if (recoverable) {
-              emit({ kind: 'waiting', mode: 'recoverable' });
+            if (recoverable !== null) {
+              emit({ kind: 'waiting', mode: 'recoverable', cause: recoverable.causeKind });
               return;
             }
             // Host 还没开闸门：按递增间隔补查几次（事件先落盘、waterfall 后触发的时序差）。
@@ -1268,7 +1274,7 @@ window.__ModuleLoader__.load({
             if (disposed || snapshot.kind !== 'waiting') return;
             if (probe === undefined) {
               trace('recheck.transport-error', { attempt: recheckAttempts });
-            } else if (probe.pending === false && probe.recoverable === false) {
+            } else if (probe.pending === false && probe.recoverable === null) {
               // Host 已经没有闸门了：按钮必须立刻消失，否则就是"点了没生效"。
               trace('recheck.gone', { attempt: recheckAttempts });
               emit({ kind: 'hidden' });
@@ -1407,7 +1413,7 @@ window.__ModuleLoader__.load({
       function sameSnapshot(left, right) {
         if (left === right) return true;
         if (left.kind !== right.kind) return false;
-        if (left.kind === 'waiting') return left.mode === right.mode;
+        if (left.kind === 'waiting') return left.mode === right.mode && left.cause === right.cause;
         // failed 带错误码：两个不同的失败码要各自触发一次重渲染（title 里的码不同）。
         if (left.kind === 'failed') return left.code === right.code;
         return true;
@@ -1615,7 +1621,9 @@ window.__ModuleLoader__.load({
         const hint = failed
           ? `${t('hint.failedToRetry')} (${state.code})`
           : state.kind === 'waiting' && state.mode === 'recoverable'
-            ? t('hint.stopped')
+            ? state.cause === 'error'
+              ? t('hint.failedTurn')
+              : t('hint.stopped')
             : t('hint.failed');
 
         return jsx('div', {

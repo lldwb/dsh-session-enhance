@@ -428,3 +428,57 @@ test('停止后重试：followup 拿到的消息带 role="user"（0.2.2 日志�
   assert.equal(typeof input.id, 'string');
   env.runCleanups();
 });
+
+test('模型失败后 turn 以 error 结束：记下 recovery，之后回到该会话仍能重试', async () => {
+  const captured = [];
+  const agent = {
+    session: { id: 's8' },
+    async followup(input) {
+      captured.push(input);
+    },
+  };
+  const env = makeCtx({ hasLiveClient: true, roots: [agent], agent });
+  apply(env.ctx);
+
+  // 模型失败、闸门已关闭（超时/孤儿保护）之后，turn 以 error 收尾。
+  env.handlers.get('session/event')({ id: 's8' }, {
+    type: 'turn/end',
+    data: {
+      turn: 9,
+      reason: { kind: 'error', error: { code: 'TRANSPORT', message: 'Connection error.' } },
+    },
+  });
+
+  // 浏览器半随后问 pending：没有闸门，但有 recoverable，且指明原因。
+  const pending = await callRpc(env.routes, 'pending', { sessionId: 's8' });
+  assert.equal(pending.value.pending, false);
+  assert.equal(pending.value.recoverable?.turn, 9);
+  assert.equal(pending.value.recoverable?.causeKind, 'error');
+
+  // 点重试：只能驱动一次新的 turn（followup），消息形状与停止路径一致。
+  const retried = await callRpc(env.routes, 'retry', { sessionId: 's8' });
+  assert.deepEqual(retried, { ok: true, value: { retried: true, via: 'followup' } });
+  assert.equal(captured.length, 1);
+  assert.equal(captured[0].role, 'user');
+
+  // 用掉之后不再可重试。
+  const after = await callRpc(env.routes, 'pending', { sessionId: 's8' });
+  assert.equal(after.value.recoverable, null);
+  env.runCleanups();
+});
+
+test('新 turn 开始会清掉上一条错误 recovery（不会一直挂着按钮）', async () => {
+  const agent = { session: { id: 's9' } };
+  const env = makeCtx({ hasLiveClient: true, roots: [agent], agent });
+  apply(env.ctx);
+
+  env.handlers.get('session/event')({ id: 's9' }, {
+    type: 'turn/end',
+    data: { turn: 4, reason: { kind: 'error', error: { code: 'TRANSPORT', message: 'x' } } },
+  });
+  assert.equal((await callRpc(env.routes, 'pending', { sessionId: 's9' })).value.recoverable?.turn, 4);
+
+  env.handlers.get('session/event')({ id: 's9' }, { type: 'turn/start', data: { turn: 5 } });
+  assert.equal((await callRpc(env.routes, 'pending', { sessionId: 's9' })).value.recoverable, null);
+  env.runCleanups();
+});

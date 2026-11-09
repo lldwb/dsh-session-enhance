@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-inspect",
-  "version": "3.0.1",
+  "version": "3.1.0",
   "description": "会话检视：按 ID 查看任意会话与它的全部子代理，附带标题栏复制会话 ID、免登录只读分享链接、以及模型失败/停止后一键重试。三个可单独启停的组件。",
   "type": "module",
   "license": "MIT",

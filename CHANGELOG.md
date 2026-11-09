@@ -3,6 +3,42 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 4.1.0 — 2026-11-09
+
+### 新能力：composer 的「上下文用量 + 手动压缩」
+
+真实事故（`session-3b342fc5`，2026-11-09）：64 轮 / 658 步的会话堆到 128 万 tokens，
+超过模型 104 万窗口，提供方直接返回 `CONTEXT_WINDOW_EXCEEDED`，这一轮只能失败；
+而"继续/重试"只会把输入变得更长。根因之一是本 profile 的官方压缩栈（
+`dsh-compaction-basic` / `dsh-command-compact` / `dsh-compaction-tool-result-pruner`）
+一直处于停用状态，且界面上看不到上下文用量。
+
+本版在「会话增强」主组件里新增（无新 Loader 行）：
+
+- **上下文用量**：composer 左侧显示「上下文 42%」，数据来自 Host 的
+  `ctx.tokenMeter.contextPressure()`（估算请求输入 / 模型窗口）；≥70% 橙色、≥85% 红色，
+  悬停显示 `已用 / 窗口（百分比）`。
+- **手动压缩按钮**：点「压缩」调用 `ctx.compaction.compactNow()`（与官方 `/compact`
+  同一实现），完成后提示「已压缩 N 项，释放约 M tokens」并刷新用量；会话忙 / 压缩进行中
+  置灰，无压缩服务时提示「压缩不可用：当前部署未启用压缩插件」。
+- Host 新 RPC 通道 `/dsh-session-enhance-context`（`get` / `compact` / `diag`），
+  挂在第一行（会话增强）而不是 share/retry 行；`tokenMeter` / `compaction` 都是软依赖。
+- **重试不再处理上下文溢出**：`CONTEXT_WINDOW_EXCEEDED` 是确定性失败，4.1 起既不开闸门、
+  也不写 recovery（否则按钮会诱导用户再发一次同样超长的输入）。处理方式是手动压缩或
+  开启官方自动压缩。
+- README 补充前置条件（启用 `dsh-compaction-basic` 以自动压缩）与事故复盘。
+
+### 验证
+
+- 单测 **122/122**（新增 `test/context.test.mjs` 12 条：用量字段、压缩成功/`NO_RANGE`/
+  `COMPACTION_UNAVAILABLE`/错误码映射/无 live agent、RPC 信封与 401/404；retry 新增
+  「上下文溢出不给重试/不记 recovery」）。
+- devkit web/UI 沙箱：client 半 `dsh-session-enhance@4.1.0 is loaded`、0 console 错误、
+  `[data-session-context]` 小部件已注册、`/dsh-session-enhance-context/diag` 真机返回
+  `{hasCompaction, hasTokenMeter}`（详见提交说明）。
+- 活 profile：启用 `dsh-compaction-basic` + `dsh-command-compact`，使手动/自动压缩可用；
+  重启后新 client 半生效。
+
 ## 4.0.1 — 2026-11-09
 
 文档与验证记录更新（无行为变更）：README 的 4.0.0 验证表补上实测证据（单测 110/110；

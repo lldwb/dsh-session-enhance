@@ -382,6 +382,30 @@ test('同一会话重复失败不会堆积多个闸门（旧的被 superseded）
   env.runCleanups();
 });
 
+test('上下文窗口溢出不给重试按钮/不记 recovery（重试只会再次超长）', async () => {
+  const rootAgent = makeAgent('root');
+  const env = makeCtx({ hasLiveClient: true, roots: [rootAgent], agent: rootAgent });
+  apply(env.ctx);
+
+  // 1) 闸门判定：CONTEXT_WINDOW_EXCEEDED 直接否决。
+  const overflowPayload = makePayload(rootAgent);
+  overflowPayload.failure = { code: 'CONTEXT_WINDOW_EXCEEDED', message: 'too long' };
+  const verdict = shouldGate(env.ctx, overflowPayload);
+  assert.equal(verdict, false);
+
+  // 2) turn 以 CONTEXT_WINDOW_EXCEEDED 收尾时不写 recovery（否则按钮会引导再发一次超长输入）。
+  env.handlers.get('session/event')({ id: 'root' }, {
+    type: 'turn/end',
+    data: {
+      turn: 7,
+      reason: { kind: 'error', error: { code: 'CONTEXT_WINDOW_EXCEEDED', message: 'too long' } },
+    },
+  });
+  const pending = await callRpc(env.routes, 'pending', { sessionId: 'root' });
+  assert.equal(pending.value.recoverable, null);
+  env.runCleanups();
+});
+
 test('createRetryUserMessage 是完整的 DSH UserMessage（role 不能漏，且 id 每次唯一）', () => {
   const first = createRetryUserMessage();
   const second = createRetryUserMessage();

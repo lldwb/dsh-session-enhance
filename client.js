@@ -109,7 +109,20 @@ window.__ModuleLoader__.load({
       'share.toastCreated': 'Share link created',
       'share.toastCopied': 'Link copied',
       'share.toastRevoked': 'Sharing stopped',
-      'share.toastFailed': 'The operation failed.'
+      'share.toastFailed': 'The operation failed.',
+
+      // 上下文用量 + 手动压缩
+      'context.label': 'Context',
+      'context.compact': 'Compact',
+      'context.compacting': 'Compacting…',
+      'context.title': 'Context usage {used} / {window} ({pct}%)\nClick Compact to summarize older history now.',
+      'context.compacted': 'Compacted {items} items, freed about {tokens} tokens',
+      'context.noRange': 'No compactable history yet',
+      'context.unavailable': 'Compaction is unavailable: the compaction plugin is not mounted',
+      'context.busy': 'Session is busy; try again in a moment',
+      'context.cancelled': 'Compaction cancelled',
+      'context.transport': 'Connection failed; could not compact',
+      'context.failed': 'Compaction failed ({code})'
     };
 
     /** 简体中文文案。 */
@@ -142,7 +155,20 @@ window.__ModuleLoader__.load({
       'share.toastCreated': '分享链接已创建',
       'share.toastCopied': '链接已复制',
       'share.toastRevoked': '已停止分享',
-      'share.toastFailed': '操作失败。'
+      'share.toastFailed': '操作失败。',
+
+      // 上下文用量 + 手动压缩
+      'context.label': '上下文',
+      'context.compact': '压缩',
+      'context.compacting': '压缩中…',
+      'context.title': '上下文用量 {used} / {window}（{pct}%）\n点击「压缩」立即摘要较早的历史、释放上下文空间。',
+      'context.compacted': '已压缩 {items} 项，释放约 {tokens} tokens',
+      'context.noRange': '没有可压缩的历史',
+      'context.unavailable': '压缩不可用：当前部署未启用压缩插件',
+      'context.busy': '会话正忙，稍后再试',
+      'context.cancelled': '已取消压缩',
+      'context.transport': '连接失败，无法压缩',
+      'context.failed': '压缩失败（{code}）'
     };
     // #endregion
 
@@ -911,7 +937,7 @@ window.__ModuleLoader__.load({
        * 在控制台执行 `document.documentElement.dataset.dshTurnRetry` 就能确认页面里
        * 加载的到底是哪一版，不必翻网络面板。
        */
-      const CLIENT_VERSION = '4.0.0';
+      const CLIENT_VERSION = '4.1.0';
 
       /**
        * 槽位：composer card 内部的绝对定位锚点。
@@ -1763,6 +1789,320 @@ window.__ModuleLoader__.load({
     })();
     // #endregion
 
+    // #region 上下文用量 + 手动压缩
+    /** 上下文组件的 RPC 通道（Host 半见 lib/context/host.mjs）。 */
+    const CONTEXT_RPC_CHANNEL = '/dsh-session-enhance-context';
+
+    /** 槽位：composer 左侧控件区（`+` 与权限模式旁边），`list` / session scope。 */
+    const CONTEXT_SLOT_NAME = 'conversation.input.left';
+    const CONTEXT_SLOT_ID = 'session-context';
+    const CONTEXT_SLOT_ORDER = 0;
+
+    /** 用量复查节奏与事件触发的去抖。 */
+    const CONTEXT_REFRESH_MS = 10_000;
+    const CONTEXT_REFRESH_DEBOUNCE_MS = 1_200;
+    /** 压缩结果/失败提示的停留时间。 */
+    const CONTEXT_NOTE_MS = 6_000;
+
+    /**
+     * token 数的人类可读格式。
+     *
+     * @param {unknown} value - token 数。
+     * @returns {string} `12k` / `1.2M` / `—`。
+     */
+    function formatTokens(value) {
+      const num = typeof value === 'number' ? value : Number(value);
+      if (!Number.isFinite(num) || num < 0) return '—';
+      if (num >= 1_000_000) {
+        const millions = num / 1_000_000;
+        return `${millions >= 10 ? Math.round(millions) : millions.toFixed(1)}M`;
+      }
+      if (num >= 1_000) return `${Math.round(num / 1_000)}k`;
+      return String(Math.round(num));
+    }
+
+    /**
+     * 每个会话一份的「上下文用量」快照源。
+     *
+     * 首次订阅时向 Host 查一次，之后每 10 秒复查、并在会话事件后去抖复查。
+     * Hook 形状与 shell 的 `useSyncExternalStore` 一致；最后一个订阅者离开时清掉
+     * 全部定时器与订阅（与重试覆盖层同一套生命周期约定）。
+     *
+     * @param {any} ctx - 浏览器插件上下文。
+     * @param {string} sessionId - 当前会话 id。
+     * @returns {any} `{ getSnapshot, subscribe, compact, dispose }`。
+     */
+    function createContextUsage(ctx, sessionId) {
+      const initialState = { kind: 'hidden' };
+      const base = createSnapshotStore(initialState);
+      let listeners = 0;
+      let binding;
+      let unsubscribeEvents;
+      let refreshTimer;
+      let debounceTimer;
+      let noteTimer;
+      let inflight = false;
+      let disposed = false;
+
+      const emit = (next) => base.set(next);
+
+      const call = async (method, payload) => {
+        const connection = ctx.connection;
+        if (connection === undefined || connection === null) return undefined;
+        const rpc = connection.rpc;
+        if (rpc === undefined || rpc === null || typeof rpc.call !== 'function') return undefined;
+        return rpc.call(CONTEXT_RPC_CHANNEL, method, payload);
+      };
+
+      /** 在 ready 快照上挂一条临时提示（压缩结果 / 错误码）。 */
+      const showNote = (note) => {
+        const current = base.getSnapshot();
+        if (current.kind !== 'ready') return;
+        emit({ ...current, note });
+        if (noteTimer !== undefined) clearTimeout(noteTimer);
+        noteTimer = setTimeout(() => {
+          noteTimer = undefined;
+          const latest = base.getSnapshot();
+          if (latest.kind === 'ready') emit({ ...latest, note: null });
+        }, CONTEXT_NOTE_MS);
+      };
+
+      /** 向 Host 查当前用量；没有 live agent / 没有测量结果时隐藏。 */
+      const refresh = async () => {
+        if (disposed || inflight || sessionId === '') return;
+        inflight = true;
+        try {
+          const result = await call('get', { sessionId });
+          if (disposed) return;
+          const value =
+            result !== null && typeof result === 'object' && result.ok === true ? result.value : undefined;
+          const current = base.getSnapshot();
+          if (value === undefined || value.available !== true) {
+            if (current.kind !== 'hidden') emit(initialState);
+            return;
+          }
+          const windowSize =
+            typeof value.contextWindow === 'number' && value.contextWindow > 0 ? value.contextWindow : null;
+          const used = typeof value.pressureTokens === 'number' ? value.pressureTokens : null;
+          if (windowSize === null) {
+            if (current.kind !== 'hidden') emit(initialState);
+            return;
+          }
+          emit({
+            kind: 'ready',
+            used,
+            window: windowSize,
+            canCompact: value.canCompact === true,
+            busy: current.kind === 'ready' ? current.busy === true : false,
+            note: current.kind === 'ready' ? (current.note ?? null) : null
+          });
+        } catch {
+          // 传输层失败按"未就绪"处理；下一轮事件 / 定时器再试。
+          if (!disposed && base.getSnapshot().kind === 'ready') emit(initialState);
+        } finally {
+          inflight = false;
+        }
+      };
+
+      const scheduleRefresh = () => {
+        if (debounceTimer !== undefined) return;
+        debounceTimer = setTimeout(() => {
+          debounceTimer = undefined;
+          void refresh();
+        }, CONTEXT_REFRESH_DEBOUNCE_MS);
+      };
+
+      /** 点「压缩」：调 Host 手动压缩，结果以提示显示并刷新用量。 */
+      const compact = async () => {
+        if (disposed) return;
+        const current = base.getSnapshot();
+        if (current.kind !== 'ready' || current.busy === true || current.canCompact !== true) return;
+        emit({ ...current, busy: true, note: null });
+        try {
+          const result = await call('compact', { sessionId });
+          if (disposed) return;
+          const latest = base.getSnapshot();
+          if (latest.kind !== 'ready') return;
+          if (result !== null && typeof result === 'object' && result.ok === true) {
+            const value = result.value ?? {};
+            emit({ ...latest, busy: false });
+            if (value.compacted === true) {
+              showNote({ code: 'compacted', items: value.items, tokens: value.tokensSaved });
+              void refresh();
+            } else {
+              showNote({ code: 'noRange' });
+            }
+            return;
+          }
+          const error = result !== null && typeof result === 'object' ? result.error : undefined;
+          const code =
+            error !== null && typeof error === 'object' && typeof error.code === 'string'
+              ? error.code
+              : 'FAILED';
+          emit({ ...latest, busy: false });
+          showNote({ code });
+        } catch {
+          const latest = base.getSnapshot();
+          if (!disposed && latest.kind === 'ready') emit({ ...latest, busy: false });
+          showNote({ code: 'TRANSPORT' });
+        }
+      };
+
+      const start = () => {
+        const sessions = ctx.sessions;
+        if (sessions === undefined || sessions === null || typeof sessions.binding !== 'function') return;
+        binding = sessions.binding(sessionId);
+        if (binding === undefined || binding === null) return;
+        if (
+          binding.eventSource !== undefined &&
+          binding.eventSource !== null &&
+          typeof binding.eventSource.subscribe === 'function'
+        ) {
+          unsubscribeEvents = binding.eventSource.subscribe(scheduleRefresh);
+        }
+        void refresh();
+        refreshTimer = setInterval(() => {
+          void refresh();
+        }, CONTEXT_REFRESH_MS);
+      };
+
+      const stop = () => {
+        if (unsubscribeEvents !== undefined) {
+          unsubscribeEvents();
+          unsubscribeEvents = undefined;
+        }
+        if (refreshTimer !== undefined) {
+          clearInterval(refreshTimer);
+          refreshTimer = undefined;
+        }
+        if (debounceTimer !== undefined) {
+          clearTimeout(debounceTimer);
+          debounceTimer = undefined;
+        }
+        if (noteTimer !== undefined) {
+          clearTimeout(noteTimer);
+          noteTimer = undefined;
+        }
+        binding = undefined;
+      };
+
+      return {
+        getSnapshot: base.getSnapshot,
+        subscribe: (listener) => {
+          listeners += 1;
+          if (listeners === 1) start();
+          const unsubscribe = base.subscribe(listener);
+          return () => {
+            unsubscribe();
+            listeners -= 1;
+            if (listeners === 0) stop();
+          };
+        },
+        compact,
+        dispose: () => {
+          disposed = true;
+          stop();
+        }
+      };
+    }
+
+    /**
+     * composer 左侧的「上下文 12% · 压缩」小部件。
+     *
+     * 没有用量数据时渲染一个隐藏占位（保持挂载，订阅不因 renderer 卸载而断掉），
+     * 有数据时显示百分比 + 「压缩」按钮；按钮在会话忙 / 压缩插件未挂载时置灰。
+     *
+     * @param {any} props - 槽位注入的 props。
+     * @returns {any} 组件。
+     */
+    function ContextUsage(props) {
+      // hooks 必须在任何提前 return 之前调用（hooks 顺序不能变）。
+      const state = props.useContextUsage((value) => value);
+      if (state === null || state === undefined || state.kind !== 'ready') {
+        return jsx('div', { style: { display: 'none' }, 'data-session-context': 'hidden' });
+      }
+      const t = props.t;
+      const used = state.used;
+      const windowSize = state.window;
+      const pct =
+        typeof used === 'number' && windowSize > 0
+          ? Math.max(0, Math.round((used / windowSize) * 100))
+          : null;
+      const tone = pct === null ? 'normal' : pct >= 85 ? 'danger' : pct >= 70 ? 'warn' : 'normal';
+      const color =
+        tone === 'danger'
+          ? 'var(--dsw-alias-label-danger, #d92d20)'
+          : tone === 'warn'
+            ? 'var(--dsw-alias-label-warning, #b54708)'
+            : 'var(--dsw-alias-label-secondary, #667085)';
+      const title = t('context.title', {
+        used: used === null || used === undefined ? '—' : formatTokens(used),
+        window: formatTokens(windowSize),
+        pct: pct === null ? '—' : String(pct)
+      });
+      const note = state.note;
+      let noteText = '';
+      if (note !== null && note !== undefined) {
+        if (note.code === 'compacted') {
+          noteText = t('context.compacted', {
+            items: note.items === null || note.items === undefined ? '?' : note.items,
+            tokens: formatTokens(note.tokens)
+          });
+        } else if (note.code === 'noRange') noteText = t('context.noRange');
+        else if (note.code === 'COMPACTION_UNAVAILABLE') noteText = t('context.unavailable');
+        else if (note.code === 'BUSY') noteText = t('context.busy');
+        else if (note.code === 'CANCELLED') noteText = t('context.cancelled');
+        else if (note.code === 'TRANSPORT') noteText = t('context.transport');
+        else noteText = t('context.failed', { code: note.code });
+      }
+      const disabled = state.busy === true || state.canCompact !== true;
+      return jsxs('div', {
+        'data-session-context': 'ready',
+        title,
+        style: {
+          display: 'inline-flex',
+          alignItems: 'center',
+          gap: '6px',
+          fontSize: '12px',
+          lineHeight: '18px',
+          color,
+          whiteSpace: 'nowrap',
+          userSelect: 'none'
+        },
+        children: [
+          jsx('span', {
+            'data-session-context-usage': '',
+            children: `${t('context.label')} ${pct === null ? '—' : `${pct}%`}`
+          }),
+          jsx('button', {
+            type: 'button',
+            'data-session-context-compact': '',
+            disabled,
+            title: state.canCompact === true ? t('context.compact') : t('context.unavailable'),
+            onClick: () => {
+              void props.contextUsage.compact();
+            },
+            style: {
+              padding: '0',
+              margin: '0',
+              border: 'none',
+              background: 'transparent',
+              color: 'inherit',
+              font: 'inherit',
+              fontSize: '12px',
+              lineHeight: '18px',
+              cursor: disabled ? 'default' : 'pointer',
+              opacity: disabled ? '0.45' : '1',
+              textDecoration: disabled ? 'none' : 'underline'
+            },
+            children: state.busy === true ? t('context.compacting') : t('context.compact')
+          }),
+          noteText === '' ? null : jsx('span', { 'data-session-context-note': '', children: noteText })
+        ]
+      });
+    }
+    // #endregion
+
     // #region 插件入口
     /**
      * 浏览器半用到的服务：槽位（挂按钮）、词典、以及到 Host 的 RPC 通道。
@@ -2011,6 +2351,27 @@ window.__ModuleLoader__.load({
         )
       );
 
+      // 第四个能力：composer 左侧的上下文用量 + 手动压缩。Host 通道挂在第一行
+      // （见 index.js），所以只要 client 半在，它就和复制/分享/重试一起可用。
+      ctx.slots.inject(CONTEXT_SLOT_NAME, () =>
+        ctx.slots.register(
+          {
+            name: CONTEXT_SLOT_NAME,
+            id: CONTEXT_SLOT_ID,
+            order: CONTEXT_SLOT_ORDER,
+            locale: NS,
+            inject: (sessionId) => {
+              const usage = createContextUsage(
+                ctx,
+                String(sessionId === undefined || sessionId === null ? '' : sessionId)
+              );
+              return { hooks: { contextUsage: usage }, contextUsage: usage };
+            }
+          },
+          ContextUsage
+        )
+      );
+
       // 第三个组件：composer 的失败重试覆盖层。它自己注册槽位、词典、样式表与加载
       // 标记，所以这里只需要把同一个 ctx 交过去（IIFE 内是它原来的 apply）。
       retryHalf.apply(ctx);
@@ -2022,6 +2383,8 @@ window.__ModuleLoader__.load({
     // 纯函数与组件导出：离线冒烟（没有浏览器、没有真实 renderer）靠它们检查合并后的
     // bundle 形状；不影响运行时。
     exports.RetryButton = retryHalf.RetryButton;
+    exports.ContextUsage = ContextUsage;
+    exports.formatTokens = formatTokens;
     exports.lastModelEventIsFailure = retryHalf.lastModelEventIsFailure;
     exports.justEnded = retryHalf.justEnded;
     exports.attemptFinishedWithError = retryHalf.attemptFinishedWithError;

@@ -19,7 +19,7 @@
 
 | 组件（界面显示名） | Loader 行 | 提供什么 |
 |---|---|---|
-| 会话增强 | `dsh-session-enhance` | 会话标题栏复制按钮 + 工具 `session_lookup`（按 id 查会话与全部子代理） |
+| 会话增强 | `dsh-session-enhance` | 会话标题栏复制按钮 + 工具 `session_lookup`（按 id 查会话与全部子代理）+ composer 的**上下文用量与手动压缩**小部件 |
 | 会话分享 | `dsh-session-enhance/share` | 标题栏分享按钮 + 工具 `session_share` + 免登录只读页 `/share/<token>` |
 | 失败重试 | `dsh-session-enhance/retry` | composer 的「重试」覆盖层 + `agent/request-error` 闸门 |
 
@@ -199,6 +199,35 @@ origin；两者都拿不到时创建会明确报错，而不是给一个打不�
 （「上一轮被用户中断。请从中断处继续完成…」）驱动新的一轮 —— 这条消息会进入会话历史，
 是 DSH 当前架构下无法回避的代价。
 
+**上下文溢出不给重试**（4.1 起）：`CONTEXT_WINDOW_EXCEEDED` 是确定性失败，重发只会再次
+超长；这类收尾不会出现重试按钮，也不会写可重试记录。请用 composer 左侧的「上下文 / 压缩」
+（见下一节），或开启官方 `dsh-compaction-basic` 让系统在达到阈值时自动压缩。
+
+### 上下文用量与手动压缩（4.1 起）
+
+composer 左侧（`+` 与权限模式旁边）多一个小部件：
+
+- 平时显示 **「上下文 42%」**：用量来自 Host 的 `tokenMeter.contextPressure()`（估算的本次
+  请求输入 token / 模型上下文窗口）。**≥70% 转橙、≥85% 转红**，悬停可看完整
+  `已用 / 窗口（百分比）`。
+- 点旁边的 **「压缩」**：Host 调用 `ctx.compaction.compactNow()` 立即做一次手动压缩（与官方
+  `/compact` 命令同一实现），完成后提示「已压缩 N 项，释放约 M tokens」，并刷新百分比。
+- 会话正在跑 / 压缩进行中时按钮置灰；没有可压缩历史时提示「没有可压缩的历史」。
+
+**前置条件**：手动压缩依赖官方压缩栈。请在 profile 里启用（`设置 → 插件` 或补丁层）：
+
+- `@deepseek-ai/dsh-compaction-basic`：提供 `ctx.compaction` 服务，并在压力达到阈值时
+  **自动压缩**（默认 `thresholdRatio: 0.8`）——这是避免 `CONTEXT_WINDOW_EXCEEDED` 的兜底；
+- 可选 `@deepseek-ai/dsh-command-compact`：额外的 `/compact` 打字入口；
+- 可选 `@deepseek-ai/dsh-compaction-tool-result-pruner`：压缩时先修剪超大工具输出。
+
+没启用 `compaction-basic` 时，小部件仍会显示用量，但「压缩」按钮置灰并给出
+「压缩不可用：当前部署未启用压缩插件」的提示——不会假装成功。
+
+> 真实事故（2026-11-09，`session-3b342fc5`）：一个 64 轮 / 658 步的会话堆到 128 万 tokens，
+> 超过 104 万窗口，提供方直接拒绝；当时 profile 里压缩栈是关闭的，所以只能看到红色失败。
+> 启用压缩栈 + 这个小部件后：阈值内自动摘要，或随时手动压缩，不会再撞窗口。
+
 ## 设计说明
 
 ### 浏览器半的槽位
@@ -292,6 +321,7 @@ continue;   // ← 回到同一 turn/step 的模型请求
 | UI 沙箱 | 真实浏览器：标题栏分享/复制按钮可见；分享对话框创建/复制/停止全流程；重试覆盖层在无失败态时是隐藏占位（注册成功）、composer 区域正常 | 通过 |
 | 2.0.0 拆分回归 | 单测 101/101；headless 真实 Loader 两工具均可用；UI 沙箱「设置 → 插件 → 会话增强」显示**包含的组件 共 3 个 · 3 运行中**，三行标题/描述分别来自包根、`share/locale/`、`retry/locale/` | 通过 |
 | 2.1.0 / DSH 0.2.2-rc.1 | 单测 **106/106**；devkit web 沙箱（真实 Chrome + 真实 sub2api/deepseek-flash）：三个 client 半进页面清单、控制台 0 错误；复制会话 ID toast；分享链接 200 且渲染标题+消息；「停止 → 重试」turn 正常完成；`time-context` 注入不再出现在消息里 | 通过 |
+| 4.1.0 上下文用量 + 手动压缩 / DSH 0.2.2-rc.1 | 单测 **123/123**（新增 context 12 条 + retry 溢出用例）；devkit web/UI 沙箱：client 半 dsh-session-enhance@4.1.0 is loaded、0 console 错误、dataset.dshTurnRetry=4.1.0、[data-session-context] 小部件注册、启用官方压缩栈后 /dsh-session-enhance-context/diag 真机返回 {hasCompaction:true,hasTokenMeter:true}，点「压缩」真实调用 compactNow 并显示 压缩失败（SUMMARY_FAILED）（沙箱无模型 key，属预期错误路径）；活 profile 启用 compaction-basic/command-compact/tool-result-pruner | 通过 |
 | 4.0.0 定名 dsh-session-enhance / DSH 0.2.2-rc.1 | 单测 **110/110**；devkit headless 沙箱：三行 Loader 行名/patch id 正确、session_lookup 实调通过；web/UI 沙箱：dsh-session-enhance@4.0.0 is loaded、控制台 0 错误、dataset.dshTurnRetry=4.0.0、设置→插件卡片「会话增强 v4.0.0」+ 组件「会话增强 / 会话分享 / 失败重试」共 3 个运行中；活 profile：三行 active，POST /dsh-session-enhance 与 /dsh-turn-retry 均 401（已注册），旧 /dsh-session-inspect、/dsh-session-id 均 405 | 通过 |
 | 3.1.0 失败后仍可重试 / DSH 0.2.2-rc.1 | 单测 **109/109**；devkit web 沙箱 `retry-repro`：真实模型失败 → 闸门 waiting → 60 秒超时 turn 以 error 结束 → 按钮变「上一轮失败 —— 点击重试」（`recoverable:true`）→ 切走再回来仍在 → 点击 `retry.ok via:followup`、新 turn 启动 | 通过 |
 | 3.0.0 改名 / DSH 0.2.2-rc.1 | 单测 **107/107**；devkit headless 沙箱：三行 Loader 行名/patch id 正确，session_lookup 无参与会话不存在两种调用均通过；web/UI 沙箱：client 半进页面清单（dsh-session-inspect@3.0.0 is loaded）、控制台 0 错误、document.documentElement.dataset.dshTurnRetry=3.0.0、设置→插件显示「会话检视 / 会话分享 / 失败重试」共 3 个且运行中；活 profile 升级：POST /dsh-session-inspect 返回 401（路由已注册、认证拒绝）、session_lookup 实调通过；重试行按用户原设置保持停用（/dsh-turn-retry 405） | 通过 |

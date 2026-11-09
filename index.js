@@ -23,6 +23,7 @@
 
 import { buildLookupTool } from './lib/tools/lookup.mjs';
 import { BUILD } from './lib/build.mjs';
+import { createContextHandler, installContextChannel } from './lib/context/host.mjs';
 
 /** Cordis 插件名：与包根 specifier 同名。 */
 export const name = 'dsh-session-enhance';
@@ -41,5 +42,9 @@ export { BUILD };
 export function apply(ctx) {
   const definition = buildLookupTool(ctx);
   ctx.effect(() => ctx.tools.register(definition), 'dsh-session-enhance: tool session_lookup');
-  ctx.logger?.info?.(`dsh-session-enhance: ready (1 tool, build=${BUILD})`);
+  // 上下文用量 + 手动压缩：浏览器半的 composer 小部件通过这条通道读用量/触发压缩。
+  // 通道挂在本行（第一行）而不是 share/retry 行 —— 这两个子组件可能被单独停用，
+  // 而「看上下文 / 压缩」与它们无关。依赖 tokenMeter / compaction 是软依赖。
+  installContextChannel(ctx, createContextHandler({ ctx, logger: ctx.logger }));
+  ctx.logger?.info?.(`dsh-session-enhance: ready (1 tool + context rpc, build=${BUILD})`);
 }

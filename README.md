@@ -292,6 +292,7 @@ continue;   // ← 回到同一 turn/step 的模型请求
 | UI 沙箱 | 真实浏览器：标题栏分享/复制按钮可见；分享对话框创建/复制/停止全流程；重试覆盖层在无失败态时是隐藏占位（注册成功）、composer 区域正常 | 通过 |
 | 2.0.0 拆分回归 | 单测 101/101；headless 真实 Loader 两工具均可用；UI 沙箱「设置 → 插件 → 会话增强」显示**包含的组件 共 3 个 · 3 运行中**，三行标题/描述分别来自包根、`share/locale/`、`retry/locale/` | 通过 |
 | 2.1.0 / DSH 0.2.2-rc.1 | 单测 **106/106**；devkit web 沙箱（真实 Chrome + 真实 sub2api/deepseek-flash）：三个 client 半进页面清单、控制台 0 错误；复制会话 ID toast；分享链接 200 且渲染标题+消息；「停止 → 重试」turn 正常完成；`time-context` 注入不再出现在消息里 | 通过 |
+| 4.0.0 定名 dsh-session-enhance / DSH 0.2.2-rc.1 | 单测 **110/110**；devkit headless 沙箱：三行 Loader 行名/patch id 正确、session_lookup 实调通过；web/UI 沙箱：dsh-session-enhance@4.0.0 is loaded、控制台 0 错误、dataset.dshTurnRetry=4.0.0、设置→插件卡片「会话增强 v4.0.0」+ 组件「会话增强 / 会话分享 / 失败重试」共 3 个运行中；活 profile：三行 active，POST /dsh-session-enhance 与 /dsh-turn-retry 均 401（已注册），旧 /dsh-session-inspect、/dsh-session-id 均 405 | 通过 |
 | 3.1.0 失败后仍可重试 / DSH 0.2.2-rc.1 | 单测 **109/109**；devkit web 沙箱 `retry-repro`：真实模型失败 → 闸门 waiting → 60 秒超时 turn 以 error 结束 → 按钮变「上一轮失败 —— 点击重试」（`recoverable:true`）→ 切走再回来仍在 → 点击 `retry.ok via:followup`、新 turn 启动 | 通过 |
 | 3.0.0 改名 / DSH 0.2.2-rc.1 | 单测 **107/107**；devkit headless 沙箱：三行 Loader 行名/patch id 正确，session_lookup 无参与会话不存在两种调用均通过；web/UI 沙箱：client 半进页面清单（dsh-session-inspect@3.0.0 is loaded）、控制台 0 错误、document.documentElement.dataset.dshTurnRetry=3.0.0、设置→插件显示「会话检视 / 会话分享 / 失败重试」共 3 个且运行中；活 profile 升级：POST /dsh-session-inspect 返回 401（路由已注册、认证拒绝）、session_lookup 实调通过；重试行按用户原设置保持停用（/dsh-turn-retry 405） | 通过 |
 

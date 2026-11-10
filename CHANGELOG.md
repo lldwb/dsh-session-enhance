@@ -3,6 +3,36 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 4.3.0 — 2026-11-10
+
+### 手动压缩改为执行官方 `/compact` 命令（参考 Claude Code 的 /compact 机制）
+
+4.2.0 的「压缩上下文」按钮直接调 `ctx.compaction.compactNow()`：压缩本身没问题，但它绕过
+了官方命令链路，聊天里没有 `command/run` / `command/done`，也就没有命令反馈与
+「`sourceEventSeq` → 压缩摘要卡片」的关联。Claude Code 的 `/compact` 是一条命令：执行后
+对话里能看到压缩状态与摘要。本版对齐这一机制：
+
+- Host 的 `context.compact` 端点**优先走 `ctx.commands.execute(agent, '/compact', [], signal)`**，
+  与用户在输入框里敲 `/compact` 完全同一条链路（command/run → compactNow → command/done）；
+  聊天里因此会出现官方命令反馈与压缩摘要卡片（带 `sourceCommandId` 关联）；
+- 只有 `/compact` 命令未注册（未启用 `dsh-command-compact`）时，才回退到直接调用
+  `ctx.compaction.compactNow()`，行为与 4.2 一致；
+- 结果解析：成功文案 `Compacted N history items (~M tokens).` 解析成 `items` / `tokensSaved`
+  供面板行显示中文提示；`No compactable history yet.` 映射为 `NO_RANGE`；失败文案按关键短语
+  映射回稳定错误码（`BUSY` / `CANCELLED` / `CHANGED` / `SUMMARY_FAILED` / `COMMIT_FAILED` /
+  `PERSISTENCE_FAILED`），不会把命令的英文提示当成 code 抛给界面；
+- `diag` 增加 `hasCommand` 字段；`get` 的 `canCompact` 现在认可「命令可执行」这一路径
+  （不再要求必须有 `compaction` 服务直连）。
+
+### 验证
+
+- 单测 **127/127**（新增：命令成功解析、`NO_RANGE` 识别、失败文案→错误码映射、命令未注册时
+  回退服务调用；`diag` 断言补 `hasCommand`）。
+- `node --check client.js` / `lib/context/host.mjs` 通过。
+- devkit web/UI 沙箱（真实 Loader + 真实浏览器，启用 `compaction-basic` / `command-compact`）：
+  验证动作行注入与点击链路（命令路径在沙箱里会因无模型 key 返回 `SUMMARY_FAILED`，属预期的
+  业务结果，详见提交说明）。
+
 ## 4.2.0 — 2026-11-09
 
 ### 手动压缩改到官方「上下文已用」面板里（对齐官方风格）

@@ -119,6 +119,7 @@ window.__ModuleLoader__.load({
       'context.compacting': 'Compacting…',
       'context.title': 'Context usage {used} / {window} ({pct}%)\nClick Compact to summarize older history now.',
       'context.compacted': 'Compacted {items} items, freed about {tokens} tokens',
+      'context.compactedGeneric': 'Compacted; see the summary card in the conversation',
       'context.noRange': 'No compactable history yet',
       'context.unavailable': 'Compaction is unavailable: the compaction plugin is not mounted',
       'context.busy': 'Session is busy; try again in a moment',
@@ -167,6 +168,7 @@ window.__ModuleLoader__.load({
       'context.compacting': '压缩中…',
       'context.title': '上下文用量 {used} / {window}（{pct}%）\n点击「压缩」立即摘要较早的历史、释放上下文空间。',
       'context.compacted': '已压缩 {items} 项，释放约 {tokens} tokens',
+      'context.compactedGeneric': '压缩完成，详见对话中的压缩摘要',
       'context.noRange': '没有可压缩的历史',
       'context.unavailable': '压缩不可用：当前部署未启用压缩插件',
       'context.busy': '会话正忙，稍后再试',
@@ -941,7 +943,7 @@ window.__ModuleLoader__.load({
        * 在控制台执行 `document.documentElement.dataset.dshTurnRetry` 就能确认页面里
        * 加载的到底是哪一版，不必翻网络面板。
        */
-      const CLIENT_VERSION = '4.2.0';
+      const CLIENT_VERSION = '4.3.0';
 
       /**
        * 槽位：composer card 内部的绝对定位锚点。
@@ -1981,11 +1983,12 @@ window.__ModuleLoader__.load({
         const result = await rpc.call(CONTEXT_RPC_CHANNEL, 'compact', { sessionId: activeContextSessionId });
         const value = result !== null && typeof result === 'object' && result.ok === true ? result.value : undefined;
         if (value !== undefined && value.compacted === true) {
+          const items = value.items;
+          const tokens = value.tokensSaved;
           setContextNote(
-            t('context.compacted', {
-              items: value.items === null || value.items === undefined ? '?' : value.items,
-              tokens: formatCompactTokens(value.tokensSaved)
-            }),
+            typeof items === 'number' && typeof tokens === 'number'
+              ? t('context.compacted', { items, tokens: formatCompactTokens(tokens) })
+              : t('context.compactedGeneric'),
             ctx,
             t
           );

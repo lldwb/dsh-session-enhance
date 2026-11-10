@@ -42,6 +42,7 @@ function makeCtx(options = {}) {
           ? undefined
           : { contextPressure: () => options.pressure },
     compaction: options.compaction,
+    commands: options.commands,
     connection: {
       admit: options.admit ?? (() => ({ peer: {} })),
       rpc: {
@@ -141,7 +142,7 @@ test('compact：成功时返回压缩条数与释放 token 数', async () => {
   });
   const result = await createContextHandler({ ctx: env.ctx })('compact', { sessionId: 's1' });
   assert.equal(result.ok, true);
-  assert.deepEqual(result.value, { compacted: true, items: 3, tokensSaved: 4_200 });
+  assert.deepEqual(result.value, { compacted: true, via: 'service', items: 3, tokensSaved: 4_200 });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].target, agent);
   assert.equal(calls[0].commandId, 'dsh-session-enhance-context');
@@ -151,7 +152,7 @@ test('compact：成功时返回压缩条数与释放 token 数', async () => {
 test('compact：没有可压缩范围时返回 compacted:false', async () => {
   const env = makeCtx({ agent, compaction: { compactNow: async () => null } });
   const result = await createContextHandler({ ctx: env.ctx })('compact', { sessionId: 's1' });
-  assert.deepEqual(result, { ok: true, value: { compacted: false, reason: 'NO_RANGE' } });
+  assert.deepEqual(result, { ok: true, value: { compacted: false, reason: 'NO_RANGE', via: 'service' } });
 });
 
 test('compact：压缩插件没挂载时返回 COMPACTION_UNAVAILABLE（不静默失败）', async () => {
@@ -202,7 +203,95 @@ test('diag：报告软依赖是否在场与超时配置', async () => {
   assert.deepEqual(result.value, {
     hasCompaction: true,
     hasTokenMeter: true,
+    hasCommand: false,
     timeoutMs: MANUAL_COMPACT_TIMEOUT_MS
+  });
+});
+
+test('compact：优先执行官方 /compact 命令（与用户输入走同一条链路），并解析结果', async () => {
+  const executed = [];
+  const env = makeCtx({
+    agent,
+    compaction: { compactNow: async () => { throw new Error('should prefer the command'); } },
+    commands: {
+      execute: async (target, line, attachments, signal) => {
+        executed.push({ target, line, attachments, signal });
+        return {
+          commandId: 'cmd-1',
+          result: { kind: 'success', text: 'Compacted 12 history items (~4,200 tokens).', sourceEventSeq: 9 }
+        };
+      }
+    }
+  });
+  const result = await createContextHandler({ ctx: env.ctx })('compact', { sessionId: 's1' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value, {
+    compacted: true,
+    via: 'command',
+    text: 'Compacted 12 history items (~4,200 tokens).',
+    items: 12,
+    tokensSaved: 4200
+  });
+  assert.equal(executed.length, 1);
+  assert.equal(executed[0].target, agent);
+  assert.equal(executed[0].line, '/compact');
+  assert.deepEqual(executed[0].attachments, []);
+  assert.ok(executed[0].signal instanceof AbortSignal);
+});
+
+test('compact：命令返回「没有可压缩历史」时不当作成功', async () => {
+  const env = makeCtx({
+    agent,
+    commands: {
+      execute: async () => ({ commandId: 'cmd-2', result: { kind: 'success', text: 'No compactable history yet.' } })
+    }
+  });
+  const result = await createContextHandler({ ctx: env.ctx })('compact', { sessionId: 's1' });
+  assert.deepEqual(result, {
+    ok: true,
+    value: { compacted: false, reason: 'NO_RANGE', via: 'command', text: 'No compactable history yet.' }
+  });
+});
+
+test('compact：命令失败文案映射回稳定错误码（busy / summary / changed …）', async () => {
+  const cases = [
+    ['Compaction is unavailable because this process has an active compaction, or the agent is not idle.', 'BUSY'],
+    ['Compaction cancelled.', 'CANCELLED'],
+    ['The history selected for compaction changed before it could be replaced. The attempt is recorded in the session log.', 'CHANGED'],
+    ['Compaction could not produce a useful summary. The attempt is recorded in the session log.', 'SUMMARY_FAILED'],
+    ['Compaction did not finish cleanly; some session history may have changed. Inspect the current session state before retrying.', 'COMMIT_FAILED'],
+    ['Compaction finished, but the session could not be saved.', 'PERSISTENCE_FAILED'],
+    ['something else entirely', 'COMPACT_FAILED']
+  ];
+  for (const [text, expected] of cases) {
+    const env = makeCtx({
+      agent,
+      commands: { execute: async () => ({ commandId: 'cmd-x', result: { kind: 'error', text } }) }
+    });
+    const result = await createContextHandler({ ctx: env.ctx })('compact', { sessionId: 's1' });
+    assert.equal(result.ok, false, text);
+    assert.equal(result.error.code, expected, text);
+    assert.equal(result.error.details.via, 'command', text);
+  }
+});
+
+test('compact：命令未注册（execute 返回 undefined）时回退到 compaction.compactNow', async () => {
+  let called = 0;
+  const env = makeCtx({
+    agent,
+    compaction: {
+      compactNow: async () => {
+        called += 1;
+        return { shadowedSeqs: [1, 2], shadowedTokenCount: 900 };
+      }
+    },
+    commands: { execute: async () => undefined }
+  });
+  const result = await createContextHandler({ ctx: env.ctx })('compact', { sessionId: 's1' });
+  assert.equal(called, 1);
+  assert.deepEqual(result, {
+    ok: true,
+    value: { compacted: true, via: 'service', items: 2, tokensSaved: 900 }
   });
 });
 

@@ -19,7 +19,7 @@
 
 | 组件（界面显示名） | Loader 行 | 提供什么 |
 |---|---|---|
-| 会话增强 | `dsh-session-enhance` | 会话标题栏复制按钮 + 工具 `session_lookup`（按 id 查会话与全部子代理）+ 官方「上下文已用」面板里的**压缩上下文**动作 |
+| 会话增强 | `dsh-session-enhance` | 会话标题栏复制按钮 + 工具 `session_lookup`（按 id 查会话与全部子代理）+ 官方「上下文已用」面板里的**压缩上下文**动作 + **恢复子智能体**按钮/工具 |
 | 会话分享 | `dsh-session-enhance/share` | 标题栏分享按钮 + 工具 `session_share` + 免登录只读页 `/share/<token>` |
 | 失败重试 | `dsh-session-enhance/retry` | composer 的「重试」覆盖层 + `agent/request-error` 闸门 |
 
@@ -244,6 +244,43 @@ DSH 自带一个官方上下文 meter：composer 下方的小圆环 + 百分比�
 > 超过 104 万窗口，提供方直接拒绝；当时 profile 里压缩栈是关闭的，所以只能看到红色失败。
 > 启用压缩栈 + 面板里的压缩动作后：阈值内自动摘要，或随时手动压缩，不会再撞窗口。
 
+### 恢复子智能体（4.4 起）
+
+重启或长任务中断之后，子智能体（`subagent` 工具派生的子会话、Agent Teams 的 teammate）的
+会话日志还在，但进程内的 Agent 已经没了。DSH 的规则是：
+
+- 只有**父级**对「直接可继续子级」发送 continuation 消息时才会**冷恢复**它
+  （`dsh-subagent` / `dsh-experimental-agent-team` 的 `sendMessage`）；
+- UI 直接打开子会话**不能**把它恢复 —— `dsh-api-session-controller` 会抛
+  `ApiSessionSubagentOwnership`（"is a subagent session; use subagent delivery"）。
+
+所以本插件补上这条通道，提供两个入口：
+
+**1. 标题栏按钮**（`conversation.session.header.utilities`，分享按钮左侧）
+
+- 父会话里有离线子智能体时显示「恢复子智能体（N）」：点一下，对每个离线目标发送一条中性的
+  「继续」消息，由官方机制冷恢复（team 目标按名字发给 Lead，subagent 目标按会话 id 发给父级）；
+- 子会话里父级在线时显示「恢复本子智能体」：点一下，由父会话冷恢复本会话；
+- 恢复中按钮禁用；完成后 Toast 报「已恢复 N 个 / 失败 N 个（错误码）」；
+- 没有可恢复目标时按钮不渲染。
+
+**2. 工具 `session_resume_subagents`**（模型可用）
+
+| 参数 | 必填 | 默认 | 含义 |
+|---|---|---|---|
+| `sessionId` | 否 | 当前会话 | 父会话（root/Lead），或要恢复的子会话 id |
+| `targets` | 否 | 全部 | 只恢复这些子会话 id / teammate 名字 |
+| `dryRun` | 否 | `false` | 只列出子智能体与状态，不发送恢复消息 |
+
+于是"主会话恢复后恢复子会话"和"在子会话里恢复自己"都可以：前者在主会话里点按钮或让 Agent
+调用工具；后者打开子会话后点标题栏按钮（父会话必须在线，否则会提示
+`PARENT_NOT_LIVE`，先打开父会话即可）。
+
+**边界**：恢复只发一条「继续」消息，不复制历史、不重建 agent —— preset、工具限制、模型都由
+子会话自己的 descriptor 决定（这是官方冷恢复的语义）。一次只可继续的子级才会恢复：外部
+（ACP / SDK / Codex / Claude Code）子级与一次性子代理不在可恢复范围内；单个父级下的在线子代理
+数量受 `maxActiveSubagents` 限制，超限会返回 `ACTIVATION_LIMIT_REACHED`。
+
 ## 设计说明
 
 ### 浏览器半的槽位
@@ -340,6 +377,7 @@ continue;   // ← 回到同一 turn/step 的模型请求
 | UI 沙箱 | 真实浏览器：标题栏分享/复制按钮可见；分享对话框创建/复制/停止全流程；重试覆盖层在无失败态时是隐藏占位（注册成功）、composer 区域正常 | 通过 |
 | 2.0.0 拆分回归 | 单测 101/101；headless 真实 Loader 两工具均可用；UI 沙箱「设置 → 插件 → 会话增强」显示**包含的组件 共 3 个 · 3 运行中**，三行标题/描述分别来自包根、`share/locale/`、`retry/locale/` | 通过 |
 | 2.1.0 / DSH 0.2.2-rc.1 | 单测 **106/106**；devkit web 沙箱（真实 Chrome + 真实 sub2api/deepseek-flash）：三个 client 半进页面清单、控制台 0 错误；复制会话 ID toast；分享链接 200 且渲染标题+消息；「停止 → 重试」turn 正常完成；`time-context` 注入不再出现在消息里 | 通过 |
+| 4.4.0 恢复子智能体 / DSH 0.2.2-rc.1 | 单测 **135/135**（新增 subagent 8 条：父/子 list、父级离线、team+subagent 混合恢复、targets 过滤、PARENT_NOT_LIVE、ALREADY_LIVE、diag）；`node --check` 通过；devkit headless 沙箱真实 Loader 调 `session_resume_subagents`（dryRun）验证工具注册与严格 schema；浏览器按钮随会话状态显示（父会话有离线子代理/子会话父级在线） | 通过 |
 | 4.3.0 手动压缩走官方 /compact 命令 / DSH 0.2.2-rc.1 | 单测 **127/127**（命令成功解析、NO_RANGE、失败文案→错误码、命令缺失回退、diag.hasCommand）；`node --check` 通过；devkit web/UI 沙箱：动作行注入成功、点击走 `commands.execute('/compact')`（真实 Loader 返回 SUMMARY_FAILED，属沙箱无模型 key 的预期结果） | 通过 |
 | 4.2.0 压缩动作注入官方 ContextMeter 面板 / DSH 0.2.2-rc.1 | 单测 **123/123**；`node --check client.js`；devkit web/UI 沙箱：client 半加载 0 console 错误，模拟官方同形状面板（role=dialog + dl + 62%）时动作行被追加到面板末尾（文案「压缩上下文 / 压缩」、title 正确），点击后 Host 真实执行 compactNow 并回显「没有可压缩的历史」（沙箱无模型 key，预期结果）；修复注入器 MutationObserver 死循环 | 通过 |
 | 4.1.0 上下文用量 + 手动压缩 / DSH 0.2.2-rc.1 | 单测 **123/123**（新增 context 12 条 + retry 溢出用例）；devkit web/UI 沙箱：client 半 dsh-session-enhance@4.1.0 is loaded、0 console 错误、dataset.dshTurnRetry=4.1.0、[data-session-context] 小部件注册、启用官方压缩栈后 /dsh-session-enhance-context/diag 真机返回 {hasCompaction:true,hasTokenMeter:true}，点「压缩」真实调用 compactNow 并显示 压缩失败（SUMMARY_FAILED）（沙箱无模型 key，属预期错误路径）；活 profile 启用 compaction-basic/command-compact/tool-result-pruner | 通过 |

@@ -75,13 +75,14 @@ test('三个入口都导出 name / inject / apply，且 name 与 Loader 行的 s
   assert.deepEqual(retryEntry.inject, []);
 });
 
-test('会话 ID 行只注册 session_lookup', () => {
+test('会话增强行注册 session_lookup 与 session_resume_subagents', () => {
   const ctx = mockCtx();
   copyEntry.apply(ctx);
 
   const names = ctx.collected.tools.map((tool) => tool.name);
-  assert.deepEqual(names, ['session_lookup']);
-  assert.match(ctx.collected.tools[0].description, /session ID/);
+  assert.deepEqual(names, ['session_lookup', 'session_resume_subagents']);
+  assert.match(ctx.collected.tools[0].description, /session ID/i);
+  assert.match(ctx.collected.tools[1].description, /subagent/i);
 });
 
 test('分享行只注册 session_share，并挂上两条路由（RPC 前缀 + 公开页）', async () => {

@@ -3,6 +3,42 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 4.4.0 — 2026-11-10
+
+### 新能力：恢复被终止的子智能体
+
+重启 / 长任务中断之后，子智能体（`subagent` 工具派生的子会话、Agent Teams 的 teammate）
+的会话日志还在，但进程内 Agent 已消失。DSH 的恢复规则是：**只有父级**对「直接可继续子级」
+发送 continuation 消息才会冷恢复（`dsh-subagent` / `dsh-experimental-agent-team` 的
+`sendMessage`）；UI 直接打开子会话会被 `dsh-api-session-controller` 以
+`ApiSessionSubagentOwnership` 拒绝。本插件补上这条通道：
+
+- **标题栏按钮**（`conversation.session.header.utilities`）：
+  - 父会话里有离线可恢复子智能体时显示「恢复子智能体（N）」→ 逐个冷恢复；
+  - 子会话里父级在线时显示「恢复本子智能体」→ 经父会话恢复自己；
+  - 恢复中禁用，完成后 Toast 报成功/失败数（含错误码）；无目标不渲染。
+- **工具 `session_resume_subagents`**：`sessionId?` / `targets?` / `dryRun?`，让模型也能
+  列出并恢复（主会话让 Agent 自主恢复子代理）。
+- Host 新 RPC 通道 `/dsh-session-enhance-subagent`（`list` / `resume` / `diag`）：
+  - `list` 合并两路发现：`agentTeams.listMembers`（teammate，行含 id/name/status）与
+    `subagents.listChildren`（continuable 子会话，行含 id/label/mode），并用 `agents.get`
+    标记在线状态；
+  - `resume` 父会话模式：`agentTeams.sendMessage(lead, { target: name })` 与
+    `subagents.sendMessage(parent, childId, ...)`；子会话模式：读取 `parentSession`，
+    由在线父级发送；父级离线 → `PARENT_NOT_LIVE`，已在线 → `ALREADY_LIVE`，
+    非可继续目标 → `NOT_RESUMABLE`；
+  - 恢复内容是一条中性的「继续」消息（与重试半同文案），preset/工具限制/模型都由子会话
+    自己的 descriptor 决定，不复制历史、不重建 agent。
+- 服务均为软依赖：`subagents` / `agentTeams` / `sessionQuery` 缺失时对应能力返回明确错误码。
+
+### 验证
+
+- 单测 **135/135**（新增 `test/subagent.test.mjs` 8 条：父/子两种 list、父级离线、
+  team+subagent 混合恢复、`targets` 过滤、`PARENT_NOT_LIVE`、`ALREADY_LIVE`、diag）。
+- `node --check` 通过。
+- devkit headless 沙箱：真实 Loader 里调用 `session_resume_subagents`（dryRun）验证工具注册
+  与严格 schema 校验通过（详见提交说明）。
+
 ## 4.3.0 — 2026-11-10
 
 ### 手动压缩改为执行官方 `/compact` 命令（参考 Claude Code 的 /compact 机制）

@@ -292,6 +292,34 @@ DSH 自带一个官方上下文 meter：composer 下方的小圆环 + 百分比�
 > 需要工具配对平衡；在 `agent/pre-step` 里自己选范围会与官方事务抢锁并增加断点次数。分级
 > 压缩复用官方入口（`compactIfNeeded` + `pruneSession`）才保证一次断点与回放安全。
 
+### 与 Claude Code 五级压缩的对照（4.6 起）
+
+Claude Code 的上下文管理是五级渐进体系（Snip → MicroCompact → Context Collapse →
+AutoCompact → Reactive Compact）。本插件按 DSH 的压缩 seam 做了对齐，能做到的做，
+做不到的说明原因：
+
+| CC 层级 | CC 的做法 | 本插件 / DSH | 差异与原因 |
+|---|---|---|---|
+| Snip 历史剪除 | 直接移除远端旧消息，零成本 | **未实现** | DSH 表层只能「替换」不能「删除」；直接写事件（ebbing 方式）会绕过 compaction seam，要自己复刻锁与工具配对，风险大于收益 |
+| MicroCompact 微压缩 | 清理旧工具结果（白名单、每轮评估、缓存/时间两条路径） | **L1**：官方 `toolResultPruner` 批量修剪 | DSH 的 pruner 是官方实现（保留头尾），本插件把它提前到有效窗口 60% 并保证一次批量；CC 的「缓存微压缩/时间微压缩」依赖服务端缓存协议，DSH 没有 |
+| Context Collapse 上下文折叠 | 分段折叠、保留细粒度；~90% 开始；启用时跳过 AutoCompact | **未单独实现** | DSH seam 只有「摘要替换」一种写操作；官方 `compactIfNeeded` 本身就是「摘要最旧范围 + 逐字保留近期尾部」，等价于折叠+自动压缩合并 |
+| AutoCompact 自动压缩 | 阈值触发；优先复用 Session Memory（0 调用），失败再全量摘要；压缩提示词含 9 要素 + `<analysis>`；压缩后回填最近 5 个文件/技能；连续失败 3 次熔断 | **L2** + **熔断** | 摘要提示词、保留比例与压缩后内容由官方 `compaction-basic` 决定（结构化 8 段检查点），本插件不改；熔断 4.6 补上；DSH 没有 Session Memory 服务，无法做「0 调用复用」 |
+| Reactive Compact 响应式压缩 | 413 扣留 → 先 drain 折叠 → 再全量总结 → 仍失败才报错；每轮一次 | **L3** | 官方 compaction-basic 已有 `CONTEXT_WINDOW_EXCEEDED` 恢复；本插件作为兜底，4.6 起与 `autoCompact` 开关解耦（关闭时也生效），每轮最多一次 |
+| 多级预警 | 警告 / 自动压缩 / 阻塞三级 buffer | **预警后缀**（4.6） | 动作行在压力 ≥ 有效窗口 90% 时显示「上下文即将用尽」；DSH 没有「阻塞 API 调用」的 seam，因此不阻塞请求 |
+
+几个刻意的差异：
+
+- **阈值按比例而非固定 buffer**：CC 用「窗口 − 输出预留 − 13K」的 token buffer；
+  DSH 的窗口随路由模型变化，本插件用「有效窗口（窗口 − 输出预留）× 60% / 80%」，
+  阈值随模型自动缩放。
+- **微压缩是压力门控的**：CC 每轮评估微压缩（默认构建里常是 no-op）；本插件只在
+  压力 ≥ 60% 时批量修剪，避免无谓的前缀缓存断点。
+- **压缩质量**：CC 用 9 要素提示词 + `<analysis>` 先分析再总结；DSH 的官方摘要提示词
+  是 8 段结构化检查点（Primary Request / Files / Errors / Pending / Current Work …），
+  同样要求保留文件路径、错误与用户原话——这层由官方后端负责，本插件不替换它。
+
+
+
 ### 恢复子智能体（4.4 起）
 
 重启或长任务中断之后，子智能体（`subagent` 工具派生的子会话、Agent Teams 的 teammate）的
@@ -426,6 +454,7 @@ continue;   // ← 回到同一 turn/step 的模型请求
 | UI 沙箱 | 真实浏览器：标题栏分享/复制按钮可见；分享对话框创建/复制/停止全流程；重试覆盖层在无失败态时是隐藏占位（注册成功）、composer 区域正常 | 通过 |
 | 2.0.0 拆分回归 | 单测 101/101；headless 真实 Loader 两工具均可用；UI 沙箱「设置 → 插件 → 会话增强」显示**包含的组件 共 3 个 · 3 运行中**，三行标题/描述分别来自包根、`share/locale/`、`retry/locale/` | 通过 |
 | 2.1.0 / DSH 0.2.2-rc.1 | 单测 **106/106**；devkit web 沙箱（真实 Chrome + 真实 sub2api/deepseek-flash）：三个 client 半进页面清单、控制台 0 错误；复制会话 ID toast；分享链接 200 且渲染标题+消息；「停止 → 重试」turn 正常完成；`time-context` 注入不再出现在消息里 | 通过 |
+| 4.6.0 熔断/预警/响应式压缩解耦 / DSH 0.2.2-rc.1 | 单测 **156/156**（新增熔断 3 次→暂停→下一轮重置、成功清零、`autoCompact` 关闭时溢出恢复仍介入、`statusFor`/`effectiveWindowFor`、`get` 新字段）；`node --check` 通过；devkit web/UI 沙箱：client 半加载 0 console 错误、动作行状态后缀与设置页不受影响 | 通过 |
 | 4.5.0 分级压缩 + 自动开关 / DSH 0.2.2-rc.1 | 单测 **153/153**（新增 `test/compact.test.mjs` 15 条：阈值边界、有效窗口、volatile 配置读取、L1/L2/L3、异常吞掉、守卫安装/恢复、溢出重试上限、pruneAll/describe/diag；entries 新增 Config 与 `configure({auto:false})` 断言；context 覆盖新的 `get`/`compact`/`diag` 字段）；`node --check index.js client.js`；devkit headless 沙箱真实 Loader：三行合成正确、`session_lookup` 实调通过；devkit web/UI 沙箱：`dsh-session-enhance@4.5.0` client 半进页面清单、0 console 错误、设置 → 插件 → 已安装 → 会话增强详情页出现「自动压缩」开关（默认关）+ 提示 + 保存；点开关 → 保存后沙箱 profile patch 写入 `- id: dsh-session-enhance` + `config: {autoCompact: true}`，刷新页面后开关仍为开并显示「已覆盖」 | 通过 |
 | 4.4.0 恢复子智能体 / DSH 0.2.2-rc.1 | 单测 **135/135**（新增 subagent 8 条：父/子 list、父级离线、team+subagent 混合恢复、targets 过滤、PARENT_NOT_LIVE、ALREADY_LIVE、diag）；`node --check` 通过；devkit headless 沙箱真实 Loader 调 `session_resume_subagents`（dryRun）验证工具注册与严格 schema；浏览器按钮随会话状态显示（父会话有离线子代理/子会话父级在线） | 通过 |
 | 4.3.0 手动压缩走官方 /compact 命令 / DSH 0.2.2-rc.1 | 单测 **127/127**（命令成功解析、NO_RANGE、失败文案→错误码、命令缺失回退、diag.hasCommand）；`node --check` 通过；devkit web/UI 沙箱：动作行注入成功、点击走 `commands.execute('/compact')`（真实 Loader 返回 SUMMARY_FAILED，属沙箱无模型 key 的预期结果） | 通过 |

@@ -129,6 +129,11 @@ window.__ModuleLoader__.load({
       'context.autoOn': 'auto compaction: on',
       'context.autoOff': 'auto compaction: off',
       'context.autoHint': 'Tiered compaction: prune at {prune} of the effective window, summarize at {compact}.',
+      'context.nearLimit': 'context almost full',
+      'context.nearLimitTitle': 'Context is close to the window limit — compact now to avoid a context-overflow failure.',
+      'context.breakerOpen': 'auto compaction paused',
+      'context.breakerTitle':
+        'Auto compaction paused after {n} consecutive failures; it retries in the next turn. Use Compact to retry now.',
       'context.compactedPruned': 'Pruned {pruned} tool results; compacted {items} items, freed about {tokens} tokens',
       'context.compactedGenericPruned': 'Pruned {pruned} tool results; compaction finished (see the summary card)',
       'context.prunedOnly': 'Pruned {pruned} tool results; no compactable history yet',
@@ -208,6 +213,11 @@ window.__ModuleLoader__.load({
       'context.autoOn': '自动压缩：开',
       'context.autoOff': '自动压缩：关',
       'context.autoHint': '分级压缩：有效窗口 {prune} 时批量清理工具输出，{compact} 时修剪并摘要历史。',
+      'context.nearLimit': '上下文即将用尽',
+      'context.nearLimitTitle': '上下文接近窗口上限，建议立即压缩以避免溢出失败。',
+      'context.breakerOpen': '自动压缩已暂停',
+      'context.breakerTitle':
+        '自动压缩连续失败 {n} 次后暂停，下一轮会重新尝试；也可点「压缩」立即重试。',
       'context.compactedPruned': '已清理 {pruned} 个工具输出；压缩 {items} 项，释放约 {tokens} tokens',
       'context.compactedGenericPruned': '已清理 {pruned} 个工具输出；压缩完成，详见对话中的压缩摘要',
       'context.prunedOnly': '已清理 {pruned} 个工具输出；没有可压缩的历史',
@@ -2188,6 +2198,11 @@ window.__ModuleLoader__.load({
     let contextAutoCompact = null;
     let contextPruneRatio = null;
     let contextCompactRatio = null;
+    let contextWarningRatio = null;
+    let contextPressureTokens = null;
+    let contextAutoEffectiveWindow = null;
+    let contextAutoFailures = 0;
+    let contextBreakerOpen = false;
     let contextAutoProbeSession = '';
     let contextObserver = null;
     let contextInterval = null;
@@ -2305,6 +2320,12 @@ window.__ModuleLoader__.load({
           contextAutoCompact = value.autoCompact === true;
           contextPruneRatio = typeof value.pruneRatio === 'number' ? value.pruneRatio : null;
           contextCompactRatio = typeof value.compactRatio === 'number' ? value.compactRatio : null;
+          contextWarningRatio = typeof value.warningRatio === 'number' ? value.warningRatio : null;
+          contextPressureTokens = typeof value.pressureTokens === 'number' ? value.pressureTokens : null;
+          contextAutoEffectiveWindow =
+            typeof value.effectiveWindow === 'number' ? value.effectiveWindow : null;
+          contextAutoFailures = typeof value.autoFailures === 'number' ? value.autoFailures : 0;
+          contextBreakerOpen = value.breakerOpen === true;
           if (value.canCompact === false) contextCanCompact = false;
           renderContextAction(ctx, t);
         })
@@ -2347,9 +2368,20 @@ window.__ModuleLoader__.load({
       // 直接把页面主线程卡死（本次沙箱验证踩到过）。幂等写入才能让观察器收敛。
       const autoText =
         contextAutoCompact === true ? t('context.autoOn') : contextAutoCompact === false ? t('context.autoOff') : '';
+      // 「即将用尽」预警（对齐 Claude Code 的多级预警）：压力 ≥ 有效窗口的预警比例时提示。
+      const nearLimit =
+        contextAutoEffectiveWindow !== null &&
+        contextAutoEffectiveWindow > 0 &&
+        contextPressureTokens !== null &&
+        contextPressureTokens / contextAutoEffectiveWindow >= (contextWarningRatio ?? 0.9);
       const baseLabel = contextActionState.note === '' ? t('context.compactRow') : contextActionState.note;
-      const nextLabel =
-        autoText === '' || contextActionState.note !== '' ? baseLabel : `${baseLabel} · ${autoText}`;
+      const suffix = [];
+      if (contextActionState.note === '') {
+        if (autoText !== '') suffix.push(autoText);
+        if (nearLimit) suffix.push(t('context.nearLimit'));
+        if (contextBreakerOpen) suffix.push(t('context.breakerOpen'));
+      }
+      const nextLabel = suffix.length === 0 ? baseLabel : `${baseLabel} · ${suffix.join(' · ')}`;
       if (label.textContent !== nextLabel) label.textContent = nextLabel;
       const nextButtonText = contextActionState.busy ? t('context.compacting') : t('context.compact');
       if (button.textContent !== nextButtonText) button.textContent = nextButtonText;
@@ -2361,6 +2393,10 @@ window.__ModuleLoader__.load({
           prune: formatCompactRatio(contextPruneRatio),
           compact: formatCompactRatio(contextCompactRatio),
         })}`;
+      }
+      if (nearLimit) nextTitle = `${nextTitle}\n${t('context.nearLimitTitle')}`;
+      if (contextBreakerOpen) {
+        nextTitle = `${nextTitle}\n${t('context.breakerTitle', { n: contextAutoFailures })}`;
       }
       if (button.title !== nextTitle) button.title = nextTitle;
     }
@@ -2433,6 +2469,8 @@ window.__ModuleLoader__.load({
         setContextNote(t('context.transport'), ctx, t);
       } finally {
         contextActionState.busy = false;
+        // 压缩后重新探测：压力、熔断状态与阈值可能都变了。
+        contextAutoProbeSession = '';
         scheduleContextActionRender(ctx, t);
       }
     }

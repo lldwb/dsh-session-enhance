@@ -1,6 +1,6 @@
 {
   "name": "dsh-session-enhance",
-  "version": "4.5.0",
+  "version": "4.6.0",
   "description": "会话增强：按 ID 查看任意会话与它的全部子代理，标题栏复制会话 ID，免登录只读分享链接，模型失败/停止后一键重试，以及类似 Claude Code 的分级上下文压缩（自动/手动，设置页可开关）。三个可单独启停的组件。",
   "type": "module",
   "license": "MIT",

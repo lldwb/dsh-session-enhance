@@ -3,6 +3,40 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 4.6.0 — 2026-11-11
+
+### 新能力：熔断、多级预警，响应式压缩与开关解耦（对齐 Claude Code 五级压缩）
+
+参考 Claude Code 的五级渐进式上下文压缩（Snip → MicroCompact → Context Collapse →
+AutoCompact → Reactive Compact）补齐 4.5 的工程缺口：
+
+- **自动压缩熔断**：连续 3 次摘要失败后暂停主动自动压缩（L2），避免「每步重试、
+  一轮几十次失败调用」——真实事故里一个会话曾因此打了 160 次失败的摘要请求。
+  熔断在下一轮（agent idle）重置；手动压缩成功或溢出恢复成功也会清零。
+- **响应式压缩（L3）与开关解耦**：`autoCompact` 关闭时仍处理
+  `CONTEXT_WINDOW_EXCEEDED`（先压缩再重试，错误扣留），与 README 里「L3 是安全网」
+  的说法一致；每轮最多一次。
+- **多级预警**：官方「上下文已用」面板的动作行在压力 ≥ 有效窗口 90% 时显示
+  「上下文即将用尽」；熔断打开时显示「自动压缩已暂停」，title 给出失败次数与重试方式。
+- `get` 端点新增 `warningRatio` / `effectiveWindow` / `autoFailures` / `breakerOpen`；
+  手动压缩成功后重置熔断并刷新面板状态。
+
+### 与 Claude Code 五级压缩的对照（README 有完整表）
+
+| CC | 本插件 / DSH |
+|---|---|
+| Snip 历史剪除 | 未实现：DSH 表层只能替换不能删除，直接写事件会绕过 compaction seam |
+| MicroCompact 微压缩 | L1：官方 `toolResultPruner` 批量修剪（压力 ≥ 60%） |
+| Context Collapse 上下文折叠 | 未单独实现：DSH seam 只有摘要替换；官方 `compactIfNeeded` 本身即「摘要最旧范围 + 保留近期尾部」 |
+| AutoCompact 自动压缩 | L2 + 4.6 熔断；摘要提示词与压缩后回填由官方后端决定，本插件不改 |
+| Reactive Compact 响应式压缩 | L3：`CONTEXT_WINDOW_EXCEEDED` 恢复，4.6 起与开关解耦、每轮一次 |
+
+### 验证
+
+- 单测 **156/156**：新增熔断（3 次失败→暂停→下一轮重置）、成功清零、溢出恢复在
+  `autoCompact` 关闭时仍介入、`statusFor`/`effectiveWindowFor`、`get` 新字段。
+- `node --check` 通过；README 补充五级对照与未实现项的原因。
+
 ## 4.5.0 — 2026-11-11
 
 ### 新能力：分级上下文压缩（自动 + 手动，批处理单次断点）

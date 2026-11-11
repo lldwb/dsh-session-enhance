@@ -8,9 +8,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  DEFAULT_AUTO_FAILURE_LIMIT,
   DEFAULT_COMPACT_RATIO,
   DEFAULT_MAX_OVERFLOW_RETRIES,
   DEFAULT_PRUNE_RATIO,
+  DEFAULT_WARNING_RATIO,
   TIER,
   effectiveWindow,
   formatRatio,
@@ -260,19 +262,78 @@ test('driver：溢出恢复在表层未前进时交回 next()', async () => {
   assert.equal(result, undefined);
 });
 
-test('driver：autoCompact 关闭时溢出恢复不介入', async () => {
+test('driver：溢出恢复是安全网，autoCompact 关闭时也介入', async () => {
   const env = makeDriverEnvironment({ auto: false });
-  const agent = makeAgent();
-  let nextCalled = 0;
-  await env.driver.onRequestError(
+  const agent = makeAgent({ generation: 1 });
+  let attempts = 0;
+  env.engine.compactIfNeeded = async () => {
+    attempts += 1;
+    agent.session.surface.replaceGeneration += 1;
+    return { shadowedSeqs: [1], shadowedTokenCount: 10 };
+  };
+  const result = await env.driver.onRequestError(
     { agent, failure: { code: 'CONTEXT_WINDOW_EXCEEDED' }, signal: { aborted: false } },
-    async () => {
-      nextCalled += 1;
-      return undefined;
-    }
+    async () => undefined
   );
-  assert.equal(nextCalled, 1);
-  assert.equal(env.calls.compactIfNeeded.length, 0);
+  assert.deepEqual(result, { kind: 'retry' });
+  assert.equal(attempts, 1);
+});
+
+test('driver：自动压缩连续失败 3 次后熔断，空闲（轮结束）后重置', async () => {
+  const env = makeDriverEnvironment({ auto: true, totalTokens: 900 });
+  const agent = makeAgent();
+  let attempts = 0;
+  env.engine.compactIfNeeded = async () => {
+    attempts += 1;
+    throw new Error('summary rejected');
+  };
+
+  // 前三次都会真正尝试，每次都被 onPreStep 吞掉（不抛给宿主）。
+  for (let index = 0; index < 3; index += 1) {
+    await env.driver.onPreStep({ agent, signal: { aborted: false } }, async () => undefined);
+  }
+  assert.equal(attempts, 3);
+  assert.equal(env.driver.statusFor(agent).breakerOpen, true);
+  assert.equal(env.driver.statusFor(agent).autoFailures, 3);
+
+  // 熔断后第 4 次不再调用引擎。
+  await env.driver.onPreStep({ agent, signal: { aborted: false } }, async () => undefined);
+  assert.equal(attempts, 3);
+  assert.equal(env.driver.statusFor(agent).breakerOpen, true);
+
+  // 一轮结束（idle）后重置，下一轮重新给机会。
+  env.driver.onStatus({ agent, status: 'idle' });
+  assert.equal(env.driver.statusFor(agent).breakerOpen, false);
+  assert.equal(env.driver.statusFor(agent).autoFailures, 0);
+});
+
+test('driver：自动压缩成功后清零失败计数', async () => {
+  const env = makeDriverEnvironment({ auto: true, totalTokens: 900 });
+  const agent = makeAgent();
+  let shouldFail = true;
+  env.engine.compactIfNeeded = async () => {
+    if (shouldFail) throw new Error('boom');
+    return { shadowedSeqs: [1, 2], shadowedTokenCount: 100 };
+  };
+  for (let index = 0; index < 2; index += 1) {
+    await env.driver.onPreStep({ agent, signal: { aborted: false } }, async () => undefined);
+  }
+  assert.equal(env.driver.statusFor(agent).autoFailures, 2);
+  shouldFail = false;
+  await env.driver.onPreStep({ agent, signal: { aborted: false } }, async () => undefined);
+  assert.equal(env.driver.statusFor(agent).autoFailures, 0);
+  assert.equal(env.driver.statusFor(agent).breakerOpen, false);
+});
+
+test('driver：statusFor 给出有效窗口与熔断状态', () => {
+  const env = makeDriverEnvironment({ auto: true });
+  const agent = makeAgent({ contextWindow: 1_000, maxTokens: 200 });
+  assert.equal(env.driver.effectiveWindowFor(agent), 800);
+  assert.deepEqual(env.driver.statusFor(agent), {
+    autoFailures: 0,
+    breakerOpen: false,
+    effectiveWindow: 800
+  });
 });
 
 test('driver：自动压缩守卫让官方 pressure 路径在关闭时真正停手，且可恢复', async () => {
@@ -304,7 +365,9 @@ test('driver：pruneAll / describe / diag 的稳定形状', async () => {
     autoCompact: true,
     pruneRatio: DEFAULT_PRUNE_RATIO,
     compactRatio: DEFAULT_COMPACT_RATIO,
-    maxOverflowRetries: DEFAULT_MAX_OVERFLOW_RETRIES
+    warningRatio: DEFAULT_WARNING_RATIO,
+    maxOverflowRetries: DEFAULT_MAX_OVERFLOW_RETRIES,
+    autoFailureLimit: DEFAULT_AUTO_FAILURE_LIMIT
   });
   const diag = env.driver.diag();
   assert.equal(diag.hasCompaction, true);

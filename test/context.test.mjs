@@ -107,7 +107,11 @@ test('get：返回压力与窗口，并说明压缩是否可用', async () => {
       autoCompact: false,
       pruneRatio: null,
       compactRatio: null,
-      canPrune: false
+      warningRatio: null,
+      canPrune: false,
+      effectiveWindow: null,
+      autoFailures: 0,
+      breakerOpen: false
     }
   });
 });
@@ -396,15 +400,20 @@ test('RPC 常量：通道名与请求体上限是稳定契约', () => {
 test('get：driver 提供自动压缩状态、阈值与修剪器可用性', async () => {
   const env = makeCtx({ agent, pressure: { pressureTokens: 100, contextWindow: 1_000 } });
   const driver = {
-    describe: () => ({ autoCompact: true, pruneRatio: 0.6, compactRatio: 0.8 }),
-    prunerFor: () => ({ pruneSession: () => ({ pruned: [], charsRemoved: 0 }) })
+    describe: () => ({ autoCompact: true, pruneRatio: 0.6, compactRatio: 0.8, warningRatio: 0.9 }),
+    prunerFor: () => ({ pruneSession: () => ({ pruned: [], charsRemoved: 0 }) }),
+    statusFor: () => ({ autoFailures: 2, breakerOpen: true, effectiveWindow: 800 })
   };
   const result = await createContextHandler({ ctx: env.ctx, driver })('get', { sessionId: 's1' });
   assert.equal(result.ok, true);
   assert.equal(result.value.autoCompact, true);
   assert.equal(result.value.pruneRatio, 0.6);
   assert.equal(result.value.compactRatio, 0.8);
+  assert.equal(result.value.warningRatio, 0.9);
   assert.equal(result.value.canPrune, true);
+  assert.equal(result.value.effectiveWindow, 800);
+  assert.equal(result.value.autoFailures, 2);
+  assert.equal(result.value.breakerOpen, true);
 });
 
 test('compact：先批量修剪工具输出（L1），再执行压缩（L2），并回报 pruned', async () => {

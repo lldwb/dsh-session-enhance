@@ -1,6 +1,6 @@
 # 会话增强 · dsh-session-enhance
 
-**一个插件包，三个可单独启停的组件**：会话检视（按 ID 查会话与子代理 + 标题栏复制 ID）、会话分享、失败重试。
+**一个插件包，三个可单独启停的组件**：会话检视（按 ID 查会话与子代理 + 标题栏复制 ID）、会话分享、失败重试；第一个组件还带**分级上下文压缩**（自动/手动，设置页可开关）。
 
 > 开源（MIT）。仓库地址：<https://github.com/lldwb/dsh-session-enhance>
 >
@@ -19,7 +19,7 @@
 
 | 组件（界面显示名） | Loader 行 | 提供什么 |
 |---|---|---|
-| 会话增强 | `dsh-session-enhance` | 会话标题栏复制按钮 + 工具 `session_lookup`（按 id 查会话与全部子代理）+ 官方「上下文已用」面板里的**压缩上下文**动作 + **恢复子智能体**按钮/工具 |
+| 会话增强 | `dsh-session-enhance` | 会话标题栏复制按钮 + 工具 `session_lookup`（按 id 查会话与全部子代理）+ 官方「上下文已用」面板里的**分级压缩**动作（4.5 起自动/手动）+ **恢复子智能体**按钮/工具 |
 | 会话分享 | `dsh-session-enhance/share` | 标题栏分享按钮 + 工具 `session_share` + 免登录只读页 `/share/<token>` |
 | 失败重试 | `dsh-session-enhance/retry` | composer 的「重试」覆盖层 + `agent/request-error` 闸门 |
 
@@ -230,19 +230,67 @@ DSH 自带一个官方上下文 meter：composer 下方的小圆环 + 百分比�
 面板关闭/重渲染自动补回，插件卸载时清理观察器、样式与节点。官方若以后换 DOM 结构，
 最坏结果是这一行不出现——不会影响官方 meter 本身。
 
-**前置条件**：手动压缩依赖官方压缩栈。请在 profile 里启用（`设置 → 插件` 或补丁层）：
+**前置条件**：手动/自动压缩依赖官方压缩栈。请在 profile 里启用（`设置 → 插件` 或补丁层）：
 
 - `@deepseek-ai/dsh-compaction-basic`：提供 `ctx.compaction` 服务，并在压力达到阈值时
   **自动压缩**（默认 `thresholdRatio: 0.8`）——这是避免 `CONTEXT_WINDOW_EXCEEDED` 的兜底；
 - 可选 `@deepseek-ai/dsh-command-compact`：额外的 `/compact` 打字入口；
-- 可选 `@deepseek-ai/dsh-compaction-tool-result-pruner`：压缩时先修剪超大工具输出。
+- 可选 `@deepseek-ai/dsh-compaction-tool-result-pruner`：压缩时先修剪超大工具输出（L1 的
+  批量修剪也复用它，没挂载时 L1 自动跳过、L2 仍可摘要）。
 
 没启用 `compaction-basic` 时，动作行依旧出现但按钮置灰并提示
-「压缩不可用：当前部署未启用压缩插件」——不会假装成功。
+「压缩不可用：当前部署未启用压缩插件」——不会假装成功。4.5 的自动压缩开关默认关闭；
+需要自动分级压缩时到 `设置 → 插件 → 已安装 → 会话增强` 打开。
 
 > 真实事故（2026-11-09，`session-3b342fc5`）：一个 64 轮 / 658 步的会话堆到 128 万 tokens，
 > 超过 104 万窗口，提供方直接拒绝；当时 profile 里压缩栈是关闭的，所以只能看到红色失败。
 > 启用压缩栈 + 面板里的压缩动作后：阈值内自动摘要，或随时手动压缩，不会再撞窗口。
+
+### 分级上下文压缩（4.5 起：自动 + 手动，批处理单次断点）
+
+4.5 把压缩改造成 **Claude Code 式的分级机制**，并补上自动模式。核心是三级：
+
+| 级 | 名称 | 动作 | 模型调用 | 触发（占**有效窗口**比例） |
+|---|---|---|---|---|
+| L1 | 微压缩 | 一趟扫描把**所有**超预算工具结果批量修剪（官方 `toolResultPruner.pruneSession`） | 否 | ≥ 60%（`pruneRatio`） |
+| L2 | 深度压缩 | 官方 `compactIfNeeded('pressure')`：**先修剪全部可剪工具结果，再摘要最旧范围**，同一事务 | 是（1 次摘要） | ≥ 80%（`compactRatio`） |
+| L3 | 溢出恢复 | 官方 `compactIfNeeded('context-overflow')`，表层前进后重试该请求 | 是 | 提供方返回 `CONTEXT_WINDOW_EXCEEDED` |
+
+**有效窗口** = 模型窗口 − 输出预留（最近请求头的 `maxTokens`），与 Claude Code 的
+"有效上下文窗口"同口径；阈值只按比例判定，不写死 token 数。
+
+**批处理（一次性断点）**：历史替换会让「从第一个被替换 token 起」的前缀缓存失效。所以：
+
+- L2 不自己拆成"先修剪、下轮再摘要"——官方 `compactIfNeeded('pressure')` 在**同一个压缩事务**
+  （一次 `compaction/start` … `compaction/end`）里先剪全部、再摘要，只换一次表层；
+- L1 只在一次 `pruneSession` 里处理**所有**超预算工具结果，不做碎片化逐条清理；
+- 自动模式下 L1/L2 都在**同一个 `agent/pre-step`**（下一次请求发出前）完成，下一次请求看到的
+  是最终表层，因此只产生一个缓存断点。
+
+**开关**：`设置 → 插件 → 已安装 → 会话增强 → 自动压缩`，**默认关闭**。配置字段
+`autoCompact`（volatile，保存后热更新，不需要重启）。关闭时：
+
+- 本插件不做 L1/L2 主动自动压缩；
+- 手动「压缩」按钮仍然可用；
+- **L3 溢出恢复与切模型压缩作为安全网保留**（它们不是"主动压缩"，关掉只会让你在溢出时
+  直接看到红色报错）；
+- 运行期会给官方 compaction 引擎的 `compactIfNeeded('pressure')` 装一个守卫，因此**官方自带的
+  主动自动压缩也会真正停手**（web 形态下压缩实例在 preset 的隔离组里，profile patch 打不到它，
+  这是唯一可靠的开关方式）。
+
+**手动压缩也是分级的**：点「压缩」时先做 L1 批量修剪（不调模型），紧接着执行官方 `/compact`
+（L2 摘要）——两者在同一个空闲窗口内完成，下一次请求看到最终表层。结果提示会同时报
+「已清理 N 个工具输出；压缩 M 项，释放约 T tokens」。
+
+**与 DSH 自带压缩的关系**：官方 `dsh-compaction-basic` 默认 `auto: true`，会在自己的阈值
+（默认 0.8）自动压缩；本插件不改它的配置，只通过运行期守卫让 `autoCompact` 成为主动自动压缩
+的唯一开关。若想彻底移除官方自动压缩（包括溢出恢复），请在 profile 补丁里关闭该行
+（`- id: compaction-basic` + `config: { auto: false }`），或按官方 web 形态把 host 平面三行保持
+禁用、由 preset 提供压缩服务。
+
+> **为什么不用 `compactRegion` 做"更细的分级"**：官方 `compactRegion` 要求轮次开着、且选区
+> 需要工具配对平衡；在 `agent/pre-step` 里自己选范围会与官方事务抢锁并增加断点次数。分级
+> 压缩复用官方入口（`compactIfNeeded` + `pruneSession`）才保证一次断点与回放安全。
 
 ### 恢复子智能体（4.4 起）
 
@@ -291,6 +339,7 @@ DSH 自带一个官方上下文 meter：composer 下方的小圆环 + 百分比�
 | 复制 ID | 同上 | -10 |
 | 重试 | `conversation.input.overlay`（composer card 内的绝对定位锚点） | 0 |
 | 上下文（隐藏会话跟踪） | `conversation.input.left`（不渲染可见 UI，只记"当前会话是谁"） | 0 |
+| 设置页（自动压缩开关） | `plugins.bundle.config`（key = 包名，渲染在「设置 → 插件 → 已安装 → 会话增强」详情页） | — |
 
 上下文压缩动作在官方 `ContextMeter` 的 portal 面板里，不走 slot（见上一节「为什么用 DOM 注入」）。
 
@@ -377,6 +426,7 @@ continue;   // ← 回到同一 turn/step 的模型请求
 | UI 沙箱 | 真实浏览器：标题栏分享/复制按钮可见；分享对话框创建/复制/停止全流程；重试覆盖层在无失败态时是隐藏占位（注册成功）、composer 区域正常 | 通过 |
 | 2.0.0 拆分回归 | 单测 101/101；headless 真实 Loader 两工具均可用；UI 沙箱「设置 → 插件 → 会话增强」显示**包含的组件 共 3 个 · 3 运行中**，三行标题/描述分别来自包根、`share/locale/`、`retry/locale/` | 通过 |
 | 2.1.0 / DSH 0.2.2-rc.1 | 单测 **106/106**；devkit web 沙箱（真实 Chrome + 真实 sub2api/deepseek-flash）：三个 client 半进页面清单、控制台 0 错误；复制会话 ID toast；分享链接 200 且渲染标题+消息；「停止 → 重试」turn 正常完成；`time-context` 注入不再出现在消息里 | 通过 |
+| 4.5.0 分级压缩 + 自动开关 / DSH 0.2.2-rc.1 | 单测 **153/153**（新增 `test/compact.test.mjs` 15 条：阈值边界、有效窗口、volatile 配置读取、L1/L2/L3、异常吞掉、守卫安装/恢复、溢出重试上限、pruneAll/describe/diag；entries 新增 Config 与 `configure({auto:false})` 断言；context 覆盖新的 `get`/`compact`/`diag` 字段）；`node --check index.js client.js`；devkit headless 沙箱真实 Loader：三行合成正确、`session_lookup` 实调通过；devkit web/UI 沙箱：`dsh-session-enhance@4.5.0` client 半进页面清单、0 console 错误、设置 → 插件 → 已安装 → 会话增强详情页出现「自动压缩」开关（默认关）+ 提示 + 保存；点开关 → 保存后沙箱 profile patch 写入 `- id: dsh-session-enhance` + `config: {autoCompact: true}`，刷新页面后开关仍为开并显示「已覆盖」 | 通过 |
 | 4.4.0 恢复子智能体 / DSH 0.2.2-rc.1 | 单测 **135/135**（新增 subagent 8 条：父/子 list、父级离线、team+subagent 混合恢复、targets 过滤、PARENT_NOT_LIVE、ALREADY_LIVE、diag）；`node --check` 通过；devkit headless 沙箱真实 Loader 调 `session_resume_subagents`（dryRun）验证工具注册与严格 schema；浏览器按钮随会话状态显示（父会话有离线子代理/子会话父级在线） | 通过 |
 | 4.3.0 手动压缩走官方 /compact 命令 / DSH 0.2.2-rc.1 | 单测 **127/127**（命令成功解析、NO_RANGE、失败文案→错误码、命令缺失回退、diag.hasCommand）；`node --check` 通过；devkit web/UI 沙箱：动作行注入成功、点击走 `commands.execute('/compact')`（真实 Loader 返回 SUMMARY_FAILED，属沙箱无模型 key 的预期结果） | 通过 |
 | 4.2.0 压缩动作注入官方 ContextMeter 面板 / DSH 0.2.2-rc.1 | 单测 **123/123**；`node --check client.js`；devkit web/UI 沙箱：client 半加载 0 console 错误，模拟官方同形状面板（role=dialog + dl + 62%）时动作行被追加到面板末尾（文案「压缩上下文 / 压缩」、title 正确），点击后 Host 真实执行 compactNow 并回显「没有可压缩的历史」（沙箱无模型 key，预期结果）；修复注入器 MutationObserver 死循环 | 通过 |
@@ -408,6 +458,10 @@ lib/tools.mjs       聚合门面（buildTools 兼容 1.x）+ re-export 两个构
 lib/tools/lookup.mjs  session_lookup 的参数与输出 schema（手写严格子集）
 lib/tools/share.mjs   session_share 的参数与输出 schema
 lib/tools/schema.mjs  两个工具共用的 schema 构造器
+lib/context/host.mjs  上下文 RPC：用量、手动（分级）压缩、自动压缩开关状态
+lib/compact/tiers.mjs 分级决策纯函数（有效窗口、两级阈值、比例格式化）
+lib/compact/host.mjs  分级自动压缩驱动：pre-step 的 L1/L2、request-error 的 L3、运行期自动压缩守卫
+lib/compact/options.mjs 插件配置读取（兼容 volatile 的 `.get()` 引用与普通值）
 lib/shareview.mjs   分享页的数据装载（复用 service 的消息折叠）
 lib/render.mjs      自包含只读 HTML（转义、CSP、深浅色、打印友好）
 lib/shares.mjs      shares.json 存储（原子写、容忍 BOM、损坏不覆盖、2.x 旧目录只读回退）
@@ -418,7 +472,7 @@ lib/retry/gate.mjs  重试等待闸门（按会话去重、等待上限、孤儿
 lib/retry/recovery.mjs  「停止后可重试」记录（TTL）
 lib/retry/rpc.mjs   重试的认证 RPC 通道（/dsh-turn-retry，兼容旧名）
 lib/retry/diagnostics.mjs 重试诊断记录（diag 端点）
-client.js           浏览器半：三块界面 + 对话框 + toast + i18n（重试半用 IIFE 隔离作用域）
+client.js           浏览器半：三块界面 + 对话框 + toast + i18n（重试半用 IIFE 隔离作用域）+ 设置页卡片
 cordis.patch.yml    根作用域 insert 三行（不按 preset 挂载）
 test/               分享/会话视图/三入口测试；test/retry/ 是并入的重试半测试
 ```

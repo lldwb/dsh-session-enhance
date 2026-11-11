@@ -85,6 +85,39 @@ test('会话增强行注册 session_lookup 与 session_resume_subagents', () => 
   assert.match(ctx.collected.tools[1].description, /subagent/i);
 });
 
+test('会话增强行声明 autoCompact 设置：volatile、默认关闭，并关闭自动生成页', () => {
+  assert.equal(copyEntry.SETTINGS_NAMESPACE, 'dsh-session-enhance');
+
+  const field = copyEntry.Config.dict.autoCompact;
+  assert.equal(field.type, 'boolean');
+  assert.equal(field.meta.volatile, true, 'volatile 才会出现在设置页并可热更新');
+  assert.equal(field.meta.default, false, '自动压缩默认关闭');
+  const parsed = new copyEntry.Config({});
+  assert.equal(typeof parsed.autoCompact.get, 'function');
+  assert.equal(parsed.autoCompact.get(), false);
+
+  // apply 会在 settings 服务在场时声明「自绘页」策略（auto:false）。
+  const ctx = mockCtx();
+  copyEntry.apply(ctx);
+  const settingsInjection = ctx.collected.injections.find((entry) => entry.deps.includes('settings'));
+  assert.ok(settingsInjection, '应可选注入 settings');
+  const calls = [];
+  const settingsCtx = {
+    settings: {
+      configure: (presentation, owner) => {
+        calls.push({ presentation, owner });
+        return () => {};
+      },
+    },
+    effect: (factory) => {
+      const dispose = factory();
+      return typeof dispose === 'function' ? dispose : () => {};
+    },
+  };
+  settingsInjection.callback(settingsCtx);
+  assert.deepEqual(calls[0].presentation, { auto: false });
+});
+
 test('分享行只注册 session_share，并挂上两条路由（RPC 前缀 + 公开页）', async () => {
   const previousHome = process.env.DSH_HOME;
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-session-enhance-entries-'));

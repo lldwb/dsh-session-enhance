@@ -126,6 +126,26 @@ window.__ModuleLoader__.load({
       'context.cancelled': 'Compaction cancelled',
       'context.transport': 'Connection failed; could not compact',
       'context.failed': 'Compaction failed ({code})',
+      'context.autoOn': 'auto compaction: on',
+      'context.autoOff': 'auto compaction: off',
+      'context.autoHint': 'Tiered compaction: prune at {prune} of the effective window, summarize at {compact}.',
+      'context.compactedPruned': 'Pruned {pruned} tool results; compacted {items} items, freed about {tokens} tokens',
+      'context.compactedGenericPruned': 'Pruned {pruned} tool results; compaction finished (see the summary card)',
+      'context.prunedOnly': 'Pruned {pruned} tool results; no compactable history yet',
+
+      // 设置页：自动压缩
+      'settings.title': 'Session Enhance',
+      'settings.summary': 'Tiered context compaction and the auto-compaction toggle.',
+      'settings.autoCompact': 'Auto compaction',
+      'settings.autoCompactHint':
+        'When on, before every model request: at 60% of the effective context window, oversized tool results are pruned in one batch (no model call); at 80%, older history is pruned and summarized in one transaction, so the prefix cache breaks only once. When off, only manual compaction runs.',
+      'settings.overridden': 'overridden',
+      'settings.reset': 'Reset',
+      'settings.readOnly': 'Settings are read-only in this deployment.',
+      'settings.unavailable': 'This plugin is not loaded, so it cannot be configured.',
+      'settings.save': 'Save',
+      'settings.saving': 'Saving…',
+      'settings.saveFailed': 'This deployment rejected the values; they are kept for editing.',
 
       // 恢复子智能体
       'resume.button': 'Resume subagents',
@@ -185,6 +205,26 @@ window.__ModuleLoader__.load({
       'context.cancelled': '已取消压缩',
       'context.transport': '连接失败，无法压缩',
       'context.failed': '压缩失败（{code}）',
+      'context.autoOn': '自动压缩：开',
+      'context.autoOff': '自动压缩：关',
+      'context.autoHint': '分级压缩：有效窗口 {prune} 时批量清理工具输出，{compact} 时修剪并摘要历史。',
+      'context.compactedPruned': '已清理 {pruned} 个工具输出；压缩 {items} 项，释放约 {tokens} tokens',
+      'context.compactedGenericPruned': '已清理 {pruned} 个工具输出；压缩完成，详见对话中的压缩摘要',
+      'context.prunedOnly': '已清理 {pruned} 个工具输出；没有可压缩的历史',
+
+      // 设置页：自动压缩
+      'settings.title': '会话增强',
+      'settings.summary': '分级上下文压缩与自动压缩开关。',
+      'settings.autoCompact': '自动压缩',
+      'settings.autoCompactHint':
+        '开启后，每次模型请求前：有效上下文窗口用到 60% 时，把所有超大工具输出一次性批量清理（不调用模型）；用到 80% 时，先清理再摘要较早历史，两者在同一个事务里完成，只断一次前缀缓存。关闭时只保留手动压缩。',
+      'settings.overridden': '已覆盖',
+      'settings.reset': '恢复默认',
+      'settings.readOnly': '本部署的设置为只读。',
+      'settings.unavailable': '该插件当前未加载，暂时无法配置。',
+      'settings.save': '保存',
+      'settings.saving': '保存中…',
+      'settings.saveFailed': '本部署没有接受这些值，已保留供你修改。',
 
       // 恢复子智能体
       'resume.button': '恢复子智能体',
@@ -206,6 +246,17 @@ window.__ModuleLoader__.load({
      * 里定位。它是 locale 服务里的独立键，不与其他命名空间冲突。
      */
     const NS = 'dsh-session-enhance';
+
+    /**
+     * 设置页的 Host 命名空间 = Loader 行 id。
+     *
+     * 浏览器包不能依赖 Host 包，所以这里与 `index.js` 的 `SETTINGS_NAMESPACE` 重复硬编码；
+     * 改行 id 时必须两处一起改，否则设置页会静默消失。
+     */
+    const SETTINGS_NS = 'dsh-session-enhance';
+
+    /** 自动压缩开关的配置字段名（与 Host 半 `Config` 一致）。 */
+    const AUTO_COMPACT_FIELD = 'autoCompact';
 
     /**
      * 槽位名：会话标题栏右侧那组小按钮（「⋯」也在里面）。
@@ -2132,6 +2183,12 @@ window.__ModuleLoader__.load({
 
     /** 压缩可用性探测结果：null = 还没探测到。 */
     let contextCanCompact = null;
+
+    /** 自动压缩状态（来自 Host `get`）：null = 还没探测到。 */
+    let contextAutoCompact = null;
+    let contextPruneRatio = null;
+    let contextCompactRatio = null;
+    let contextAutoProbeSession = '';
     let contextObserver = null;
     let contextInterval = null;
     let contextNoteTimer;
@@ -2214,6 +2271,49 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * 比例 → 百分比文本（与 Host 的阈值展示同口径）。
+     *
+     * @param {unknown} ratio - 0~1 的比例。
+     * @returns {string} 例如 `60%`；非法值返回 `—`。
+     */
+    function formatCompactRatio(ratio) {
+      return typeof ratio === 'number' && Number.isFinite(ratio) ? `${Math.round(ratio * 100)}%` : '—';
+    }
+
+    /**
+     * 探测当前会话的自动压缩状态（每个会话一次；结果用于动作行上的状态后缀）。
+     *
+     * @param {any} ctx - 浏览器插件上下文。
+     * @param {(key: string, params?: any) => string} t - 词典绑定。
+     * @returns {void}
+     */
+    function probeContextAuto(ctx, t) {
+      if (activeContextSessionId === '') return;
+      if (contextAutoProbeSession === activeContextSessionId) return;
+      const connection = ctx.connection;
+      const rpc = connection !== undefined && connection !== null ? connection.rpc : undefined;
+      if (rpc === undefined || rpc === null || typeof rpc.call !== 'function') return;
+      const sessionId = activeContextSessionId;
+      contextAutoProbeSession = sessionId;
+      void rpc
+        .call(CONTEXT_RPC_CHANNEL, 'get', { sessionId })
+        .then((result) => {
+          if (activeContextSessionId !== sessionId) return;
+          const value =
+            result !== null && typeof result === 'object' && result.ok === true ? result.value : undefined;
+          if (value === undefined || value.available !== true) return;
+          contextAutoCompact = value.autoCompact === true;
+          contextPruneRatio = typeof value.pruneRatio === 'number' ? value.pruneRatio : null;
+          contextCompactRatio = typeof value.compactRatio === 'number' ? value.compactRatio : null;
+          if (value.canCompact === false) contextCanCompact = false;
+          renderContextAction(ctx, t);
+        })
+        .catch(() => {
+          // 探测失败不显示状态后缀，不影响手动压缩。
+        });
+    }
+
+    /**
      * 按当前状态渲染/更新官方 panel 里的动作行（幂等）。
      *
      * @param {any} ctx - 浏览器插件上下文（用 connection 发 RPC）。
@@ -2223,6 +2323,7 @@ window.__ModuleLoader__.load({
     function renderContextAction(ctx, t) {
       const panel = findContextPanel();
       if (panel === null) return;
+      probeContextAuto(ctx, t);
       let row = panel.querySelector(`[${CONTEXT_ACTIONS_ATTR}]`);
       if (row === null) {
         row = document.createElement('div');
@@ -2244,13 +2345,23 @@ window.__ModuleLoader__.load({
       // ⚠️ 只在值变化时写 DOM：`textContent =` 每次都会产生新文本节点，而我们的
       // MutationObserver 观察的是整棵 body —— 无条件重写会「写→观察→再写」无限循环，
       // 直接把页面主线程卡死（本次沙箱验证踩到过）。幂等写入才能让观察器收敛。
-      const nextLabel = contextActionState.note === '' ? t('context.compactRow') : contextActionState.note;
+      const autoText =
+        contextAutoCompact === true ? t('context.autoOn') : contextAutoCompact === false ? t('context.autoOff') : '';
+      const baseLabel = contextActionState.note === '' ? t('context.compactRow') : contextActionState.note;
+      const nextLabel =
+        autoText === '' || contextActionState.note !== '' ? baseLabel : `${baseLabel} · ${autoText}`;
       if (label.textContent !== nextLabel) label.textContent = nextLabel;
       const nextButtonText = contextActionState.busy ? t('context.compacting') : t('context.compact');
       if (button.textContent !== nextButtonText) button.textContent = nextButtonText;
       const nextDisabled = contextActionState.busy || contextCanCompact === false;
       if (button.disabled !== nextDisabled) button.disabled = nextDisabled;
-      const nextTitle = contextCanCompact === false ? t('context.unavailable') : t('context.compactTitle');
+      let nextTitle = contextCanCompact === false ? t('context.unavailable') : t('context.compactTitle');
+      if (contextCanCompact !== false && contextPruneRatio !== null && contextCompactRatio !== null) {
+        nextTitle = `${nextTitle}\n${t('context.autoHint', {
+          prune: formatCompactRatio(contextPruneRatio),
+          compact: formatCompactRatio(contextCompactRatio),
+        })}`;
+      }
       if (button.title !== nextTitle) button.title = nextTitle;
     }
 
@@ -2288,18 +2399,28 @@ window.__ModuleLoader__.load({
       try {
         const result = await rpc.call(CONTEXT_RPC_CHANNEL, 'compact', { sessionId: activeContextSessionId });
         const value = result !== null && typeof result === 'object' && result.ok === true ? result.value : undefined;
+        const pruned = value !== undefined && typeof value.pruned === 'number' ? value.pruned : 0;
         if (value !== undefined && value.compacted === true) {
           const items = value.items;
           const tokens = value.tokensSaved;
+          const hasCounts = typeof items === 'number' && typeof tokens === 'number';
           setContextNote(
-            typeof items === 'number' && typeof tokens === 'number'
-              ? t('context.compacted', { items, tokens: formatCompactTokens(tokens) })
-              : t('context.compactedGeneric'),
+            pruned > 0
+              ? hasCounts
+                ? t('context.compactedPruned', { pruned, items, tokens: formatCompactTokens(tokens) })
+                : t('context.compactedGenericPruned', { pruned })
+              : hasCounts
+                ? t('context.compacted', { items, tokens: formatCompactTokens(tokens) })
+                : t('context.compactedGeneric'),
             ctx,
             t
           );
         } else if (value !== undefined && value.reason === 'NO_RANGE') {
-          setContextNote(t('context.noRange'), ctx, t);
+          setContextNote(
+            pruned > 0 ? t('context.prunedOnly', { pruned }) : t('context.noRange'),
+            ctx,
+            t
+          );
         } else {
           const error = result !== null && typeof result === 'object' ? result.error : undefined;
           const code =
@@ -2468,6 +2589,170 @@ window.__ModuleLoader__.load({
     }
     // #endregion
 
+    // #region 设置页：自动压缩开关
+    //
+    // 「设置 → 插件 → 已安装 → 会话增强」的配置卡片由本 bundle 自绘：Host 半声明
+    // `Config`（autoCompact，volatile），客户端用 SettingsFormModel 做「暂存 → 保存」，
+    // 保存链路走 configForms → Host settings → profile patch 并热更新，不需要重启。
+    // 之所以自绘而不是用自动生成页：自动页只渲染文本/数字字段，开关需要 Switch 原语。
+
+    /**
+     * {@link P.SettingsFormModel} 的布尔字段类型（内置只有文本/数字）。
+     *
+     * @param {string} field - 配置字段名。
+     * @returns {{ field: string, format: (value: unknown) => string, parse: (text: string) => { kind: 'set', value: boolean } }} 字段规格。
+     */
+    function settingsBooleanField(field) {
+      return {
+        field,
+        format: (value) => (value === false ? 'false' : 'true'),
+        parse: (text) => ({ kind: 'set', value: text === 'true' })
+      };
+    }
+
+    /**
+     * 开关行：标签 + 已覆盖标记 + Switch + 提示。
+     *
+     * @param {any} props - 属性。
+     * @returns {any} 元素。
+     */
+    function AutoCompactToggleRow(props) {
+      const { t } = props;
+      return jsxs('div', {
+        style: { display: 'flex', flexDirection: 'column', gap: '4px', padding: '4px 0' },
+        children: [
+          jsxs('div', {
+            style: { display: 'flex', alignItems: 'center', gap: '12px' },
+            children: [
+              jsxs('div', {
+                style: { flex: '1 1 auto', display: 'flex', alignItems: 'center', gap: '8px', minWidth: 0 },
+                children: [
+                  jsx('span', {
+                    id: props.id,
+                    style: { fontSize: '13px', fontWeight: 500 },
+                    children: props.label
+                  }),
+                  props.overridden
+                    ? jsxs('span', {
+                        style: { display: 'inline-flex', alignItems: 'center', gap: '6px' },
+                        children: [
+                          jsx('span', {
+                            style: {
+                              fontSize: '11px',
+                              padding: '1px 6px',
+                              borderRadius: '999px',
+                              border: '1px solid currentColor',
+                              opacity: 0.65
+                            },
+                            children: t('settings.overridden')
+                          }),
+                          jsx('button', {
+                            type: 'button',
+                            disabled: props.disabled,
+                            onClick: props.onReset,
+                            style: {
+                              fontSize: '11px',
+                              background: 'none',
+                              border: 'none',
+                              padding: 0,
+                              color: 'inherit',
+                              opacity: props.disabled ? 0.4 : 0.7,
+                              cursor: props.disabled ? 'default' : 'pointer',
+                              textDecoration: 'underline'
+                            },
+                            children: t('settings.reset')
+                          })
+                        ]
+                      })
+                    : null
+                ]
+              }),
+              jsx(P.Switch, {
+                checked: props.checked,
+                disabled: props.disabled,
+                label: props.label,
+                onChange: (next) => props.onEdit(next === true)
+              })
+            ]
+          }),
+          jsx('p', {
+            style: { margin: 0, fontSize: '12px', opacity: 0.6, lineHeight: 1.5 },
+            children: props.hint
+          })
+        ]
+      });
+    }
+
+    /**
+     * 设置卡片：`summary` 视图返回一句话说明，`page` 视图渲染表单。
+     *
+     * @param {any} props - 槽位注入的 props。
+     * @returns {any} 元素。
+     */
+    function AutoCompactCard(props) {
+      const { t } = props;
+      const state = props.useAutoCompactCard((snapshot) => snapshot);
+      if (props.view === 'summary') return t('settings.summary');
+      return jsx(P.SettingsForm, {
+        labels: {
+          unavailable: t('settings.unavailable'),
+          readOnly: t('settings.readOnly'),
+          saveFailed: t('settings.saveFailed'),
+          save: t('settings.save'),
+          saving: t('settings.saving')
+        },
+        state,
+        onSave: props.save,
+        onDiscard: props.discard,
+        children: jsx(AutoCompactToggleRow, {
+          id: 'plugin-config-session-enhance-autocompact',
+          t,
+          label: t('settings.autoCompact'),
+          hint: t('settings.autoCompactHint'),
+          checked: state.autoCompact.text !== 'false',
+          overridden: state.autoCompact.overridden,
+          disabled: !state.writable,
+          onEdit: (next) => props.edit(AUTO_COMPACT_FIELD, next ? 'true' : 'false'),
+          onReset: () => props.resetField(AUTO_COMPACT_FIELD)
+        })
+      });
+    }
+
+    /** 设置卡片的控制器：SettingsFormModel（暂存→保存）+ 快照 store。 */
+    class AutoCompactCardController {
+      /**
+       * @param {any} scope - 该设置命名空间已绑定的设置作用域。
+       */
+      constructor(scope) {
+        this.form = new P.SettingsFormModel(scope, [settingsBooleanField(AUTO_COMPACT_FIELD)]);
+        this.store = this.form.bind(() => this.projection());
+      }
+
+      /**
+       * 用表单当前读取结果构建页面快照。
+       *
+       * @returns {object} 快照。
+       */
+      projection() {
+        return { ...this.form.shell(), autoCompact: this.form.field(AUTO_COMPACT_FIELD) };
+      }
+
+      /**
+       * 构建槽位注册注入的「面孔」。
+       *
+       * @returns {object} hooks 与表单动作。
+       */
+      inject() {
+        return { hooks: { autoCompactCard: this.store }, ...this.form.actions() };
+      }
+
+      /** 释放表单订阅。 */
+      dispose() {
+        this.form.dispose();
+      }
+    }
+    // #endregion
+
     // #region 插件入口
     /**
      * 浏览器半用到的服务：槽位（挂按钮）、词典、以及到 Host 的 RPC 通道。
@@ -2477,12 +2762,13 @@ window.__ModuleLoader__.load({
      */
     // #region 插件入口
     /**
-     * 浏览器半用到的服务：槽位（挂按钮）、词典、以及到 Host 的 RPC 通道。
+     * 浏览器半用到的服务：槽位（挂按钮）、词典、到 Host 的 RPC 通道、以及设置页表单。
      *
      * `connection` 是 RPC carrier（与其他调用宿主服务的 UI 插件用法一致）；不带它时
      * 分享按钮会一直停在「操作失败」，所以这里是硬依赖。
+     * `configForms` 用于「设置 → 插件 → 会话增强」里的自动压缩开关（官方设置页服务）。
      */
-    const inject = ['slots', 'locale', 'connection', 'sessions'];
+    const inject = ['slots', 'locale', 'connection', 'sessions', 'configForms'];
 
     /**
      * 挂载两个按钮，并把分享对话框的全部状态与动作绑到各自的 Session。
@@ -2776,6 +3062,37 @@ window.__ModuleLoader__.load({
         };
       }, 'dsh-session-enhance: context panel action');
 
+      // 设置页：自绘「会话增强」bundle 的配置卡片（设置 → 插件 → 已安装 → 会话增强）。
+      // `whileServed` 保证 Host 真的声明了这个命名空间才挂载；`configForms` 缺失时
+      // （例如旧 Host）跳过设置页，不影响其它组件。
+      const configForms = ctx.configForms;
+      if (configForms !== undefined && configForms !== null && typeof configForms.get === 'function') {
+        try {
+          const card = new AutoCompactCardController(configForms.get(SETTINGS_NS));
+          ctx.effect(() => () => card.dispose(), 'dsh-session-enhance: settings form subscription');
+          ctx.effect(
+            () =>
+              configForms.whileServed([SETTINGS_NS], () =>
+                ctx.slots.inject('plugins.bundle.config', () =>
+                  ctx.slots.register(
+                    {
+                      name: 'plugins.bundle.config',
+                      key: SETTINGS_NS,
+                      locale: NS,
+                      inject: () => card.inject()
+                    },
+                    AutoCompactCard
+                  )
+                )
+              ),
+            'dsh-session-enhance: settings page'
+          );
+        } catch (error) {
+          // 设置服务不可用时静默降级：按钮与压缩仍然可用。
+          void error;
+        }
+      }
+
       // 第三个组件：composer 的失败重试覆盖层。它自己注册槽位、词典、样式表与加载
       // 标记，所以这里只需要把同一个 ctx 交过去（IIFE 内是它原来的 apply）。
       retryHalf.apply(ctx);
@@ -2788,6 +3105,9 @@ window.__ModuleLoader__.load({
     // bundle 形状；不影响运行时。
     exports.RetryButton = retryHalf.RetryButton;
     exports.ContextSessionTracker = ContextSessionTracker;
+    exports.AutoCompactCard = AutoCompactCard;
+    exports.AutoCompactToggleRow = AutoCompactToggleRow;
+    exports.settingsBooleanField = settingsBooleanField;
     exports.lastModelEventIsFailure = retryHalf.lastModelEventIsFailure;
     exports.justEnded = retryHalf.justEnded;
     exports.attemptFinishedWithError = retryHalf.attemptFinishedWithError;

@@ -103,7 +103,11 @@ test('get：返回压力与窗口，并说明压缩是否可用', async () => {
       available: true,
       pressureTokens: 512_000,
       contextWindow: 1_048_576,
-      canCompact: true
+      canCompact: true,
+      autoCompact: false,
+      pruneRatio: null,
+      compactRatio: null,
+      canPrune: false
     }
   });
 });
@@ -142,7 +146,14 @@ test('compact：成功时返回压缩条数与释放 token 数', async () => {
   });
   const result = await createContextHandler({ ctx: env.ctx })('compact', { sessionId: 's1' });
   assert.equal(result.ok, true);
-  assert.deepEqual(result.value, { compacted: true, via: 'service', items: 3, tokensSaved: 4_200 });
+  assert.deepEqual(result.value, {
+    compacted: true,
+    via: 'service',
+    items: 3,
+    tokensSaved: 4_200,
+    pruned: 0,
+    charsRemoved: 0
+  });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].target, agent);
   assert.equal(calls[0].commandId, 'dsh-session-enhance-context');
@@ -152,7 +163,10 @@ test('compact：成功时返回压缩条数与释放 token 数', async () => {
 test('compact：没有可压缩范围时返回 compacted:false', async () => {
   const env = makeCtx({ agent, compaction: { compactNow: async () => null } });
   const result = await createContextHandler({ ctx: env.ctx })('compact', { sessionId: 's1' });
-  assert.deepEqual(result, { ok: true, value: { compacted: false, reason: 'NO_RANGE', via: 'service' } });
+  assert.deepEqual(result, {
+    ok: true,
+    value: { compacted: false, reason: 'NO_RANGE', via: 'service', pruned: 0, charsRemoved: 0 }
+  });
 });
 
 test('compact：压缩插件没挂载时返回 COMPACTION_UNAVAILABLE（不静默失败）', async () => {
@@ -204,6 +218,7 @@ test('diag：报告软依赖是否在场与超时配置', async () => {
     hasCompaction: true,
     hasTokenMeter: true,
     hasCommand: false,
+    hasPruner: false,
     timeoutMs: MANUAL_COMPACT_TIMEOUT_MS
   });
 });
@@ -230,7 +245,9 @@ test('compact：优先执行官方 /compact 命令（与用户输入走同一条
     via: 'command',
     text: 'Compacted 12 history items (~4,200 tokens).',
     items: 12,
-    tokensSaved: 4200
+    tokensSaved: 4200,
+    pruned: 0,
+    charsRemoved: 0
   });
   assert.equal(executed.length, 1);
   assert.equal(executed[0].target, agent);
@@ -249,7 +266,14 @@ test('compact：命令返回「没有可压缩历史」时不当作成功', asyn
   const result = await createContextHandler({ ctx: env.ctx })('compact', { sessionId: 's1' });
   assert.deepEqual(result, {
     ok: true,
-    value: { compacted: false, reason: 'NO_RANGE', via: 'command', text: 'No compactable history yet.' }
+    value: {
+      compacted: false,
+      reason: 'NO_RANGE',
+      via: 'command',
+      text: 'No compactable history yet.',
+      pruned: 0,
+      charsRemoved: 0
+    }
   });
 });
 
@@ -291,7 +315,7 @@ test('compact：命令未注册（execute 返回 undefined）时回退到 compac
   assert.equal(called, 1);
   assert.deepEqual(result, {
     ok: true,
-    value: { compacted: true, via: 'service', items: 2, tokensSaved: 900 }
+    value: { compacted: true, via: 'service', items: 2, tokensSaved: 900, pruned: 0, charsRemoved: 0 }
   });
 });
 
@@ -367,4 +391,43 @@ test('installContextChannel：非 POST 404、认证拒绝透传状态码', async
 test('RPC 常量：通道名与请求体上限是稳定契约', () => {
   assert.equal(CONTEXT_RPC_CHANNEL, '/dsh-session-enhance-context');
   assert.equal(MAX_RPC_BODY_BYTES, 32 * 1024);
+});
+
+test('get：driver 提供自动压缩状态、阈值与修剪器可用性', async () => {
+  const env = makeCtx({ agent, pressure: { pressureTokens: 100, contextWindow: 1_000 } });
+  const driver = {
+    describe: () => ({ autoCompact: true, pruneRatio: 0.6, compactRatio: 0.8 }),
+    prunerFor: () => ({ pruneSession: () => ({ pruned: [], charsRemoved: 0 }) })
+  };
+  const result = await createContextHandler({ ctx: env.ctx, driver })('get', { sessionId: 's1' });
+  assert.equal(result.ok, true);
+  assert.equal(result.value.autoCompact, true);
+  assert.equal(result.value.pruneRatio, 0.6);
+  assert.equal(result.value.compactRatio, 0.8);
+  assert.equal(result.value.canPrune, true);
+});
+
+test('compact：先批量修剪工具输出（L1），再执行压缩（L2），并回报 pruned', async () => {
+  const env = makeCtx({
+    agent,
+    compaction: {
+      compactNow: async () => ({ shadowedSeqs: [1, 2], shadowedTokenCount: 900 })
+    }
+  });
+  const driver = {
+    compactionFor: () => env.ctx.compaction,
+    commandsFor: () => undefined,
+    pruneAll: () => ({ available: true, pruned: 3, charsRemoved: 1_200 }),
+    describe: () => ({ autoCompact: false, pruneRatio: 0.6, compactRatio: 0.8 })
+  };
+  const result = await createContextHandler({ ctx: env.ctx, driver })('compact', { sessionId: 's1' });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value, {
+    compacted: true,
+    via: 'service',
+    items: 2,
+    tokensSaved: 900,
+    pruned: 3,
+    charsRemoved: 1_200
+  });
 });

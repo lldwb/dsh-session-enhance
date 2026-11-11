@@ -3,6 +3,67 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 4.5.0 — 2026-11-11
+
+### 新能力：分级上下文压缩（自动 + 手动，批处理单次断点）
+
+参考 Claude Code 的分级压缩与 `dsh-ebbing-context` 的「批处理（一次性断点）」原则，把
+4.1–4.3 的单一手动压缩改造成三级机制：
+
+- **L1 微压缩**：压力 ≥ 有效窗口的 60% 时，调用官方 `ctx.toolResultPruner.pruneSession(session)`，
+  一趟扫描把**所有**超预算工具结果一起替换——不调用模型。
+- **L2 深度压缩**：压力 ≥ 80% 时，调用官方 `ctx.compaction.compactIfNeeded(agent, 'pressure', signal)`：
+  它先修剪全部可剪工具结果、再摘要最旧范围，两者在**同一个压缩事务**里完成（一次
+  `compaction/start` … `compaction/end`，只换一次表层）。L1 与 L2 在同一次 `agent/pre-step`
+  内完成，下一次请求看到最终表层 ⇒ **只断一次前缀缓存**。
+- **L3 溢出恢复**：提供方返回 `CONTEXT_WINDOW_EXCEEDED` 时调用
+  `compactIfNeeded(agent, 'context-overflow', signal)`，表层前进后返回 `{kind:'retry'}`
+  让请求重试（每轮最多一次）。
+
+**有效窗口** = 模型窗口 − 输出预留（最近 `request/header` 的 `maxTokens`），阈值按比例判定。
+服务解析优先 `agentPresets.serviceFor(agent, 'compaction' | 'toolResultPruner')`（标准模式下
+压缩实例在 preset 的隔离组里），取不到回退 Host 平面。
+
+### 设置页：「自动压缩」开关（默认关闭）
+
+- Host 半新增 `Config`（schemastery）：`autoCompact: z.boolean().default(false).volatile()`；
+  行 id `dsh-session-enhance` 即设置命名空间；`configure({auto:false})` 关掉自动生成页。
+- 浏览器半在 `plugins.bundle.config`（key = 包名）注册自绘卡片，用 `SettingsFormModel`
+  做「暂存 → 保存」，走官方 configForms → profile patch 热更新，**不需要重启**。
+- 默认关闭：关闭时本插件不做 L1/L2 主动自动压缩，手动压缩仍可用；**L3 溢出恢复与切模型
+  压缩作为安全网保留**。
+
+### 自动压缩守卫（让开关真正生效）
+
+web 形态下 `compaction-basic` 由 preset 的 `isolate` 组提供，profile patch 的 id 定向覆盖
+打不到它。因此驱动在运行期给 agent 可见的 compaction 实例包装 `compactIfNeeded`：开关关闭时
+只把 `trigger === 'pressure'`（主动自动压缩）拦成 `null`，`context-overflow` 与 `compactNow`
+（手动 `/compact`）不受影响；插件卸载时恢复原方法。
+
+### 手动压缩也分级
+
+点「压缩」时先做 L1 批量修剪（不调模型），紧接着执行官方 `/compact`（L2 摘要）；结果提示
+同时报「已清理 N 个工具输出；压缩 M 项，释放约 T tokens」。官方「上下文已用」面板的动作行
+还会显示「自动压缩：开/关」与两级阈值。
+
+### 依赖与清单
+
+- 新增依赖 `@deepseek-ai/schemastery`（Host 半声明 Config 用；profile 里没有 `@deepseek-ai/*`，
+  必须装进本包 `node_modules`）。
+- `dsh.client.inject` 增加 `@deepseek-ai/dsh-client-ui-settings` 与
+  `@deepseek-ai/dsh-client-ui-plugin-manager`；client 半 `inject` 增加 `configForms`。
+
+### 验证
+
+- 单测 **152/152**：新增 `test/compact.test.mjs` 15 条（阈值边界、有效窗口、配置读取、
+  L1/L2/L3 行为、异常吞掉、守卫安装/恢复、溢出重试上限、pruneAll/describe/diag），
+  `test/entries.test.mjs` 新增 Config/设置策略断言，`test/context.test.mjs` 覆盖新的
+  `get`/`compact`/`diag` 字段。
+- `node --check index.js client.js` 通过；`Config.dict.autoCompact` 实测
+  `type=boolean / volatile=true / default=false`，`new Config({}).autoCompact.get() === false`。
+- devkit headless/web 沙箱回归见提交说明（真实 Loader 加载、设置页卡片出现、开关保存后
+  Host 读到新值）。
+
 ## 4.4.0 — 2026-11-10
 
 ### 新能力：恢复被终止的子智能体

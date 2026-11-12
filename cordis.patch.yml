@@ -1,14 +1,14 @@
-# dsh-session-enhance（显示名：会话增强）—— 全局挂载，三个可单独启停的组件。
+# dsh-session-enhance（显示名：会话增强）—— 全局挂载，两个可单独启停的组件。
 #
-# 2.0 起这个包向 Loader 插入**三行**（1.x 只有一行）；3.0.0 起包名由
+# 2.0 起这个包向 Loader 插入多行（1.x 只有一行）；3.0.0 起包名由
 # `dsh-session-id` 改为 `dsh-session-enhance`（row id / specifier / RPC 前缀同步改名，
-# 旧名相关的历史标识见 README 的「3.0 改名」一节）。
+# 旧名相关的历史标识见 README 的「3.0 改名」一节）；**5.0.0 起「失败重试」组件移除**
+# （DSH 0.2.2 官方已内置「继续生成」），Loader 行从三行变两行。
 #
 # | 行 id                       | Loader name                   | 组件     | 内容 |
 # |-----------------------------|-------------------------------|----------|------|
-# | `dsh-session-enhance`       | `dsh-session-enhance`         | 会话增强 | 工具 `session_lookup`；**浏览器半（三块界面）都挂在这一行** |
+# | `dsh-session-enhance`       | `dsh-session-enhance`         | 会话增强 | 工具 `session_lookup`；**浏览器半（两块界面）都挂在这一行** |
 # | `dsh-session-enhance-share` | `dsh-session-enhance/share`   | 会话分享 | 工具 `session_share`、`GET /share/<token>`、RPC `/dsh-session-enhance` |
-# | `dsh-session-enhance-retry` | `dsh-session-enhance/retry`   | 失败重试 | `agent/request-error` 闸门、RPC `/dsh-turn-retry`（保留旧通道名） |
 #
 # ## 为什么第一行必须是「精确包名」
 #
@@ -17,25 +17,23 @@
 # client 半。所以携带 `client.js` 的那一行只能写 `dsh-session-enhance`——这也是唯一一行
 # 组件标题等于包根 `locale/`（即卡片标题「会话增强」）的原因。
 #
-# 三个组件的显示名分工：
+# 两个组件的显示名分工：
 # - 第一行读包根 `locale/`：标题「会话增强」（与卡片同名，因为它同时是主组件）；
-# - 第二、三行读 `share/locale/`、`retry/locale/`：标题「会话分享」「失败重试」。
+# - 第二行读 `share/locale/`：标题「会话分享」。
 #
-# 为什么拆：界面上每个 Loader 行都是一个可单独启用/停用的「组件」，一行装三件事
-# 时用户只能整体开关。拆开后可以只留会话增强、关掉分享或重试。
+# 为什么拆：界面上每个 Loader 行都是一个可单独启用/停用的「组件」，一行装两件事
+# 时用户只能整体开关。拆开后可以只留会话增强、关掉分享。
 #
 # ## 停用某一行之后
 #
-# 浏览器半只有一份（`dsh.client` 是包级声明），所以停用「会话分享」或「失败重试」时，
-# 界面上的对应按钮仍在：点击会得到明确的「当前部署没有提供分享服务」提示（重试覆盖层
-# 则因为 `pending` 调不通而保持隐藏）。要完全移除界面按钮，停用第一行即可。
+# 浏览器半只有一份（`dsh.client` 是包级声明），所以停用「会话分享」时界面上的对应按钮
+# 不会自动消失——浏览器半启动时会发一次能力探测（`POST /dsh-session-enhance`）：分享行
+# 在 → 200，停用 → 405，于是分享按钮换成隐藏占位（`data-session-share="disabled"`）。
+# 要完全移除界面按钮，停用第一行即可。
 #
-# 不按 preset 挂载：复制 id、查会话、分享会话、失败重试都是 Web 外壳与任何模式的
-# 通用能力。
+# 不按 preset 挂载：复制 id、查会话、分享会话都是 Web 外壳与任何模式的通用能力。
 - insert:
     - id: dsh-session-enhance
       name: 'dsh-session-enhance'
     - id: dsh-session-enhance-share
       name: 'dsh-session-enhance/share'
-    - id: dsh-session-enhance-retry
-      name: 'dsh-session-enhance/retry'

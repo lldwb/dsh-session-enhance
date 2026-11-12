@@ -107,8 +107,8 @@ export function apply(ctx, config) {
   }, 'dsh-session-enhance: tiered compaction driver');
 
   // 上下文用量 + 手动（分级）压缩：官方 ContextMeter 面板里的动作通过这条通道调压缩。
-  // 通道挂在本行（第一行）而不是 share/retry 行 —— 这两个子组件可能被单独停用，
-  // 而「看上下文 / 压缩 / 恢复子智能体」与它们无关。依赖均为软依赖。
+  // 通道挂在本行（第一行）而不是 share 行 —— 该子组件可能被单独停用，
+  // 而「看上下文 / 压缩 / 恢复子智能体」与它无关。依赖均为软依赖。
   installContextChannel(ctx, createContextHandler({ ctx, logger: ctx.logger, driver }));
 
   // 设置页由浏览器半自绘（「设置 → 插件 → 会话增强」），关掉自动生成页避免双页。

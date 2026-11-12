@@ -1,5 +1,5 @@
 /**
- * 三个 Loader 行入口的离线冒烟。
+ * 两个 Loader 行入口的离线冒烟。
  *
  * 这一层只检查**形状**：每个入口导出 `name` / `inject` / `apply`，且 `apply` 在 mock
  * ctx 上注册了该组件应有的东西。真实 Loader 能否解析子路径 specifier、界面「包含的
@@ -17,7 +17,6 @@ import test from 'node:test';
 
 import * as copyEntry from '../index.js';
 import * as shareEntry from '../share/index.js';
-import * as retryEntry from '../retry/index.js';
 
 /**
  * 造一个够用的 mock ctx。
@@ -59,20 +58,18 @@ function mockCtx(services = {}) {
   };
 }
 
-test('三个入口都导出 name / inject / apply，且 name 与 Loader 行的 specifier 对应', () => {
+test('两个入口都导出 name / inject / apply，且 name 与 Loader 行的 specifier 对应', () => {
   assert.equal(copyEntry.name, 'dsh-session-enhance');
   assert.equal(shareEntry.name, 'dsh-session-enhance/share');
-  assert.equal(retryEntry.name, 'dsh-session-enhance/retry');
 
-  for (const entry of [copyEntry, shareEntry, retryEntry]) {
+  for (const entry of [copyEntry, shareEntry]) {
     assert.equal(typeof entry.apply, 'function');
     assert.ok(Array.isArray(entry.inject), 'inject 必须是数组');
   }
 
-  // 只有注册工具的两行依赖 tools；重试行不注册工具，不该声明这个硬依赖。
+  // 两个入口都注册工具，都依赖 tools。
   assert.deepEqual(copyEntry.inject, ['tools']);
   assert.deepEqual(shareEntry.inject, ['tools']);
-  assert.deepEqual(retryEntry.inject, []);
 });
 
 test('会话增强行注册 session_lookup 与 session_resume_subagents', () => {
@@ -145,18 +142,4 @@ test('分享行只注册 session_share，并挂上两条路由（RPC 前缀 + �
     else process.env.DSH_HOME = previousHome;
     fs.rmSync(home, { recursive: true, force: true });
   }
-});
-
-test('重试行不注册工具，只挂事件与 RPC 通道', () => {
-  const ctx = mockCtx();
-  retryEntry.apply(ctx);
-
-  assert.deepEqual(ctx.collected.tools, [], '重试组件不该注册模型工具');
-
-  const events = ctx.collected.events.map((entry) => entry.event);
-  assert.ok(events.includes('agent/request-error'), '应挂失败闸门');
-  assert.ok(events.includes('session/event'), '应观察 turn 结束以记录「停止后重试」');
-
-  const deps = ctx.collected.injections.map((entry) => entry.deps.join(','));
-  assert.ok(deps.includes('connection,webServer'), '应声明重试 RPC 通道');
 });

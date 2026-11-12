@@ -3,6 +3,60 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 5.0.0 — 2026-11-12
+
+### 破坏性变更：移除「失败重试」组件
+
+DSH 0.2.2-rc.2 官方已内置失败恢复，本插件不再自带重试，因此这是 major。
+
+- **Loader 行从 3 行变 2 行**：`dsh-session-enhance-retry` 行移除，只剩
+  `dsh-session-enhance`（会话增强）与 `dsh-session-enhance-share`（会话分享）；
+- **`exports` 移除** `./retry`、`./retry/locale/*.json`、`./retry/icon`；
+- **RPC 通道 `/dsh-turn-retry` 消失**（含 `pending` / `retry` / `diag` 端点）；
+- **界面选择器消失**：`data-turn-retry`、`data-dsh-turn-retry-button`，composer 里不再有
+  重试覆盖层；
+- 删除模块：`retry/index.js`、`retry/locale/`、`lib/retry/*`、`test/retry/*`；
+- 保留且行为不变：会话增强（复制会话 ID、`session_lookup`、`session_resume_subagents`、
+  分级上下文压缩）、会话分享。
+
+### 为什么移除
+
+- 官方 composer 的 `retry(failureSeq)` 与会话 API 的 `conversationContinuation` 投影已经覆盖
+  「失败后继续」：空 `prompt.content` 在 queue 模式下会为符合条件的失败空闲会话开新一轮，
+  并记录一条 `source.kind: 'retry'` 的空 user 消息，用户可见文案是「继续生成」
+  （`input.continue`）；
+- 再维护一套覆盖层 + `agent/request-error` 闸门 + 独立 RPC，只会和官方按钮抢位置、多一层
+  状态机与回归面，没有净收益。
+
+### 用户迁移（必须做）
+
+1. 删除 profile 补丁层里指向已移除行的 override：
+
+   ```yaml
+   - id: dsh-session-enhance-retry
+     disabled: true
+   ```
+
+   该 Loader 行已不存在，**整条删掉**（不是改名）。
+2. 更新 / 重装插件并执行 `pnpm install`；
+3. **重启 DSH**（client 清单是服务器启动时的快照，刷新页面不够）。重启后
+   「设置 → 插件 → 会话增强 → 包含的组件」只剩 **2 个**（会话增强 / 会话分享）。
+
+### 边界
+
+官方「继续生成」只覆盖**失败**，不覆盖**用户主动停止**；官方的继续是新一轮（历史里多一条
+`source.kind: 'retry'` 的空 user 消息），不是 4.x 的原地重试。`CONTEXT_WINDOW_EXCEEDED`
+是确定性失败，重发只会再次超长，请用压缩能力（自动 / 手动分级压缩）处理。
+
+### 验证
+
+- 单测 **108/108**（原 167；`test/retry/*` 58 条 + `test/entries` 1 条，共 59 个用例随组件删除）；
+- devkit headless 沙箱真实 Loader：合成树只剩 2 行 Loader 行（`dsh-session-enhance` /
+  `dsh-session-enhance-share`）、`session_lookup` 实调返回当前会话摘要；
+- devkit web/UI 沙箱：`dsh-session-enhance@5.0.0 is loaded`、控制台 0 错误、页面无
+  `[data-turn-retry]` 且 `dataset.dshTurnRetry` 为 undefined、详情页「包含的组件
+  共 2 个 · 2 运行中」（会话增强 / 会话分享）、当前版本 5.0.0。
+
 ## 4.6.1 — 2026-11-12
 
 ### 修复：适配 DSH 0.2.2-rc.2（恢复子智能体列举在 rc.2 静默失效）

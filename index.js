@@ -3,7 +3,7 @@
  *
  * ## 它做什么
  *
- * 注册两个工具、一条 UI RPC 通道，以及**分级上下文压缩**的自动驱动器：
+ * 注册两个工具、一条上下文 RPC 通道，以及**分级上下文压缩**的自动驱动器：
  *
  * - `session_lookup`：按会话 id 返回标题、工作区、预设、父级链、全部子代理
  *   （父在前、带 depth / parentId）、最近消息与继承事件数。省略 `sessionId` 时查当前
@@ -12,14 +12,13 @@
  *   Agent Teams 的 teammate）。DSH 只允许父级通过 continuation 通道冷恢复它们，UI 打开
  *   子会话时会被 `ApiSessionSubagentOwnership` 拒绝；本工具把这条通道交给模型。
  * - `/dsh-session-enhance-context`：官方「上下文已用」面板里的手动压缩动作。
- * - `/dsh-session-enhance-subagent`：浏览器半标题栏「恢复子智能体」按钮。
  * - **分级自动压缩**（`lib/compact/host.mjs`）：`autoCompact` 打开时，在每次模型请求前
  *   按压力执行 L1 批量修剪工具结果（不调模型）/ L2 修剪+摘要（一次事务）/ L3 溢出恢复。
  *   `autoCompact` 默认关闭，可在「设置 → 插件 → 会话增强」里打开。
  *
  * 本文件同时是包根导出（`exports["."]`）：`dsh-session-enhance` 这个 specifier 解析到这里，
- * 于是单入口配置（只写一行 `dsh-session-enhance`）仍然有会话查询能力——三个组件真正
- * 合在一起的形态由 `cordis.patch.yml` 里的三行声明，而不是由包根隐式提供。
+ * 于是单入口配置（只写一行 `dsh-session-enhance`）仍然有会话查询能力——两个组件真正
+ * 合在一起的形态由 `cordis.patch.yml` 里的两行声明，而不是由包根隐式提供。
  *
  * ## 依赖
  *
@@ -42,7 +41,7 @@ import { BUILD } from './lib/build.mjs';
 import { createContextHandler, installContextChannel } from './lib/context/host.mjs';
 import { createCompactionDriver } from './lib/compact/host.mjs';
 import { readOption } from './lib/compact/options.mjs';
-import { createSubagentHandler, installSubagentChannel } from './lib/subagent/host.mjs';
+import { createSubagentHandler } from './lib/subagent/host.mjs';
 
 /** Cordis 插件名：与包根 specifier 同名。 */
 export const name = 'dsh-session-enhance';
@@ -83,13 +82,12 @@ export function apply(ctx, config) {
   const lookup = buildLookupTool(ctx);
   ctx.effect(() => ctx.tools.register(lookup), 'dsh-session-enhance: tool session_lookup');
 
-  // 子智能体恢复：RPC 通道（浏览器半标题栏按钮）与工具（模型可主动恢复）共用同一个处理器。
+  // 子智能体恢复：只注册模型工具（5.1.0 起标题栏按钮已移除，浏览器半不再有对应 UI）。
   const subagentHandler = createSubagentHandler({ ctx, logger: ctx.logger });
   ctx.effect(
     () => ctx.tools.register(buildResumeSubagentsTool(subagentHandler)),
     'dsh-session-enhance: tool session_resume_subagents',
   );
-  installSubagentChannel(ctx, subagentHandler);
 
   // 分级自动压缩：L1 修剪 / L2 修剪+摘要 / L3 溢出恢复，全部由 autoCompact 控制。
   const driver = createCompactionDriver({ ctx, readAutoCompact, logger: ctx.logger });
@@ -108,7 +106,7 @@ export function apply(ctx, config) {
 
   // 上下文用量 + 手动（分级）压缩：官方 ContextMeter 面板里的动作通过这条通道调压缩。
   // 通道挂在本行（第一行）而不是 share 行 —— 该子组件可能被单独停用，
-  // 而「看上下文 / 压缩 / 恢复子智能体」与它无关。依赖均为软依赖。
+  // 而「看上下文 / 压缩」与它无关。依赖均为软依赖。
   installContextChannel(ctx, createContextHandler({ ctx, logger: ctx.logger, driver }));
 
   // 设置页由浏览器半自绘（「设置 → 插件 → 会话增强」），关掉自动生成页避免双页。
@@ -122,6 +120,6 @@ export function apply(ctx, config) {
   }
 
   ctx.logger?.info?.(
-    `dsh-session-enhance: ready (2 tools + context/subagent rpc + tiered compaction, build=${BUILD})`,
+    `dsh-session-enhance: ready (2 tools + context rpc + tiered compaction, build=${BUILD})`,
   );
 }

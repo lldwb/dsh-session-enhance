@@ -146,17 +146,7 @@ window.__ModuleLoader__.load({
       'settings.unavailable': 'This plugin is not loaded, so it cannot be configured.',
       'settings.save': 'Save',
       'settings.saving': 'Saving…',
-      'settings.saveFailed': 'This deployment rejected the values; they are kept for editing.',
-
-      // 恢复子智能体
-      'resume.button': 'Resume subagents',
-      'resume.self': 'Resume this subagent',
-      'resume.busy': 'Resuming…',
-      'resume.done': 'Resumed {n} subagent(s)',
-      'resume.partial': 'Resumed {ok}, failed {failed}',
-      'resume.failed': 'Resume failed ({code})',
-      'resume.parentOffline': 'Parent session is offline',
-      'resume.none': 'No offline subagents'
+      'settings.saveFailed': 'This deployment rejected the values; they are kept for editing.'
     };
 
     /** 简体中文文案。 */
@@ -230,17 +220,7 @@ window.__ModuleLoader__.load({
       'settings.unavailable': '该插件当前未加载，暂时无法配置。',
       'settings.save': '保存',
       'settings.saving': '保存中…',
-      'settings.saveFailed': '本部署没有接受这些值，已保留供你修改。',
-
-      // 恢复子智能体
-      'resume.button': '恢复子智能体',
-      'resume.self': '恢复本子智能体',
-      'resume.busy': '恢复中…',
-      'resume.done': '已恢复 {n} 个子智能体',
-      'resume.partial': '已恢复 {ok} 个，失败 {failed} 个',
-      'resume.failed': '恢复失败（{code}）',
-      'resume.parentOffline': '父会话不在线',
-      'resume.none': '没有需要恢复的子智能体'
+      'settings.saveFailed': '本部署没有接受这些值，已保留供你修改。'
     };
     // #endregion
 
@@ -288,13 +268,6 @@ window.__ModuleLoader__.load({
 
     /** 分享按钮的槽位顺序：比复制更小，所以落在复制按钮左侧。 */
     const SHARE_SLOT_ORDER = -11;
-
-    /** 「恢复子智能体」按钮的贡献 id 与顺序（落在分享按钮左侧）。 */
-    const RESUME_SLOT_ID = 'session-resume-subagents';
-    const RESUME_SLOT_ORDER = -12;
-
-    /** 子智能体恢复的 Host 通道（lib/subagent/host.mjs 注册）。 */
-    const SUBAGENT_RPC_CHANNEL = '/dsh-session-enhance-subagent';
 
     /**
      * Host 半 `lib/rpc.mjs` 注册的前缀路由。
@@ -613,285 +586,6 @@ window.__ModuleLoader__.load({
           jsx('path', { d: 'M5.5 6.25H4A1.5 1.5 0 0 0 2.5 7.75v5A1.5 1.5 0 0 0 4 14.25h8a1.5 1.5 0 0 0 1.5-1.5v-5A1.5 1.5 0 0 0 12 6.25h-1.5' }),
           jsx('path', { d: 'M8 10.25V2.25' }),
           jsx('path', { d: 'M5.5 4.75 8 2.25l2.5 2.5' })
-        ]
-      });
-    }
-    // #endregion
-
-    // #region 恢复子智能体
-    /**
-     * 「恢复」图标：两个环绕箭头 + 中心的一个成员点。
-     *
-     * 与复制/分享图标同样的 20×20、1.25 描边、currentColor，形制对齐官方标题栏按钮。
-     *
-     * @returns {any} SVG 元素。
-     */
-    function resumeIcon() {
-      return jsx('svg', {
-        width: 15,
-        height: 15,
-        viewBox: '0 0 20 20',
-        fill: 'none',
-        stroke: 'currentColor',
-        strokeWidth: 1.25,
-        strokeLinecap: 'round',
-        strokeLinejoin: 'round',
-        'aria-hidden': 'true',
-        focusable: 'false',
-        style: { display: 'block' },
-        children: [
-          jsx('path', { d: 'M15.8 7.2a6.2 6.2 0 0 0-10.4-2.1' }),
-          jsx('path', { d: 'M5.4 2.6v2.5h2.5' }),
-          jsx('path', { d: 'M4.2 12.8a6.2 6.2 0 0 0 10.4 2.1' }),
-          jsx('path', { d: 'M14.6 17.4v-2.5h-2.5' }),
-          jsx('circle', { cx: 10, cy: 10, r: 1.6 })
-        ]
-      });
-    }
-
-    /**
-     * 每个会话一份的「子智能体恢复」快照源。
-     *
-     * 隐藏条件：父会话里没有离线且可恢复的子智能体；子会话的父级不在线（此时点了也
-     * 恢复不了，按钮不出现）。可见时点一下恢复全部离线子智能体（父会话）或本会话
-     * （子会话，经父级冷恢复）。
-     *
-     * @param {any} ctx - 浏览器插件上下文。
-     * @param {string} sessionId - 当前会话 id。
-     * @returns {any} `{ getSnapshot, subscribe }`。
-     */
-    function createSubagentResume(ctx, sessionId) {
-      const hidden = Object.freeze({ visible: false });
-      const base = createSnapshotStore(hidden);
-      let listeners = 0;
-      let binding;
-      let unsubscribeEvents;
-      let refreshTimer;
-      let debounceTimer;
-      let inflight = false;
-      let disposed = false;
-      let sequence = 1;
-
-      const call = async (method, payload) => {
-        const connection = ctx.connection;
-        if (connection === undefined || connection === null) return undefined;
-        const rpc = connection.rpc;
-        if (rpc === undefined || rpc === null || typeof rpc.call !== 'function') return undefined;
-        return rpc.call(SUBAGENT_RPC_CHANNEL, method, payload);
-      };
-
-      /** 从 RPC 结果里取出 value（失败返回 undefined）。 */
-      const valueOf = (result) =>
-        result !== null && typeof result === 'object' && result.ok === true ? result.value : undefined;
-
-      const emit = (next) => base.set(next);
-
-      /** 写一条结果提示（6 秒后清掉）。 */
-      const showNotice = (notice) => {
-        const current = base.getSnapshot();
-        if (current.visible !== true) return;
-        emit({ ...current, notice: { ...notice, sequence: sequence++ } });
-      };
-
-      /** 查一次可恢复目标，决定按钮是否出现。 */
-      const refresh = async () => {
-        if (disposed || inflight || sessionId === '') return;
-        inflight = true;
-        try {
-          const value = valueOf(await call('list', { sessionId }));
-          if (disposed) return;
-          const current = base.getSnapshot();
-          if (value === undefined) {
-            if (current.visible === true) emit(hidden);
-            return;
-          }
-          const mode = typeof value.mode === 'string' ? value.mode : 'parent';
-          const count = typeof value.resumableCount === 'number' ? value.resumableCount : 0;
-          const visible = (mode === 'parent' && count > 0) || (mode === 'child' && count > 0);
-          if (visible !== true) {
-            if (current.visible === true) emit(hidden);
-            return;
-          }
-          emit({
-            visible: true,
-            mode,
-            count,
-            busy: current.visible === true ? current.busy === true : false,
-            notice: current.visible === true ? (current.notice ?? null) : null
-          });
-        } catch {
-          if (!disposed && base.getSnapshot().visible === true) emit(hidden);
-        } finally {
-          inflight = false;
-        }
-      };
-
-      const scheduleRefresh = () => {
-        if (debounceTimer !== undefined) return;
-        debounceTimer = setTimeout(() => {
-          debounceTimer = undefined;
-          void refresh();
-        }, 1_200);
-      };
-
-      /** 恢复全部离线子智能体（父会话）或本会话（子会话）。 */
-      const resume = async () => {
-        if (disposed) return;
-        const current = base.getSnapshot();
-        if (current.visible !== true || current.busy === true) return;
-        emit({ ...current, busy: true, notice: null });
-        try {
-          const value = valueOf(await call('resume', { sessionId }));
-          if (disposed) return;
-          const latest = base.getSnapshot();
-          if (latest.visible !== true) return;
-          emit({ ...latest, busy: false });
-          const results = value !== undefined && Array.isArray(value.results) ? value.results : [];
-          const ok = results.filter((item) => item?.ok === true).length;
-          const failed = results.length - ok;
-          const firstCode = results.find((item) => item?.ok !== true)?.code;
-          if (results.length === 0) {
-            showNotice({ kind: 'none' });
-          } else if (failed === 0) {
-            showNotice({ kind: 'done', ok });
-          } else if (ok > 0) {
-            showNotice({ kind: 'partial', ok, failed });
-          } else {
-            showNotice({ kind: 'failed', code: typeof firstCode === 'string' ? firstCode : 'UNKNOWN' });
-          }
-          void refresh();
-        } catch {
-          const latest = base.getSnapshot();
-          if (!disposed && latest.visible === true) emit({ ...latest, busy: false });
-          showNotice({ kind: 'failed', code: 'TRANSPORT' });
-        }
-      };
-
-      const start = () => {
-        const sessions = ctx.sessions;
-        if (sessions !== undefined && sessions !== null && typeof sessions.binding === 'function') {
-          binding = sessions.binding(sessionId);
-          if (
-            binding !== undefined &&
-            binding !== null &&
-            binding.eventSource !== undefined &&
-            binding.eventSource !== null &&
-            typeof binding.eventSource.subscribe === 'function'
-          ) {
-            unsubscribeEvents = binding.eventSource.subscribe(scheduleRefresh);
-          }
-        }
-        void refresh();
-        refreshTimer = setInterval(() => {
-          void refresh();
-        }, 8_000);
-      };
-
-      const stop = () => {
-        if (unsubscribeEvents !== undefined) {
-          unsubscribeEvents();
-          unsubscribeEvents = undefined;
-        }
-        if (refreshTimer !== undefined) {
-          clearInterval(refreshTimer);
-          refreshTimer = undefined;
-        }
-        if (debounceTimer !== undefined) {
-          clearTimeout(debounceTimer);
-          debounceTimer = undefined;
-        }
-        binding = undefined;
-      };
-
-      return {
-        getSnapshot: base.getSnapshot,
-        subscribe: (listener) => {
-          listeners += 1;
-          if (listeners === 1) start();
-          const unsubscribe = base.subscribe(listener);
-          return () => {
-            unsubscribe();
-            listeners -= 1;
-            if (listeners === 0) stop();
-          };
-        },
-        resume,
-        dismissNotice: () => {
-          const current = base.getSnapshot();
-          if (current.visible === true) emit({ ...current, notice: null });
-        },
-        dispose: () => {
-          disposed = true;
-          stop();
-        }
-      };
-    }
-
-    /**
-     * 标题栏的「恢复子智能体」按钮。
-     *
-     * 父会话里显示「恢复子智能体（N 个离线）」；子会话里显示「恢复本子智能体」。
-     * 没有可恢复目标时不渲染（返回隐藏占位，保持挂载以便订阅保持有效）。
-     *
-     * @param {any} props - 槽位注入的 props。
-     * @returns {any} 按钮与可选的 Toast。
-     */
-    function ResumeSubagentsButton(props) {
-      // hooks 必须在提前 return 之前调用（hooks 顺序不能变）。
-      const state = props.useSubagentResume((value) => value);
-      if (state === null || state === undefined || state.visible !== true) {
-        return jsx('span', { style: { display: 'none' }, 'data-session-resume': 'hidden' });
-      }
-      const t = props.t;
-      const selfMode = state.mode === 'child';
-      const label = selfMode ? t('resume.self') : t('resume.button');
-      const title =
-        state.busy === true
-          ? t('resume.busy')
-          : selfMode
-            ? label
-            : `${label}（${state.count}）`;
-      const notice = state.notice;
-      let noticeText = '';
-      let noticeTone;
-      if (notice !== null && notice !== undefined) {
-        if (notice.kind === 'done') {
-          noticeText = t('resume.done', { n: notice.ok });
-          noticeTone = 'success';
-        } else if (notice.kind === 'partial') {
-          noticeText = t('resume.partial', { ok: notice.ok, failed: notice.failed });
-        } else if (notice.kind === 'failed') {
-          noticeText = t('resume.failed', { code: notice.code });
-        } else if (notice.kind === 'none') {
-          noticeText = t('resume.none');
-        }
-      }
-      const toast =
-        noticeText === '' || P.Toast === undefined
-          ? null
-          : jsx(P.Toast, {
-              text: noticeText,
-              ...(noticeTone === undefined ? {} : { tone: noticeTone }),
-              onDone: () => {
-                props.subagentResume.dismissNotice();
-              }
-            });
-      return jsxs('span', {
-        style: { display: 'inline-flex', alignItems: 'center' },
-        children: [
-          jsx(P.Button, {
-            size: 'sm',
-            style: BUTTON_STYLE,
-            title,
-            'aria-label': title,
-            'data-session-resume': state.busy === true ? 'busy' : 'ready',
-            disabled: state.busy === true,
-            onClick: () => {
-              void props.subagentResume.resume();
-            },
-            children: resumeIcon()
-          }),
-          toast
         ]
       });
     }
@@ -2115,26 +1809,6 @@ window.__ModuleLoader__.load({
             }
           },
           SessionShareButton
-        )
-      );
-
-      // 恢复子智能体：标题栏按钮。父会话里有离线子智能体、或子会话的父级在线时出现。
-      ctx.slots.inject(SLOT_NAME, () =>
-        ctx.slots.register(
-          {
-            name: SLOT_NAME,
-            id: RESUME_SLOT_ID,
-            order: RESUME_SLOT_ORDER,
-            locale: NS,
-            inject: (sessionId) => {
-              const store = createSubagentResume(
-                ctx,
-                String(sessionId === undefined || sessionId === null ? '' : sessionId)
-              );
-              return { hooks: { subagentResume: store }, subagentResume: store };
-            }
-          },
-          ResumeSubagentsButton
         )
       );
 

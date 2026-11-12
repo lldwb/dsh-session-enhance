@@ -27,7 +27,7 @@
 
 | 组件（界面显示名） | Loader 行 | 提供什么 |
 |---|---|---|
-| 会话增强 | `dsh-session-enhance` | 会话标题栏复制按钮 + 工具 `session_lookup`（按 id 查会话与全部子代理）+ 官方「上下文已用」面板里的**分级压缩**动作（4.5 起自动/手动）+ **恢复子智能体**按钮/工具 |
+| 会话增强 | `dsh-session-enhance` | 会话标题栏复制按钮 + 工具 `session_lookup`（按 id 查会话与全部子代理）+ 官方「上下文已用」面板里的**分级压缩**动作（4.5 起自动/手动）+ 工具 `session_resume_subagents`（恢复子智能体，5.1 起只有工具入口） |
 | 会话分享 | `dsh-session-enhance/share` | 标题栏分享按钮 + 工具 `session_share` + 免登录只读页 `/share/<token>` |
 
 > **为什么第一个组件叫「会话增强」而不是「会话 ID / 会话检视」**：浏览器半（两块界面）只能挂在
@@ -355,7 +355,7 @@ AutoCompact → Reactive Compact）。本插件按 DSH 的压缩 seam 做了对�
 
 
 
-### 恢复子智能体（4.4 起）
+### 恢复子智能体（4.4 起；5.1.0 起只有工具入口）
 
 重启或长任务中断之后，子智能体（`subagent` 工具派生的子会话、Agent Teams 的 teammate）的
 会话日志还在，但进程内的 Agent 已经没了。DSH 的规则是：
@@ -366,18 +366,15 @@ AutoCompact → Reactive Compact）。本插件按 DSH 的压缩 seam 做了对�
 - UI 直接打开子会话**不能**把它恢复 —— `dsh-api-session-controller` 会抛
   `ApiSessionSubagentOwnership`（"is a subagent session; use subagent delivery"）。
 
-所以本插件补上这条通道，提供两个入口：
+所以本插件补上这条通道。**5.1.0 起只有工具入口 `session_resume_subagents`**（模型调用）：
 
-**1. 标题栏按钮**（`conversation.session.header.utilities`，分享按钮左侧）
+> **5.1.0 移除了标题栏「恢复子智能体」按钮**：4.4.0 起的原行为（父会话里有离线子智能体时
+> 显示「恢复子智能体（N）」、子会话里父级在线时显示「恢复本子智能体」，点一下发送「继续」
+> 并 Toast 报结果）已删除，历史见 CHANGELOG 的 4.4.0 一节。随之删除的还有浏览器半的
+> `/dsh-session-enhance-subagent` RPC 通道、界面选择器 `data-session-resume` 与 `resume.*`
+> 词典；工具与 Host 侧 handler 保持不变。
 
-- 父会话里有离线子智能体时显示「恢复子智能体（N）」：点一下，对每个离线目标发送一条中性的
-  「继续」消息，由官方机制冷恢复（teammate/subagent 目标都按会话 id 发给父级；rc.1 的
-  legacy team 目标按名字发给 Lead）；
-- 子会话里父级在线时显示「恢复本子智能体」：点一下，由父会话冷恢复本会话；
-- 恢复中按钮禁用；完成后 Toast 报「已恢复 N 个 / 失败 N 个（错误码）」；
-- 没有可恢复目标时按钮不渲染。
-
-**2. 工具 `session_resume_subagents`**（模型可用）
+**工具 `session_resume_subagents`**
 
 | 参数 | 必填 | 默认 | 含义 |
 |---|---|---|---|
@@ -385,9 +382,10 @@ AutoCompact → Reactive Compact）。本插件按 DSH 的压缩 seam 做了对�
 | `targets` | 否 | 全部 | 只恢复这些子会话 id / teammate 名字 |
 | `dryRun` | 否 | `false` | 只列出子智能体与状态，不发送恢复消息 |
 
-于是"主会话恢复后恢复子会话"和"在子会话里恢复自己"都可以：前者在主会话里点按钮或让 Agent
-调用工具；后者打开子会话后点标题栏按钮（父会话必须在线，否则会提示
-`PARENT_NOT_LIVE`，先打开父会话即可）。
+用法：在父会话里让 Agent 调用工具（省略 `sessionId` 即恢复当前会话的全部离线子智能体；
+`dryRun: true` 先看清单）；要恢复某个具体子会话，就把它的 id 传给 `sessionId`。原按钮的
+「子会话恢复自己」场景现在也只能由模型调用工具完成，且**父会话必须在线**，否则会提示
+`PARENT_NOT_LIVE`（先打开父会话即可）。
 
 **边界**：恢复只发一条「继续」消息，不复制历史、不重建 agent —— preset、工具限制、模型都由
 子会话自己的 descriptor 决定（这是官方冷恢复的语义）。一次只可继续的子级才会恢复：外部
@@ -458,6 +456,7 @@ Host 半的 `execute(args, exec)` 则从 `exec.agent.session.id` 取调用方会
 
 | 层 | 内容 | 结果 |
 |---|---|---|
+| 5.1.0 移除「恢复子智能体」按钮 / DSH 0.2.2-rc.2 | 单测 **108/108**（`SUBAGENT_RPC_CHANNEL` 常量用例改写为「恢复文案稳定」，计数不变）；`node --check client.js`；devkit headless 沙箱真实 Loader：合成树仍 2 行、`session_resume_subagents`（dryRun）实调返回「子智能体共 0 个，可恢复 0 个」；devkit web/UI 沙箱：`dsh-session-enhance@5.1.0 is loaded`、控制台 0 错误、页面无 `[data-session-resume]`、详情页「包含的组件 共 2 个 · 2 运行中」、当前版本 5.1.0（web 沙箱无可用模型、未能创建会话，标题栏按钮未实操；静态确认分享/复制槽位注册仍在） | 通过 |
 | 5.0.0 移除失败重试组件 / DSH 0.2.2-rc.2 | 单测 **108/108**（原 167；`test/retry/*` 58 条 + `test/entries` 1 条，共 59 个用例随组件删除）；`node --check client.js`；devkit headless 沙箱真实 Loader：合成树只有 2 行 Loader 行（`dsh-session-enhance` / `dsh-session-enhance-share`）、`session_lookup` 实调返回当前会话摘要；devkit web/UI 沙箱：`dsh-session-enhance@5.0.0 is loaded`、控制台 0 错误、页面无 `[data-turn-retry]` 且 `dataset.dshTurnRetry` 为 undefined、详情页「包含的组件 共 2 个 · 2 运行中」（会话增强 / 会话分享）、当前版本 5.0.0 | 通过 |
 | 离线单测 | `node --test`：严格 JSON-Schema 子集、required 覆盖、返回值自校验、消息过滤、血缘拍平、分享存储（幂等/撤销/持久化/损坏文件/BOM/旧目录只读回退）、HTML 转义、分享视图、`session_share` 全流程、分级压缩、子智能体恢复、两入口形状 | **108/108 通过** |
 | headless 沙箱 | 真实 Loader：`session_lookup`（无参数 / 不存在 id）；真实 `subagent` 派生后反查 `role=subagent`、`parentSessionId`；`session_share` 在无 web server 的部署里返回结构化失败 | 通过 |

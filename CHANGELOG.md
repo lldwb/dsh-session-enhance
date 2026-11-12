@@ -3,6 +3,41 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 5.1.0 — 2026-11-12
+
+### 行为变化：移除标题栏「恢复子智能体」按钮（工具保留）
+
+「恢复子智能体」不再有界面入口，恢复只能由模型调用工具 `session_resume_subagents` 完成。
+
+- **移除标题栏按钮**：`conversation.session.header.utilities`（order -12）上的「恢复子智能体」
+  覆盖按钮删除——父会话不再显示「恢复子智能体（N）」，子会话也不再显示「恢复本子智能体」；
+- **移除浏览器半 RPC 通道** `/dsh-session-enhance-subagent`（Host 侧 `installSubagentChannel`
+  一并删除），浏览器端的 `list` / `resume` / `diag` 端点不再存在；
+- **界面选择器消失**：`data-session-resume`；
+- **词典删除**：`resume.*`（`button` / `self` / `busy` / `done` / `partial` / `failed` /
+  `parentOffline` / `none`）；
+- **保留且行为不变**：模型工具 `session_resume_subagents`（参数与 `dryRun` 语义不变）、
+  `lib/subagent/host.mjs` 的 `createSubagentHandler`；`session_lookup`、复制会话 ID、
+  会话分享、分级上下文压缩均不受影响。
+
+### 用户迁移
+
+- **无需改配置**：Loader 行仍是 2 行、没有 profile 补丁变化、没有新增/删除设置项；
+- 需要恢复子智能体时，让 Agent 调用工具即可（例如「用 `session_resume_subagents` 先 `dryRun`
+  列出离线子代理，再恢复它们」）；
+- 浏览器半随包更新后旧按钮自动消失；若仍看到按钮，重启 DSH / 刷新页面（client 清单是
+  服务器启动时的快照）。
+
+### 验证
+
+- 单测 **108/108**（`SUBAGENT_RPC_CHANNEL` 常量用例改写为「恢复文案稳定」，计数不变）；
+- `node --check client.js` 通过；
+- devkit headless 沙箱真实 Loader：合成树仍 2 行，`session_resume_subagents`（`dryRun`）
+  实调返回「子智能体共 0 个，可恢复 0 个」；
+- devkit web/UI 沙箱：`dsh-session-enhance@5.1.0 is loaded`、控制台 0 错误、页面无
+  `[data-session-resume]`、详情页「包含的组件 共 2 个 · 2 运行中」、当前版本 5.1.0
+  （web 沙箱无可用模型、未能创建会话，标题栏按钮未实操；静态确认分享/复制槽位注册仍在）。
+
 ## 5.0.0 — 2026-11-12
 
 ### 破坏性变更：移除「失败重试」组件

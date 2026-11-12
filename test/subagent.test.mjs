@@ -18,8 +18,7 @@ import test from 'node:test';
 import {
   createSubagentHandler,
   listDirectChildren,
-  SUBAGENT_CONTINUE_TEXT,
-  SUBAGENT_RPC_CHANNEL
+  SUBAGENT_CONTINUE_TEXT
 } from '../lib/subagent/host.mjs';
 
 /**
@@ -362,7 +361,6 @@ test('listDirectChildren：优先 rc.2 的 listDescendants，回退 rc.1 的 lis
   assert.deepEqual(await listDirectChildren({}, 'parent'), []);
 });
 
-test('RPC 常量稳定', () => {
-  assert.equal(SUBAGENT_RPC_CHANNEL, '/dsh-session-enhance-subagent');
+test('恢复文案稳定', () => {
   assert.ok(SUBAGENT_CONTINUE_TEXT.includes('继续'));
 });

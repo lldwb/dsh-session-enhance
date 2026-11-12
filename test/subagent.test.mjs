@@ -6,6 +6,9 @@
  * - `resume`：父会话里逐个冷恢复、子会话里经父级恢复自己、各种失败码；
  * - `diag`：三条软依赖是否在场。
  *
+ * 同时覆盖两代服务形状：0.2.2-rc.1 的 `listChildren` / `agentTeams.listMembers`，
+ * 以及 0.2.2-rc.2 的 `listDescendants`（`listChildren` 被移除、Team 只剩任务板）。
+ *
  * 不碰真实运行时：`agents` / `subagents` / `agentTeams` / `sessionQuery` 都是 mock。
  */
 
@@ -14,6 +17,7 @@ import test from 'node:test';
 
 import {
   createSubagentHandler,
+  listDirectChildren,
   SUBAGENT_CONTINUE_TEXT,
   SUBAGENT_RPC_CHANNEL
 } from '../lib/subagent/host.mjs';
@@ -94,6 +98,53 @@ test('list：父会话里列出 teammate 与可继续 subagent child，并标记
   assert.equal(result.value.resumableCount, 2);
 });
 
+test('list：0.2.2-rc.2 服务形状（无 listChildren，只有 listDescendants）仍能列出直接子节点', async () => {
+  // rc.2 的 `subagents` 只暴露 listDescendants：递归返回全部后代，每行带 depth 与
+  // kind（'child' / 'diagnostic'）。直接子节点 = kind 'child' 且 depth 1。
+  const env = makeCtx({
+    agentGet: (id) => (id === 'lead-1' ? lead : id === 'sub-live' ? { id: 'sub-live' } : undefined),
+    subagents: {
+      listDescendants: async () => [
+        { kind: 'child', id: 'sub-dead', depth: 1, mode: 'continuable', label: 'dead child', name: 'worker', activity: 'inactive' },
+        { kind: 'child', id: 'sub-live', depth: 1, mode: 'continuable', label: 'live child', activity: 'running' },
+        { kind: 'child', id: 'one-shot', depth: 1, mode: 'one-shot', label: 'one shot', activity: 'inactive' },
+        { kind: 'child', id: 'grand-child', depth: 2, mode: 'continuable', label: 'grand child', activity: 'inactive' },
+        { kind: 'diagnostic', id: 'broken', depth: 1, reason: 'unavailable' }
+      ],
+      sendMessage: () => {}
+    }
+  });
+  const result = await createSubagentHandler({ ctx: env.ctx })('list', { sessionId: 'lead-1' });
+  assert.equal(result.ok, true);
+  assert.equal(result.value.mode, 'parent');
+  const rows = result.value.targets;
+  // 只保留 depth 1 的 continuable child：one-shot、depth 2、diagnostic 都排除。
+  assert.deepEqual(
+    rows.map((row) => [row.kind, row.id, row.name, row.live, row.resumable]),
+    [
+      ['subagent', 'sub-dead', 'worker', false, true],
+      ['subagent', 'sub-live', '', true, false]
+    ]
+  );
+  assert.equal(result.value.resumableCount, 1);
+});
+
+test('list：rc.2 形状下不再把 teammate 单列（Team 只剩任务板，teammate 就是 subagent）', async () => {
+  const env = makeCtx({
+    agentGet: (id) => (id === 'lead-1' ? lead : undefined),
+    // rc.2 的 agentTeams 只有任务板方法，没有 listMembers / sendMessage。
+    agentTeams: { isEnabled: () => true, listTasks: () => [] },
+    subagents: {
+      listDescendants: async () => [
+        { kind: 'child', id: 'worker-1', depth: 1, mode: 'continuable', label: 'worker 1', name: 'alice' }
+      ],
+      sendMessage: () => {}
+    }
+  });
+  const result = await createSubagentHandler({ ctx: env.ctx })('list', { sessionId: 'lead-1' });
+  assert.deepEqual(result.value.targets.map((row) => [row.kind, row.id, row.name]), [['subagent', 'worker-1', 'alice']]);
+});
+
 test('list：子会话且父级在线 → child 模式、自身可恢复', async () => {
   const env = makeCtx({
     agentGet: (id) => (id === 'parent-1' ? { id: 'parent-1' } : undefined),
@@ -159,6 +210,51 @@ test('resume：父会话里恢复全部离线目标（team 用名字、subagent 
   assert.ok(sent.every((item) => item.text === SUBAGENT_CONTINUE_TEXT));
 });
 
+test('resume：rc.2 形状下恢复 depth-1 continuable child（按 session id 发 continuation）', async () => {
+  const sent = [];
+  const env = makeCtx({
+    agentGet: (id) => (id === 'lead-1' ? lead : id === 'sub-live' ? { id: 'sub-live' } : undefined),
+    subagents: {
+      listDescendants: async () => [
+        { kind: 'child', id: 'sub-dead', depth: 1, mode: 'continuable', label: 'dead child', name: 'worker' },
+        { kind: 'child', id: 'sub-live', depth: 1, mode: 'continuable', label: 'live child' },
+        { kind: 'child', id: 'grand-child', depth: 2, mode: 'continuable', label: 'grand child' }
+      ],
+      sendMessage: async (sender, targetId, content) => {
+        sent.push({ sender: sender.id, targetId, text: content[0].text });
+      }
+    }
+  });
+  const result = await createSubagentHandler({ ctx: env.ctx })('resume', { sessionId: 'lead-1' });
+  assert.equal(result.ok, true);
+  // 只恢复离线的 depth-1 child；在线的 sub-live 跳过，depth 2 的孙节点不在直接子节点列表里。
+  assert.deepEqual(sent.map((item) => item.targetId), ['sub-dead']);
+  assert.ok(sent.every((item) => item.sender === 'lead-1' && item.text === SUBAGENT_CONTINUE_TEXT));
+  const byTarget = Object.fromEntries(result.value.results.map((row) => [row.id, row]));
+  assert.equal(byTarget['sub-live'].code, 'ALREADY_LIVE');
+});
+
+test('resume：rc.2 形状下子会话经父级恢复自己时 kind 为 subagent、名字取自 catalog', async () => {
+  const sent = [];
+  const env = makeCtx({
+    agentGet: (id) => (id === 'parent-1' ? { id: 'parent-1' } : undefined),
+    subagents: {
+      listDescendants: async () => [
+        { kind: 'child', id: 'child-1', depth: 1, mode: 'continuable', label: 'child', name: 'worker-a' }
+      ],
+      sendMessage: async (sender, targetId) => {
+        sent.push({ sender: sender.id, targetId });
+      }
+    },
+    sessionQuery: { traceSession: async (id) => ({ target: { header: childHeader(id, 'parent-1') } }) }
+  });
+  const result = await createSubagentHandler({ ctx: env.ctx })('resume', { sessionId: 'child-1' });
+  assert.equal(result.value.mode, 'child');
+  assert.equal(result.value.results[0].kind, 'subagent');
+  assert.equal(result.value.results[0].name, 'worker-a');
+  assert.deepEqual(sent, [{ sender: 'parent-1', targetId: 'child-1' }]);
+});
+
 test('resume：子会话里通过父会话恢复自己；父不在线时返回 PARENT_NOT_LIVE', async () => {
   const sent = [];
   const liveParent = makeCtx({
@@ -204,7 +300,8 @@ test('resume：targets 可以按 id/名字过滤；未知目标不误发消息',
   assert.deepEqual(sent, []);
 });
 
-test('diag：报告 subagents / agentTeams / sessionQuery 是否在场', async () => {
+test('diag：报告 subagents / agentTeams / sessionQuery 是否在场（rc.1 与 rc.2 两种形状）', async () => {
+  // 0.2.2-rc.1 形状：listChildren + listMembers。
   const full = makeCtx({
     subagents: { listChildren: async () => [], sendMessage: async () => {} },
     agentTeams: { listMembers: () => [], sendMessage: async () => {} },
@@ -213,15 +310,56 @@ test('diag：报告 subagents / agentTeams / sessionQuery 是否在场', async (
   assert.deepEqual((await createSubagentHandler({ ctx: full.ctx })('diag', {})).value, {
     hasSubagents: true,
     hasAgentTeams: true,
-    hasSessionQuery: true
+    hasSessionQuery: true,
+    subagentListing: 'listChildren'
+  });
+
+  // 0.2.2-rc.2 形状：listChildren 移除，只剩 listDescendants；Team 只剩任务板。
+  const rc2 = makeCtx({
+    subagents: { listDescendants: async () => [], sendMessage: async () => {} },
+    agentTeams: { isEnabled: () => false, listTasks: () => [] },
+    sessionQuery: { traceSession: async () => ({}) }
+  });
+  assert.deepEqual((await createSubagentHandler({ ctx: rc2.ctx })('diag', {})).value, {
+    hasSubagents: true,
+    hasAgentTeams: false,
+    hasSessionQuery: true,
+    subagentListing: 'listDescendants'
   });
 
   const bare = makeCtx({});
   assert.deepEqual((await createSubagentHandler({ ctx: bare.ctx })('diag', {})).value, {
     hasSubagents: false,
     hasAgentTeams: false,
-    hasSessionQuery: false
+    hasSessionQuery: false,
+    subagentListing: 'none'
   });
+});
+
+test('listDirectChildren：优先 rc.2 的 listDescendants，回退 rc.1 的 listChildren，都没有则空数组', async () => {
+  const rc2Rows = await listDirectChildren(
+    {
+      listDescendants: async () => [
+        { kind: 'child', id: 'a', depth: 1, mode: 'continuable' },
+        { kind: 'child', id: 'b', depth: 2, mode: 'continuable' },
+        { kind: 'diagnostic', id: 'c', depth: 1, reason: 'corrupt' }
+      ],
+      listChildren: async () => {
+        throw new Error('rc.2 must not call listChildren');
+      }
+    },
+    'parent'
+  );
+  assert.deepEqual(rc2Rows.map((row) => row.id), ['a']);
+
+  const rc1Rows = await listDirectChildren(
+    { listChildren: async () => [{ id: 'x', mode: 'continuable' }] },
+    'parent'
+  );
+  assert.deepEqual(rc1Rows.map((row) => row.id), ['x']);
+
+  assert.deepEqual(await listDirectChildren(undefined, 'parent'), []);
+  assert.deepEqual(await listDirectChildren({}, 'parent'), []);
 });
 
 test('RPC 常量稳定', () => {

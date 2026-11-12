@@ -21,6 +21,7 @@ import { test } from 'node:test';
 import {
   CONTINUE_PROMPT,
   createRetryUserMessage,
+  detectRootAgent,
   installTurnRetry as apply,
   sessionIdOf,
   shouldGate,
@@ -43,6 +44,8 @@ function makeAgent(sessionId) {
  * @param {object} [options] - 环境开关。
  * @param {boolean} [options.hasLiveClient] - typertGateway.hasLiveClient 的返回值。
  * @param {object[] | undefined} [options.roots] - agents.roots() 的返回值；undefined 表示不提供该服务。
+ * @param {object} [options.agents] - 直接替换 agents 服务（测 0.2.2-rc.2 形状用，可省略 roots）。
+ * @param {object} [options.subagents] - subagents 服务（0.2.2-rc.2 的 rootOf 判根用）。
  * @param {boolean} [options.provideGateway] - 是否提供 typertGateway 服务。
  * @returns {{ ctx: object, handlers: Map<string, Function>, routes: object[], runCleanups: Function }} mock 环境。
  */
@@ -53,13 +56,16 @@ function makeCtx(options = {}) {
 
   const services = {
     agents:
-      options.roots === undefined && options.agent === undefined
-        ? undefined
-        : {
-            roots: () => options.roots ?? (options.agent === undefined ? [] : [options.agent]),
-            // driveRetry 走 `agents.get(id)` 拿 live agent；真实服务有这个入口。
-            get: (id) => (options.agent !== undefined && options.agent.session?.id === id ? options.agent : undefined),
-          },
+      options.agents !== undefined
+        ? options.agents
+        : options.roots === undefined && options.agent === undefined
+          ? undefined
+          : {
+              roots: () => options.roots ?? (options.agent === undefined ? [] : [options.agent]),
+              // driveRetry 走 `agents.get(id)` 拿 live agent；真实服务有这个入口。
+              get: (id) => (options.agent !== undefined && options.agent.session?.id === id ? options.agent : undefined),
+            },
+    subagents: options.subagents,
     typertGateway:
       options.provideGateway === false
         ? undefined
@@ -241,6 +247,55 @@ test('shouldGate：无客户端、子代理、已取消、服务缺失都不拦'
 
   const ok = makeCtx({ hasLiveClient: true, roots: [rootAgent] });
   assert.equal(shouldGate(ok.ctx, makePayload(rootAgent)), true);
+});
+
+test('shouldGate：0.2.2-rc.2 移除了 agents.roots()，用 subagents.rootOf 判根仍能正确否决子代理', () => {
+  const rootAgent = makeAgent('root');
+  const childAgent = makeAgent('child');
+  // rc.2 的 agents 服务没有 roots()，只有 get()/list()/enter() 等。
+  const rc2Agents = { get: () => undefined, list: () => [rootAgent, childAgent] };
+  const subagents = {
+    // rootOf 返回 agent 所在子智能体树的 live root：子代理返回 rootAgent，root 返回自己。
+    rootOf: (agent) => (agent === childAgent ? rootAgent : agent),
+  };
+
+  const env = makeCtx({ hasLiveClient: true, agents: rc2Agents, subagents });
+  assert.equal(shouldGate(env.ctx, makePayload(rootAgent)), true);
+  assert.equal(shouldGate(env.ctx, makePayload(childAgent)), false);
+
+  // 探测快照要能看出走的是哪一代判根信号。
+  const verdict = detectRootAgent(env.ctx, childAgent);
+  assert.equal(verdict.root, false);
+  assert.equal(verdict.probe.via, 'subagents.rootOf');
+});
+
+test('detectRootAgent：两个服务都缺时用会话头兜底（子代理否决、fork 会话仍算根）', () => {
+  const subagentAgent = { session: { id: 'sub', header: { origin: 'subagent', parentSession: 'root' } } };
+  const forkAgent = { session: { id: 'fork', header: { parentSession: 'root' } } };
+  const bareAgent = { session: { id: 'bare' } };
+  const env = makeCtx({ hasLiveClient: true });
+
+  assert.deepEqual(
+    [subagentAgent, forkAgent, bareAgent].map((agent) => detectRootAgent(env.ctx, agent).root),
+    // bareAgent 没有 session.header（真实 Agent 必有），无法判定时返回 undefined，
+    // 调用方不据此否决——保守等于"按钮可能出现"，不会误伤根会话。
+    [false, true, undefined],
+  );
+  assert.equal(detectRootAgent(env.ctx, undefined).root, undefined);
+});
+
+test('detectRootAgent：rc.1 的 agents.roots() 优先，行为保持不变', () => {
+  const rootAgent = makeAgent('root');
+  const childAgent = makeAgent('child');
+  const env = makeCtx({
+    hasLiveClient: true,
+    roots: [rootAgent],
+    subagents: { rootOf: () => rootAgent },
+  });
+  const verdict = detectRootAgent(env.ctx, rootAgent);
+  assert.equal(verdict.root, true);
+  assert.equal(verdict.probe.via, 'agents.roots');
+  assert.equal(verdict.probe.count, 1);
 });
 
 test('apply 注册 agent/request-error 监听器与 RPC 前缀路由', () => {

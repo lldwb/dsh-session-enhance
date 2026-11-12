@@ -3,6 +3,52 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 4.6.1 — 2026-11-12
+
+### 修复：适配 DSH 0.2.2-rc.2（恢复子智能体列举在 rc.2 静默失效）
+
+- **`ctx.agents.roots()` 在 0.2.2-rc.2 被移除**（同批移除 `isOwnedBy()`，`enter(agent, owner)`
+  改为 `enter(agent)`）：重试闸门用它判断「只给根会话显示重试按钮」，有 `typeof` 守卫不会崩，
+  但 `rootsIncludes` 恒为 `null` → `not-root-agent` 否决失效，子代理会话也会出现重试按钮。
+  新增 `detectRootAgent()` 按三代信号回退：`agents.roots()`（rc.1）→
+  `subagents.rootOf(agent) === agent`（rc.2：rootOf 返回 agent 所在子智能体树的 live root）→
+  会话头 `origin !== 'subagent'`（两服务都缺时兜底；fork 会话的 `parentSession` 有值但
+  `origin` 不是 subagent，仍算根）。`diag` 的探测快照新增 `rootProbe`（`via` 字段说明走哪一代）。
+- **`subagents.listChildren()` 在 0.2.2-rc.2 被移除**，服务上只剩
+  `listDescendants(rootSessionId)`（递归返回全部后代，每行带 `depth` 与
+  `kind: 'child' | 'diagnostic'`）。「恢复子智能体」的列举原来只在
+  `typeof listChildren === 'function'` 时执行——rc.2 下该守卫直接跳过，整条列举路径
+  永远返回空，标题栏按钮再也不出现。现在新增 `listDirectChildren()`：优先
+  `listDescendants` 并过滤 `kind === 'child' && depth === 1`，再回退旧 `listChildren`。
+- **Team 服务在 0.2.2-rc.2 只剩任务板**：`agentTeams` 只暴露
+  `isEnabled` / `setEnabled` / `createTask` / `getTask` / `listTasks` / `updateTask`，
+  `listMembers` / `sendMessage` 已移除，teammate 就是普通 subagent。列举与恢复改走
+  `subagents` 通道；rc.1 的 legacy team 路径按存在性保留兼容。子会话恢复自身时
+  `kind` 归为 `subagent`，名字取自父会话 catalog。
+- `diag` 端点新增 `subagentListing`（`listDescendants` / `listChildren` / `none`），
+  升级后可直接看出走的是哪一代列举 API。
+- **运行时上下文过滤**：补 rc.2 精确文本的单测（`<system-reminder>` 包装的首份快照、
+  后续快照、`Current runtime context: none.` 清空提醒），并给 rc.1 未包装的清空提醒
+  补 `Current runtime context:` 冒号前缀兜底（原前缀是句号，匹配不到）。
+- 工具 schema 文案更新：`kind` / `name` 说明 0.2.2-rc.2 起 teammate 就是 subagent。
+
+### 已核对、无需改动
+
+- `session-append-overloads`：本插件不包装 / 替换 `Session.append`（全仓无 `.append =`），
+  不涉及。
+- `attachment-error-codes`：重试规则只把 `CONTEXT_WINDOW_EXCEEDED` 当确定性失败否决，
+  没有把 `UNKNOWN` 当兜底类别；`summarizeFailure` 原样透传 `failure.code`，所以
+  `ATTACHMENT_*` / `INVALID_IMAGE` / `IMAGE_TOO_LARGE` 会正常显示，无需 `isAttachmentError`。
+- `interrupt_agent` 默认关闭 / Team 工具新形态：本插件文档未教用户使用
+  `spawn_teammate` / `interrupt_agent` 等旧工具名，仅概念性提到 teammate。
+- `web-search-billing`、`plugin-update-method`（`BundleInfo.updatable`）、
+  `package-export-cleanup`、`window-drag-regions`：与本插件无关（后两项已逐个确认）。
+
+### 验证
+
+- 单测 **167/167**（新增 rc.2 服务形状、runtime-context 与 rc.2 判根用例）。
+- devkit headless 沙箱真实 Loader 回归（见 README「验证记录」4.6.1 行）。
+
 ## 4.6.0 — 2026-11-11
 
 ### 新能力：熔断、多级预警，响应式压缩与开关解耦（对齐 Claude Code 五级压缩）

@@ -498,6 +498,80 @@ test('messagesOf 跳过每轮注入的 runtime context 与 system-reminder', () 
   );
 });
 
+// DSH 0.2.2-rc.2 的 runtime-context 文本（见 @deepseek-ai/dsh-agent-loop 的
+// runtime-context.ts）：快照与清空提醒都被包进 `<system-reminder>`，引导语也换了。
+const RC2_SNAPSHOT_TEXT = [
+  '<system-reminder>',
+  'The following information describes your current session:',
+  '',
+  'Current working directory: E:\\dsh-plugins',
+  '',
+  'Sandbox policy: danger-full-access',
+  '</system-reminder>',
+].join('\n');
+const RC2_LATER_SNAPSHOT_TEXT = [
+  '<system-reminder>',
+  'The following information describes your current session. It replaces earlier versions of this context, including any retained in conversation summaries.',
+  '',
+  'Current working directory: E:\\dsh-plugins',
+  '</system-reminder>',
+].join('\n');
+const RC2_CLEARED_TEXT = [
+  '<system-reminder>',
+  'Current runtime context: none. Earlier runtime-context snapshots no longer apply.',
+  '</system-reminder>',
+].join('\n');
+
+/** 造一条 rc.2 的 runtime-context 事件。 */
+function rc2ContextEvent(seq, text, withSource = true) {
+  return {
+    seq,
+    type: 'user/message',
+    time: 1_700_002_000_000 + seq,
+    data: {
+      role: 'user',
+      ...(withSource ? { source: { kind: 'runtime-context', form: 'snapshot', sections: [] } } : {}),
+      content: [{ type: 'text', text }],
+    },
+  };
+}
+
+test('messagesOf 认得 0.2.2-rc.2 的 system-reminder 包装：快照 / 后续快照 / 清空提醒都滤掉', () => {
+  const events = [
+    rc2ContextEvent(20, RC2_SNAPSHOT_TEXT),
+    rc2ContextEvent(21, RC2_LATER_SNAPSHOT_TEXT),
+    rc2ContextEvent(22, RC2_CLEARED_TEXT),
+    USER_EVENT,
+    ASSISTANT_EVENT,
+  ];
+  const messages = messagesOf({ events }, 10);
+  assert.deepEqual(messages.map((message) => message.seq), [1, 2]);
+});
+
+test('messagesOf 对没有 source 的 rc.2 文本仍按 <system-reminder> 前缀兜底过滤', () => {
+  // 0.2.2 之前写入的老日志可能没有 source；rc.2 的新文案已经不再以
+  // "Current runtime context." 开头，能兜住它的是 <system-reminder> 前缀。
+  const events = [
+    rc2ContextEvent(30, RC2_SNAPSHOT_TEXT, false),
+    rc2ContextEvent(31, RC2_LATER_SNAPSHOT_TEXT, false),
+    rc2ContextEvent(32, RC2_CLEARED_TEXT, false),
+    USER_EVENT,
+  ];
+  const messages = messagesOf({ events }, 10);
+  assert.deepEqual(messages.map((message) => message.seq), [1]);
+});
+
+test('looksInjected：rc.2 三种文本都命中，正文里提到这些词的用户消息不误伤', () => {
+  assert.equal(looksInjected(RC2_SNAPSHOT_TEXT), true);
+  assert.equal(looksInjected(RC2_LATER_SNAPSHOT_TEXT), true);
+  assert.equal(looksInjected(RC2_CLEARED_TEXT), true);
+  // 旧版未包装的清空提醒（0.2.2-rc.1 及更早）仍按旧前缀命中。
+  assert.equal(looksInjected('Current runtime context: none. Earlier runtime-context snapshots no longer apply.'), true);
+  // 用户消息里只是“提到”这些词，不以它们开头，不误判。
+  assert.equal(looksInjected('为什么 <system-reminder> 会出现在日志里？'), false);
+  assert.equal(looksInjected('我想改 Current runtime context. 的文案'), false);
+});
+
 test('failureResult 始终是完整形状', () => {
   const value = failureResult('abc', '❌ 原因');
   assert.deepEqual(Object.keys(value).sort(), Object.keys(lookupTool().output.schema.properties).sort());

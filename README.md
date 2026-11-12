@@ -326,7 +326,8 @@ AutoCompact → Reactive Compact）。本插件按 DSH 的压缩 seam 做了对�
 会话日志还在，但进程内的 Agent 已经没了。DSH 的规则是：
 
 - 只有**父级**对「直接可继续子级」发送 continuation 消息时才会**冷恢复**它
-  （`dsh-subagent` / `dsh-experimental-agent-team` 的 `sendMessage`）；
+  （`dsh-subagent` 的 `sendMessage`；0.2.2-rc.2 起 Team 只剩任务板，teammate 就是
+  普通 subagent，也走这条通道；rc.1 及更早的 `agentTeams.sendMessage` 仍按存在性兼容）；
 - UI 直接打开子会话**不能**把它恢复 —— `dsh-api-session-controller` 会抛
   `ApiSessionSubagentOwnership`（"is a subagent session; use subagent delivery"）。
 
@@ -335,7 +336,8 @@ AutoCompact → Reactive Compact）。本插件按 DSH 的压缩 seam 做了对�
 **1. 标题栏按钮**（`conversation.session.header.utilities`，分享按钮左侧）
 
 - 父会话里有离线子智能体时显示「恢复子智能体（N）」：点一下，对每个离线目标发送一条中性的
-  「继续」消息，由官方机制冷恢复（team 目标按名字发给 Lead，subagent 目标按会话 id 发给父级）；
+  「继续」消息，由官方机制冷恢复（teammate/subagent 目标都按会话 id 发给父级；rc.1 的
+  legacy team 目标按名字发给 Lead）；
 - 子会话里父级在线时显示「恢复本子智能体」：点一下，由父会话冷恢复本会话；
 - 恢复中按钮禁用；完成后 Toast 报「已恢复 N 个 / 失败 N 个（错误码）」；
 - 没有可恢复目标时按钮不渲染。
@@ -395,8 +397,11 @@ Host 半的 `execute(args, exec)` 则从 `exec.agent.session.id` 取调用方会
 - `system/message`、`developer/message`：Agent 框架指令（实测一条 system 消息 2700+ 字符），
   说明"Agent 被要求怎么工作"，不是"会话在聊什么"；
 - `tool/result`：工具输出本身，概览/分享页里复述没有价值；
-- 每轮重新注入的 `Current runtime context.`、`<system-reminder>` 虽以 user 角色落盘，
-  同样按前缀过滤——实测 4 条消息里 3 条是这类噪音。
+- 每轮重新注入的 runtime context 与 `<system-reminder>` 虽以 user 角色落盘，
+  同样按前缀过滤——实测 4 条消息里 3 条是这类噪音。0.2.2-rc.2 起新写入的
+  runtime-context（快照与「清空提醒」）整条包在 `<system-reminder>` 里，前缀匹配与
+  `source.kind` 两条路都能滤掉；rc.1 的「清空提醒」是未包装的
+  `Current runtime context: none. …`，按冒号前缀兜底。
 
 ### 分享为什么是"公开路由 + 随机 token"
 
@@ -454,6 +459,7 @@ continue;   // ← 回到同一 turn/step 的模型请求
 | UI 沙箱 | 真实浏览器：标题栏分享/复制按钮可见；分享对话框创建/复制/停止全流程；重试覆盖层在无失败态时是隐藏占位（注册成功）、composer 区域正常 | 通过 |
 | 2.0.0 拆分回归 | 单测 101/101；headless 真实 Loader 两工具均可用；UI 沙箱「设置 → 插件 → 会话增强」显示**包含的组件 共 3 个 · 3 运行中**，三行标题/描述分别来自包根、`share/locale/`、`retry/locale/` | 通过 |
 | 2.1.0 / DSH 0.2.2-rc.1 | 单测 **106/106**；devkit web 沙箱（真实 Chrome + 真实 sub2api/deepseek-flash）：三个 client 半进页面清单、控制台 0 错误；复制会话 ID toast；分享链接 200 且渲染标题+消息；「停止 → 重试」turn 正常完成；`time-context` 注入不再出现在消息里 | 通过 |
+| 4.6.1 适配 DSH 0.2.2-rc.2 / DSH 0.2.2-rc.2 | 单测 **167/167**（新增 rc.2 服务形状：`subagents.listDescendants` 直接子节点过滤、`listDirectChildren` 优先新 API 回退旧 API、rc.2 下 teammate 归入 subagent、child 模式名字取自 catalog、diag 两种形状；`agents.roots()` 移除后按 `subagents.rootOf` / 会话头判根并否决子代理；runtime-context 新增 rc.2 三种文本 `<system-reminder>` 包装快照/后续快照/清空提醒的过滤用例）；`node --check`；devkit headless 沙箱真实 Loader：三行合成正确，`session_resume_subagents`（dryRun）真实列出 `subagent` 派生后离线的子代理（`one-plus-one`，kind=subagent、离线、可恢复），`session_lookup` 显示 subagentCount=1 | 通过 |
 | 4.6.0 熔断/预警/响应式压缩解耦 / DSH 0.2.2-rc.1 | 单测 **156/156**（新增熔断 3 次→暂停→下一轮重置、成功清零、`autoCompact` 关闭时溢出恢复仍介入、`statusFor`/`effectiveWindowFor`、`get` 新字段）；`node --check` 通过；devkit web/UI 沙箱：client 半加载 0 console 错误、动作行状态后缀与设置页不受影响 | 通过 |
 | 4.5.0 分级压缩 + 自动开关 / DSH 0.2.2-rc.1 | 单测 **153/153**（新增 `test/compact.test.mjs` 15 条：阈值边界、有效窗口、volatile 配置读取、L1/L2/L3、异常吞掉、守卫安装/恢复、溢出重试上限、pruneAll/describe/diag；entries 新增 Config 与 `configure({auto:false})` 断言；context 覆盖新的 `get`/`compact`/`diag` 字段）；`node --check index.js client.js`；devkit headless 沙箱真实 Loader：三行合成正确、`session_lookup` 实调通过；devkit web/UI 沙箱：`dsh-session-enhance@4.5.0` client 半进页面清单、0 console 错误、设置 → 插件 → 已安装 → 会话增强详情页出现「自动压缩」开关（默认关）+ 提示 + 保存；点开关 → 保存后沙箱 profile patch 写入 `- id: dsh-session-enhance` + `config: {autoCompact: true}`，刷新页面后开关仍为开并显示「已覆盖」 | 通过 |
 | 4.4.0 恢复子智能体 / DSH 0.2.2-rc.1 | 单测 **135/135**（新增 subagent 8 条：父/子 list、父级离线、team+subagent 混合恢复、targets 过滤、PARENT_NOT_LIVE、ALREADY_LIVE、diag）；`node --check` 通过；devkit headless 沙箱真实 Loader 调 `session_resume_subagents`（dryRun）验证工具注册与严格 schema；浏览器按钮随会话状态显示（父会话有离线子代理/子会话父级在线） | 通过 |
@@ -528,6 +534,19 @@ test/               分享/会话视图/三入口测试；test/retry/ 是并入�
   `meta`，并且 `exports` 必须暴露 `<子路径>/locale/*.json`（否则静默回退到裸 specifier）。
 - **`node_modules` 形态会决定 client 半是否出现**：以 `link:` 指向**源码目录**安装时，
   client 半可能进不了页面清单；要验证 UI 就用 `pnpm pack` 打成 tarball 再装（真实目录）。
+- **子智能体列举 API 在 0.2.2-rc.2 变了**：`subagents.listChildren()` 被移除，只剩
+  `listDescendants(rootSessionId)`（递归返回全部后代，每行带 `depth` 与
+  `kind: 'child' | 'diagnostic'`）。「恢复子智能体」的列举因此改走新 API 并过滤
+  `kind === 'child' && depth === 1`，同时保留旧 API 回退——**这类"有 typeof 守卫"的
+  软依赖最容易静默失效**：守卫不抛错，只是整条列举路径永远返回空，按钮就再也不出现。
+  升级大版本时必须对着随附包源码核对每个软取服务的**方法名**，不能只看服务名还在不在。
+- **运行时 owner API 也在 0.2.2-rc.2 被移除**：`agents.roots()`、`agents.isOwnedBy()` 没了，
+  `agents.enter(agent, owner)` 变成 `agents.enter(agent)`——运行时 owner 关系换成了
+  subagent 树。重试闸门原来用 `agents.roots()` 判断"只给根会话显示按钮"，同样被 typeof
+  守卫静默吞掉（子代理会话也会出现按钮）。现在按 `agents.roots()` → `subagents.rootOf()`
+  → 会话头 `origin !== 'subagent'` 三代回退；`subagents.rootOf(agent) === agent` 是 rc.2 的
+  权威判根方式，会话头兜底时**不要用 `parentSession === undefined`**（fork 会话也有
+  parentSession，但它是有界面的根）。
 
 ## License
 

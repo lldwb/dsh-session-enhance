@@ -340,41 +340,66 @@ DSH 自带一个官方上下文 meter：composer 下方的小圆环 + 百分比�
 
 | 级 | 名称 | 动作 | 模型调用 | 触发（占**有效窗口**比例） |
 |---|---|---|---|---|
-| L1 | 微压缩 | 一趟扫描把**所有**超预算工具结果批量修剪（官方 `toolResultPruner.pruneSession`） | 否 | ≥ 60%（`pruneRatio`） |
+| L1 | 微压缩 | **按需**修剪超预算工具结果：从新到旧替换，压力降回阈值以下就停（官方 `toolResultPruner.pruneContent` + 官方替换协议；前提缺失时回退 `pruneSession` 全量修剪） | 否 | ≥ 60%（`pruneRatio`） |
 | L2 | 深度压缩 | 官方 `compactIfNeeded('pressure')`：**先修剪全部可剪工具结果，再摘要最旧范围**，同一事务 | 是（1 次摘要） | ≥ 80%（`compactRatio`） |
 | L3 | 溢出恢复 | 官方 `compactIfNeeded('context-overflow')`，表层前进后重试该请求 | 是 | 提供方返回 `CONTEXT_WINDOW_EXCEEDED` |
 
 **有效窗口** = 模型窗口 − 输出预留（最近请求头的 `maxTokens`），与 Claude Code 的
-"有效上下文窗口"同口径；阈值只按比例判定，不写死 token 数。
+"有效上下文窗口"同口径。**触发阈值**与官方 `compaction-basic` 逐字一致：
+`min(窗口 × 比例, 窗口 − 输出预留 − headroomTokens 65536)`，不写死 token 数。
 
 **批处理（一次性断点）**：历史替换会让「从第一个被替换 token 起」的前缀缓存失效。所以：
 
 - L2 不自己拆成"先修剪、下轮再摘要"——官方 `compactIfNeeded('pressure')` 在**同一个压缩事务**
   （一次 `compaction/start` … `compaction/end`）里先剪全部、再摘要，只换一次表层；
-- L1 只在一次 `pruneSession` 里处理**所有**超预算工具结果，不做碎片化逐条清理；
+- L1 **按需修剪**（5.3.0 起）：从新到旧替换超预算工具结果，压力降回阈值以下就停——而不是把
+  所有超预算结果一次剪光。剪得越靠前，失效的前缀缓存越多，所以"省够就停"同时降低了不可逆
+  损失与缓存代价。前提缺失时自动回退官方全量修剪。
 - 自动模式下 L1/L2 都在**同一个 `agent/pre-step`**（下一次请求发出前）完成，下一次请求看到的
   是最终表层，因此只产生一个缓存断点。
 
 **开关**：`设置 → 插件 → 已安装 → 会话增强 → 自动压缩`，**默认关闭**。配置字段
-`autoCompact`（volatile，保存后热更新，不需要重启）。关闭时：
+`autoCompact`（volatile，保存后热更新，不需要重启）。
 
-- 本插件不做 L1/L2 主动自动压缩；
-- 手动「压缩」按钮仍然可用；
-- **L3 溢出恢复与切模型压缩作为安全网保留**（它们不是"主动压缩"，关掉只会让你在溢出时
-  直接看到红色报错）；
-- 运行期会给官方 compaction 引擎的 `compactIfNeeded('pressure')` 装一个守卫，因此**官方自带的
-  主动自动压缩也会真正停手**（web 形态下压缩实例在 preset 的隔离组里，profile patch 打不到它，
-  这是唯一可靠的开关方式）。
+> **5.3.0 起语义变了**：关闭 = **交还官方自动压缩**，而不是「什么都不压」。5.2.0 及以前关闭时
+> 守卫会让官方 `compactIfNeeded('pressure')` 返回 `null`，等于把官方 80% 的兜底一起关掉。
 
-**手动压缩也是分级的**：点「压缩」时先做 L1 批量修剪（不调模型），紧接着执行官方 `/compact`
-（L2 摘要）——两者在同一个空闲窗口内完成，下一次请求看到最终表层。结果提示会同时报
-「已清理 N 个工具输出；压缩 M 项，释放约 T tokens」。
+三态仲裁（运行期给 compaction 引擎的 `compactIfNeeded` 包一层）：
 
-**与 DSH 自带压缩的关系**：官方 `dsh-compaction-basic` 默认 `auto: true`，会在自己的阈值
-（默认 0.8）自动压缩；本插件不改它的配置，只通过运行期守卫让 `autoCompact` 成为主动自动压缩
-的唯一开关。若想彻底移除官方自动压缩（包括溢出恢复），请在 profile 补丁里关闭该行
-（`- id: compaction-basic` + `config: { auto: false }`），或按官方 web 形态把 host 平面三行保持
-禁用、由 preset 提供压缩服务。
+| 情形 | 行为 |
+|---|---|
+| 非 `pressure`（溢出恢复 / 手动 / 切模型） | 原样转发 |
+| `pressure` + 开关**关** | **转发给官方**（关 = 没装插件） |
+| `pressure` + 开关**开** + 官方监听调用 | 返回 `null`（插件独占，避免同一窗口压两次） |
+| `pressure` + 开关**开** + 本插件调用 | 放行 |
+
+为什么需要这一层：web 形态下压缩实例在 preset 的隔离组里（`isolate: { compaction, toolResultPruner }`），
+profile patch 的 id 定向覆盖打不到它——运行期仲裁是唯一可靠的方式。
+
+**手动压缩也是分级的**：点「压缩」时，**只有压力达到 L1 阈值**才先做批量修剪（不调模型），
+紧接着执行官方 `/compact`（L2 摘要）。低于阈值时跳过修剪（结果里 `pruneSkipped: true` +
+`pruneReason`）——避免「没有可压缩历史」的会话被白白剪掉工具结果中间段。
+
+**与 DSH 自带压缩的关系**：官方 `dsh-compaction-basic` 默认 `auto: true`，阈值 0.8。开关打开时
+本插件接管主动压缩（官方 pre-step 监听让路）；关闭时官方按自己的阈值工作。若想彻底移除官方
+自动压缩（包括溢出恢复），请在 profile 补丁里关闭该行（`- id: compaction-basic` +
+`config: { auto: false }`），或按官方 web 形态把 host 平面三行保持禁用、由 preset 提供压缩服务。
+
+**阈值公式与官方一致**（5.3.0 起）：`min(窗口 × 比例, 窗口 − 输出预留 − headroomTokens 65536)`。
+1M 窗口下两者恰好相等；小窗口下 headroom 会把阈值显著提前（128k 窗口 + 8k 预留 → 54,464 而不是
+96,000）。窗口小于压缩余量时返回 `NO_PRESSURE_BUDGET`（官方在同样配置下抛
+`TargetPressureConfigError`，不压缩）。
+
+两个比例可配（volatile，改后热更新；设置页只有开关，比例走 profile 补丁）：
+
+```yaml
+- id: dsh-session-enhance
+  config:
+    pruneRatio: 0.7     # L1 阈值（默认 0.6）
+    compactRatio: 0.85  # L2 阈值（默认 0.8）
+```
+
+`pruneRatio` 会被收敛到不大于 `compactRatio`（否则 L1 永不触发）。
 
 > **为什么不用 `compactRegion` 做"更细的分级"**：官方 `compactRegion` 要求轮次开着、且选区
 > 需要工具配对平衡；在 `agent/pre-step` 里自己选范围会与官方事务抢锁并增加断点次数。分级
@@ -389,7 +414,7 @@ AutoCompact → Reactive Compact）。本插件按 DSH 的压缩 seam 做了对�
 | CC 层级 | CC 的做法 | 本插件 / DSH | 差异与原因 |
 |---|---|---|---|
 | Snip 历史剪除 | 直接移除远端旧消息，零成本 | **未实现** | DSH 表层只能「替换」不能「删除」；直接写事件（ebbing 方式）会绕过 compaction seam，要自己复刻锁与工具配对，风险大于收益 |
-| MicroCompact 微压缩 | 清理旧工具结果（白名单、每轮评估、缓存/时间两条路径） | **L1**：官方 `toolResultPruner` 批量修剪 | DSH 的 pruner 是官方实现（保留头尾），本插件把它提前到有效窗口 60% 并保证一次批量；CC 的「缓存微压缩/时间微压缩」依赖服务端缓存协议，DSH 没有 |
+| MicroCompact 微压缩 | 清理旧工具结果（白名单、每轮评估、缓存/时间两条路径） | **L1**：官方 `toolResultPruner` 按需修剪（新到旧、省够就停） | DSH 的 pruner 是官方实现（保留头尾），本插件把它提前到 60% 并按需修剪；CC 的「缓存微压缩/时间微压缩」依赖服务端缓存协议，DSH 没有 |
 | Context Collapse 上下文折叠 | 分段折叠、保留细粒度；~90% 开始；启用时跳过 AutoCompact | **未单独实现** | DSH seam 只有「摘要替换」一种写操作；官方 `compactIfNeeded` 本身就是「摘要最旧范围 + 逐字保留近期尾部」，等价于折叠+自动压缩合并 |
 | AutoCompact 自动压缩 | 阈值触发；优先复用 Session Memory（0 调用），失败再全量摘要；压缩提示词含 9 要素 + `<analysis>`；压缩后回填最近 5 个文件/技能；连续失败 3 次熔断 | **L2** + **熔断** | 摘要提示词、保留比例与压缩后内容由官方 `compaction-basic` 决定（结构化 8 段检查点），本插件不改；熔断 4.6 补上；DSH 没有 Session Memory 服务，无法做「0 调用复用」 |
 | Reactive Compact 响应式压缩 | 413 扣留 → 先 drain 折叠 → 再全量总结 → 仍失败才报错；每轮一次 | **L3** | 官方 compaction-basic 已有 `CONTEXT_WINDOW_EXCEEDED` 恢复；本插件作为兜底，4.6 起与 `autoCompact` 开关解耦（关闭时也生效），每轮最多一次 |
@@ -398,10 +423,10 @@ AutoCompact → Reactive Compact）。本插件按 DSH 的压缩 seam 做了对�
 几个刻意的差异：
 
 - **阈值按比例而非固定 buffer**：CC 用「窗口 − 输出预留 − 13K」的 token buffer；
-  DSH 的窗口随路由模型变化，本插件用「有效窗口（窗口 − 输出预留）× 60% / 80%」，
-  阈值随模型自动缩放。
+  DSH 的窗口随路由模型变化，本插件用官方同款公式
+  `min(窗口 × 60%/80%, 窗口 − 输出预留 − 65536)`，阈值随模型自动缩放。
 - **微压缩是压力门控的**：CC 每轮评估微压缩（默认构建里常是 no-op）；本插件只在
-  压力 ≥ 60% 时批量修剪，避免无谓的前缀缓存断点。
+  压力 ≥ 60% 时按需修剪（新到旧、省够就停），避免无谓的前缀缓存断点。
 - **压缩质量**：CC 用 9 要素提示词 + `<analysis>` 先分析再总结；DSH 的官方摘要提示词
   是 8 段结构化检查点（Primary Request / Files / Errors / Pending / Current Work …），
   同样要求保留文件路径、错误与用户原话——这层由官方后端负责，本插件不替换它。
@@ -515,6 +540,7 @@ Host 半的 `execute(args, exec)` 则从 `exec.agent.session.id` 取调用方会
 | 5.0.0 移除失败重试组件 / DSH 0.2.2-rc.2 | 单测 **108/108**（原 167；`test/retry/*` 58 条 + `test/entries` 1 条，共 59 个用例随组件删除）；`node --check client.js`；devkit headless 沙箱真实 Loader：合成树只有 2 行 Loader 行（`dsh-session-enhance` / `dsh-session-enhance-share`）、`session_lookup` 实调返回当前会话摘要；devkit web/UI 沙箱：`dsh-session-enhance@5.0.0 is loaded`、控制台 0 错误、页面无 `[data-turn-retry]` 且 `dataset.dshTurnRetry` 为 undefined、详情页「包含的组件 共 2 个 · 2 运行中」（会话增强 / 会话分享）、当前版本 5.0.0 | 通过 |
 | 离线单测 | `node --test`：严格 JSON-Schema 子集、required 覆盖、返回值自校验、消息过滤、血缘拍平、分享存储（幂等/撤销/持久化/损坏文件/BOM/旧目录只读回退）、HTML 转义、分享视图、`session_share` 全流程、分级压缩、子智能体恢复、中断记录与 RPC 端点、三入口形状 | **130/130 通过** |
 | headless 沙箱 | 真实 Loader：`session_lookup`（无参数 / 不存在 id）；真实 `subagent` 派生后反查 `role=subagent`、`parentSessionId`；`session_share` 在无 web server 的部署里返回结构化失败 | 通过 |
+| 5.3.0 仲裁器三态 / 按需修剪 / 分享页角色 / DSH 0.2.2-rc.2 | 单测 **142/142**（新增：仲裁器三态、`pruneIfNeeded` 跳过与执行、按需修剪「新到旧 + 省够即停」、官方公式对齐 1M 与 128k 两组、`NO_PRESSURE_BUDGET`、`prune≥compact` 收敛、检查点 → summary 角色与去标签、`lastDecision` / `AUTO_OFF`、Config 三个 volatile 字段）；`node --check` 六个改动文件全过；devkit headless 真实 Loader 两组**强制低阈值**回归：**开**（`pruneRatio 0.0001`）→ 会话日志出现 2 条 `compaction/prune` + 2 条 `surface.replace`，工具结果里出现官方 `[... tool result middle pruned ...]` 标记、0 条 `compaction/summary`；**关**（`autoCompact:false` + 官方 `thresholdRatio 0.0001`）→ 出现 `compaction/start` + `compaction/end`，证明守卫已转发给官方（旧版本这里会返回 `null`、什么都不会发生）；devkit web/UI 沙箱：`dsh-session-enhance@5.3.0` client 半进页面清单、0 console 错误、详情页 v5.3.0、自绘设置卡「自动压缩」正常渲染 | 通过 |
 | web 沙箱（真实 HTTP） | RPC `share.create` → 公开页 200（约 4.5 KB，含消息与只读徽标）→ `?download=1` 返回 `attachment` → 未知 token 404 → `POST` 405 → 撤销后再访问 404；CSP 头存在 | 通过 |
 | UI 沙箱 | 真实浏览器：标题栏分享/复制按钮可见；分享对话框创建/复制/停止全流程；composer 区域正常、无重试覆盖层 | 通过 |
 | 2.0.0 拆分回归 | 单测 101/101；headless 真实 Loader 两工具均可用；UI 沙箱「设置 → 插件 → 会话增强」显示**包含的组件 共 3 个 · 3 运行中**，三行标题/描述分别来自包根、`share/locale/`、`retry/locale/` | 通过 |

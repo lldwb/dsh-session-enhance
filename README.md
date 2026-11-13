@@ -521,6 +521,18 @@ Host 半的 `execute(args, exec)` 则从 `exec.agent.session.id` 取调用方会
 （192 bit）随机、不可枚举、可撤销、每次请求现读日志（撤销即失效，也不在磁盘上多存一份
 会话内容）。
 
+⚠️ **这条路由必须显式 `auth: 'anonymous'`**（`lib/public.mjs`）。DSH 0.2.2-rc.3 起
+`webServer.register()` 的 `auth` 默认是 `'required'`：没有已认证 Peer 的请求会在
+**进入 handler 之前**被拒（无人决策时 503），分享链接就会直接打不开。匿名只免除**凭据**
+验证；Connection 的**来源**检查（Host/Origin 栅栏：loopback、监听地址或 `trustedHosts`）
+对匿名路由同样生效，所以"公开"指"不要求登录"，不是"任何 Host 都收"。
+旧版本（rc.2 及更早）的 `register()` 只是 `table.set(path, route)`、不读这个键，多写它在
+旧运行时上是静默无害的 —— 这也是本次不写 feature-detect 的原因。
+
+反过来，**创建/撤销等有副作用的通道不能声明匿名**：`/dsh-session-enhance`、
+`/dsh-session-enhance-retry`、`/dsh-session-enhance-context` 三条都保持默认
+`required`（`test/routes.test.mjs` 把这两个方向都钉住了，避免以后被"顺手统一"改坏）。
+
 创建/查询/撤销这些**有副作用**的接口则走认证通道：`connection.admit(req)` 校验后才会
 执行，浏览器半用 `ctx.connection.rpc.call('/dsh-session-enhance', …)` 调用。
 
@@ -535,6 +547,7 @@ Host 半的 `execute(args, exec)` 则从 `exec.agent.session.id` 取调用方会
 
 | 层 | 内容 | 结果 |
 |---|---|---|
+| 5.3.2 适配 DSH 0.2.2-rc.3 / DSH 0.2.2-rc.3（checkout `39163dd30f`） | 单测 **150/150**（新增 `test/routes.test.mjs` 3 例：分享页路由 `auth === 'anonymous'`、分享 handler 自身仍只认 token（404/405/200）、三条 RPC 通道保持默认 `required`）；`node --check` 改动文件；核对结果：`webServer.register` 新增 `auth`（默认 `required`，`packages/host/webserver/src/index.ts:123-124,780-788`）→ 分享页显式匿名；`connection.admit` 与 `PeerAdmission` 形状未变（`packages/client/connection/src/rpc.ts:121-123,225`）；`ctx.on` 的 `prepend` 仍在（`vendor/cordis/src/events.ts:111-118`）；`settings.configure` / `tools.register` / `sessionQuery.*` / `subagents.listDescendants` / `agents.turnBoundaryOf` / `compaction.compactNow|compactIfNeeded` / `toolResultPruner.pruneSession` / `tokenMeter.contextPressure` / `session.append` 等均未变；client 半 6 个 ui-primitives 导出与 4 个槽位名、`configForms.get|whileServed`、`SettingsFormModel.bind` 全部仍在；rc.2 向后兼容已核对安装版 `app.asar` 的 `dsh-host-webserver/src/index.ts:445-452`（`register()` 不读 `auth`） | 离线通过；真实 Loader 待 Lead 在目标版本运行时验证 |
 | 5.2.0 新增「中断重试」组件 / DSH 0.2.2-rc.2 | 单测 **130/130**（新增 `test/retry/*` 21 例 + entries 三入口 1 例）；`node --check client.js`；devkit headless 沙箱真实 Loader：合成树 3 行（`dsh-session-enhance` / `-share` / `-retry`），任务正常完成（logger 不落 stderr，行激活证据由 UI 沙箱提供）；devkit web/UI 沙箱：`dsh-session-enhance@5.2.0 is loaded`、控制台 0 错误、`[data-interrupted-retry]` 隐藏占位存在（槽位注册成功）、详情页「包含的组件 共 3 个 · 3 运行中」（会话增强 / 会话分享 / 中断重试）、当前版本 5.2.0；页面内 `POST /dsh-session-enhance-retry/pending` 返回 200 业务信封 `{pending:false,recoverable:null}` | 通过 |
 | 5.1.0 移除「恢复子智能体」按钮 / DSH 0.2.2-rc.2 | 单测 **108/108**（`SUBAGENT_RPC_CHANNEL` 常量用例改写为「恢复文案稳定」，计数不变）；`node --check client.js`；devkit headless 沙箱真实 Loader：合成树仍 2 行、`session_resume_subagents`（dryRun）实调返回「子智能体共 0 个，可恢复 0 个」；devkit web/UI 沙箱：`dsh-session-enhance@5.1.0 is loaded`、控制台 0 错误、页面无 `[data-session-resume]`、详情页「包含的组件 共 2 个 · 2 运行中」、当前版本 5.1.0（web 沙箱无可用模型、未能创建会话，标题栏按钮未实操；静态确认分享/复制槽位注册仍在） | 通过 |
 | 5.0.0 移除失败重试组件 / DSH 0.2.2-rc.2 | 单测 **108/108**（原 167；`test/retry/*` 58 条 + `test/entries` 1 条，共 59 个用例随组件删除）；`node --check client.js`；devkit headless 沙箱真实 Loader：合成树只有 2 行 Loader 行（`dsh-session-enhance` / `dsh-session-enhance-share`）、`session_lookup` 实调返回当前会话摘要；devkit web/UI 沙箱：`dsh-session-enhance@5.0.0 is loaded`、控制台 0 错误、页面无 `[data-turn-retry]` 且 `dataset.dshTurnRetry` 为 undefined、详情页「包含的组件 共 2 个 · 2 运行中」（会话增强 / 会话分享）、当前版本 5.0.0 | 通过 |

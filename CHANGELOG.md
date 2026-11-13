@@ -3,6 +3,70 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 5.3.2 — 2026-11-14
+
+### 修复：免登录分享页在 DSH 0.2.2-rc.3 上会被认证拦掉
+
+DSH 0.2.2-rc.3 给 `webServer.register({ kind, path, handler })` 加了 `auth` 字段，
+**默认 `'required'`**：没有已认证 Peer 的请求会在**进入 handler 之前**被拒（无人决策
+时 503）。依据：
+
+```ts
+// packages/host/webserver/src/index.ts:123-124
+/** Defaults to required. Anonymous handlers may receive no Peer. */
+auth?: WebAuthenticationRule
+// :780-788
+private authPolicy(auth, request) { return typeof auth === 'function' ? auth(request) : auth ?? 'required' }
+… ?? (policy === 'anonymous' ? { kind: 'allow' } : { kind: 'deny', status: 503 })
+```
+
+`lib/public.mjs` 的 `GET /share/<token>` 是**免登录只读**路由（分享给没有 DSH 账号的人），
+之前没写 `auth`，于是在 rc.3 上分享链接会在 handler 之前被拒 —— 分享功能整体失效。
+
+**修法**：给这条路由显式加 `auth: 'anonymous'`。
+
+- 匿名只免除**凭据**验证；Connection 的**来源**检查（Host/Origin 栅栏对匿名路由同样生效，
+  `packages/client/connection/src/rpc-host.ts:87-95`）保持不变，所以安全语义没有放宽到
+  "任何来源都收"。
+- 三条有副作用的 RPC 通道（`/dsh-session-enhance`、`/dsh-session-enhance-retry`、
+  `/dsh-session-enhance-context`）**保持默认 `required`**，没有顺手改成匿名。
+- **向后兼容 rc.2**：已核对本机安装版 `app.asar` 里的
+  `dsh-host-webserver/src/index.ts:445-452` —— `register()` 只做重复检查与
+  `table.set(path, route)`，不读 `auth`，所以多写这个键在旧运行时上静默无害，
+  不需要 feature-detect。
+
+### 核对过但**未改**的部分（目标版本未变）
+
+- `connection.admit()` 与 `PeerAdmission`（`{peer}` | `{rejection: 401|403|503}`）形状未变
+  （`packages/client/connection/src/rpc.ts:121-123,225`），三条 RPC 通道里的双保险照旧。
+- 分级压缩/按需修剪依赖的落库 API 未变：`session.append(type, data, opts)`、
+  `session.eventAt` / `deriveEventMessage` / `surface.nodes` / `requestContext` /
+  `requestHeader`（`packages/core/session/src/index.ts:562,745,809,1007,1028,1108`）、
+  `agents.turnBoundaryOf(session).openTurnStartSeq`、`pruner.pruneContent`、
+  `tokenMeter.measure|estimateMessage`。**本次不动压缩/修剪的落库逻辑**。
+- 工具/服务面：`tools.register(definition)`、`settings.configure({auto}, fiber)`、
+  `sessionQuery.traceSession|readSurface|readTitleSnapshots`、`sessions.get|flush`、
+  `subagents.listDescendants|sendMessage`、`agents.get`、`compaction.compactNow|compactIfNeeded`、
+  `commands.execute`、`webServer.getOrigin`、`webApp.getAdvertisedUrl` 全部仍在。
+- `ctx.on(..., { prepend: true })` 仍在（`vendor/cordis/src/events.ts:111-118`）；
+  无 `ctx.root` 用法；`ctx.get()` 仍返回 `undefined` 而非抛错。
+- 浏览器半：`window.__ModuleLoader__.load` 入口不变；`@deepseek-ai/dsh-client-ui-primitives`
+  的 `Button`/`Modal`/`Switch`/`Toast`/`SettingsForm`/`SettingsFormModel`（含 `bind`）仍在；
+  四个槽位名（`conversation.session.header.utilities`、`conversation.input.right`、
+  `conversation.input.left`、`plugins.bundle.config`）、`configForms.get|whileServed`、
+  `connection.rpc.call`、`sessions.binding` 仍在；样式用自有 `data-dsh-enhance-*`
+  选择器并在 dispose 时 `style.remove()`，不依赖 `data-plugin-css` 或生成的 CSS Module 类名。
+- `agentTeams.listMembers` / `agentTeams.sendMessage` 早已在 rc.2 移除（本插件按
+  `typeof === 'function'` 存在性兼容，rc.2 形状下 teammate 由 `subagents` 通道恢复），
+  本次无需改动。
+
+### 验证
+
+`node --test` **150/150** 通过（新增 `test/routes.test.mjs` 3 例：分享页匿名声明、
+分享 handler 自身仍只认 token、三条 RPC 通道保持 `required`）。真实 Loader 回归由
+统一适配流程在目标版本运行时执行。
+
+
 ## 5.3.1 — 2026-11-13
 
 修两个真实事故暴露的缺陷。**前者会写坏会话日志，后者会让「日志坏了」看起来像「会话是空的」。**

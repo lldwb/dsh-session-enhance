@@ -111,7 +111,10 @@ test('get：返回压力与窗口，并说明压缩是否可用', async () => {
       canPrune: false,
       effectiveWindow: null,
       autoFailures: 0,
-      breakerOpen: false
+      breakerOpen: false,
+      lastDecision: null,
+      lastPruned: 0,
+      headroomTokens: null
     }
   });
 });
@@ -156,7 +159,9 @@ test('compact：成功时返回压缩条数与释放 token 数', async () => {
     items: 3,
     tokensSaved: 4_200,
     pruned: 0,
-    charsRemoved: 0
+    charsRemoved: 0,
+    pruneSkipped: true,
+    pruneReason: ''
   });
   assert.equal(calls.length, 1);
   assert.equal(calls[0].target, agent);
@@ -169,7 +174,15 @@ test('compact：没有可压缩范围时返回 compacted:false', async () => {
   const result = await createContextHandler({ ctx: env.ctx })('compact', { sessionId: 's1' });
   assert.deepEqual(result, {
     ok: true,
-    value: { compacted: false, reason: 'NO_RANGE', via: 'service', pruned: 0, charsRemoved: 0 }
+    value: {
+      compacted: false,
+      reason: 'NO_RANGE',
+      via: 'service',
+      pruned: 0,
+      charsRemoved: 0,
+      pruneSkipped: true,
+      pruneReason: ''
+    }
   });
 });
 
@@ -251,7 +264,9 @@ test('compact：优先执行官方 /compact 命令（与用户输入走同一条
     items: 12,
     tokensSaved: 4200,
     pruned: 0,
-    charsRemoved: 0
+    charsRemoved: 0,
+    pruneSkipped: true,
+    pruneReason: ''
   });
   assert.equal(executed.length, 1);
   assert.equal(executed[0].target, agent);
@@ -276,7 +291,9 @@ test('compact：命令返回「没有可压缩历史」时不当作成功', asyn
       via: 'command',
       text: 'No compactable history yet.',
       pruned: 0,
-      charsRemoved: 0
+      charsRemoved: 0,
+      pruneSkipped: true,
+      pruneReason: ''
     }
   });
 });
@@ -319,7 +336,16 @@ test('compact：命令未注册（execute 返回 undefined）时回退到 compac
   assert.equal(called, 1);
   assert.deepEqual(result, {
     ok: true,
-    value: { compacted: true, via: 'service', items: 2, tokensSaved: 900, pruned: 0, charsRemoved: 0 }
+    value: {
+      compacted: true,
+      via: 'service',
+      items: 2,
+      tokensSaved: 900,
+      pruned: 0,
+      charsRemoved: 0,
+      pruneSkipped: true,
+      pruneReason: ''
+    }
   });
 });
 
@@ -416,7 +442,7 @@ test('get：driver 提供自动压缩状态、阈值与修剪器可用性', asyn
   assert.equal(result.value.breakerOpen, true);
 });
 
-test('compact：先批量修剪工具输出（L1），再执行压缩（L2），并回报 pruned', async () => {
+test('compact：压力达 L1 阈值时先按需修剪，再执行压缩（L2），并回报 pruned', async () => {
   const env = makeCtx({
     agent,
     compaction: {
@@ -426,7 +452,7 @@ test('compact：先批量修剪工具输出（L1），再执行压缩（L2），
   const driver = {
     compactionFor: () => env.ctx.compaction,
     commandsFor: () => undefined,
-    pruneAll: () => ({ available: true, pruned: 3, charsRemoved: 1_200 }),
+    pruneIfNeeded: () => ({ available: true, pruned: 3, charsRemoved: 1_200, skipped: false }),
     describe: () => ({ autoCompact: false, pruneRatio: 0.6, compactRatio: 0.8 })
   };
   const result = await createContextHandler({ ctx: env.ctx, driver })('compact', { sessionId: 's1' });
@@ -437,6 +463,37 @@ test('compact：先批量修剪工具输出（L1），再执行压缩（L2），
     items: 2,
     tokensSaved: 900,
     pruned: 3,
-    charsRemoved: 1_200
+    charsRemoved: 1_200,
+    pruneSkipped: false,
+    pruneReason: ''
   });
+});
+
+test('compact：压力未达 L1 阈值时跳过修剪（不会「先剪后失败」）', async () => {
+  let compacted = 0;
+  const env = makeCtx({
+    agent,
+    compaction: {
+      compactNow: async () => {
+        compacted += 1;
+        return null;
+      }
+    }
+  });
+  const driver = {
+    compactionFor: () => env.ctx.compaction,
+    commandsFor: () => undefined,
+    // 未达阈值：明确回报 skipped + 原因，且一次都没剪。
+    pruneIfNeeded: () => ({ available: true, pruned: 0, charsRemoved: 0, skipped: true, reason: 'BELOW_PRUNE_RATIO' }),
+    describe: () => ({ autoCompact: false, pruneRatio: 0.6, compactRatio: 0.8 })
+  };
+  const result = await createContextHandler({ ctx: env.ctx, driver })('compact', { sessionId: 's1' });
+  assert.equal(result.ok, true);
+  assert.equal(result.value.compacted, false);
+  assert.equal(result.value.reason, 'NO_RANGE');
+  assert.equal(result.value.pruned, 0);
+  assert.equal(result.value.pruneSkipped, true);
+  assert.equal(result.value.pruneReason, 'BELOW_PRUNE_RATIO');
+  // 压缩仍然照常尝试（手动压缩本身不要求压力达标）。
+  assert.equal(compacted, 1);
 });

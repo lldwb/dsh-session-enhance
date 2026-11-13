@@ -28,7 +28,7 @@ function makeAgent(options = {}) {
   return {
     session: {
       id: 's1',
-      requestContext: () => ({ contextWindow: options.contextWindow ?? 1_000 }),
+      requestContext: () => ({ contextWindow: options.contextWindow ?? 1_000_000 }),
       requestHeader: () => ({ config: { maxTokens: options.maxTokens ?? 0 } }),
       surface: { replaceGeneration: generation }
     },
@@ -77,19 +77,54 @@ test('tiers：effectiveWindow = 窗口 − 输出预留', () => {
   assert.equal(effectiveWindow({ contextWindow: 0 }), undefined);
 });
 
-test('tiers：resolveTier 在两级阈值处切换', () => {
-  const base = { contextWindow: 1_000, maxTokens: 0 };
-  assert.equal(resolveTier({ ...base, totalTokens: 599 }).tier, TIER.NONE);
-  assert.equal(resolveTier({ ...base, totalTokens: 600 }).tier, TIER.PRUNE);
-  assert.equal(resolveTier({ ...base, totalTokens: 799 }).tier, TIER.PRUNE);
-  assert.equal(resolveTier({ ...base, totalTokens: 800 }).tier, TIER.COMPACT);
-  assert.equal(resolveTier({ ...base, totalTokens: 1_000 }).tier, TIER.COMPACT);
+test('tiers：resolveTier 在两级阈值处切换（1M 窗口，余量不构成约束）', () => {
+  const base = { contextWindow: 1_000_000, maxTokens: 0 };
+  // 压力预算 = 1,000,000 − 0 − 65,536 = 934,464；两级阈值取 min(窗口×比例, 预算)。
+  assert.equal(resolveTier({ ...base, totalTokens: 599_999 }).tier, TIER.NONE);
+  assert.equal(resolveTier({ ...base, totalTokens: 600_000 }).tier, TIER.PRUNE);
+  assert.equal(resolveTier({ ...base, totalTokens: 799_999 }).tier, TIER.PRUNE);
+  assert.equal(resolveTier({ ...base, totalTokens: 800_000 }).tier, TIER.COMPACT);
+  assert.equal(resolveTier({ ...base, totalTokens: 1_000_000 }).tier, TIER.COMPACT);
+  // 阈值本身也暴露出来（客户端 tooltip 用）。
+  assert.equal(resolveTier({ ...base, totalTokens: 0 }).pruneThresholdTokens, 600_000);
+  assert.equal(resolveTier({ ...base, totalTokens: 0 }).compactThresholdTokens, 800_000);
+});
+
+test('tiers：阈值按官方公式被 headroom 夹住（小窗口）', () => {
+  // 官方：min(窗口×0.8, 窗口−预留−65536)。128k 窗口 + 8k 预留 → 预算 54,464，
+  // 于是 0.8×128k=102,400 被压到 54,464 —— 而不是 96,000（只按窗口比例算的结果）。
+  // 预算成为约束时 L1/L2 阈值相同（都等于预算），这是官方公式的直接后果。
+  const small = { contextWindow: 128_000, maxTokens: 8_000 };
+  assert.equal(resolveTier({ ...small, totalTokens: 54_463 }).tier, TIER.NONE);
+  assert.equal(resolveTier({ ...small, totalTokens: 54_464 }).tier, TIER.COMPACT);
+  assert.equal(resolveTier({ ...small, totalTokens: 0 }).compactThresholdTokens, 54_464);
+  assert.equal(resolveTier({ ...small, totalTokens: 0 }).pruneThresholdTokens, 54_464);
+});
+
+test('tiers：窗口小于压缩余量时返回 NO_PRESSURE_BUDGET（不压缩，而不是永远压）', () => {
+  const decision = resolveTier({ contextWindow: 50_000, maxTokens: 0, totalTokens: 40_000 });
+  assert.equal(decision.tier, TIER.NONE);
+  assert.equal(decision.reason, 'NO_PRESSURE_BUDGET');
+});
+
+test('tiers：pruneRatio ≥ compactRatio 时收敛到 compact（保证 L1 一定先于 L2）', () => {
+  const decision = resolveTier({
+    contextWindow: 1_000_000,
+    maxTokens: 0,
+    totalTokens: 0,
+    pruneRatio: 0.95,
+    compactRatio: 0.5
+  });
+  assert.equal(decision.pruneRatio, 0.5);
+  assert.equal(decision.compactRatio, 0.5);
 });
 
 test('tiers：窗口/用量缺失时返回 none', () => {
-  assert.equal(resolveTier({ totalTokens: 900 }).tier, TIER.NONE);
-  assert.equal(resolveTier({ contextWindow: 1_000 }).tier, TIER.NONE);
-  assert.equal(resolveTier({ totalTokens: 900, contextWindow: 1_000 }).ratio, 0.9);
+  assert.equal(resolveTier({ totalTokens: 900_000 }).tier, TIER.NONE);
+  assert.equal(resolveTier({ totalTokens: 900_000 }).reason, 'NO_WINDOW');
+  assert.equal(resolveTier({ contextWindow: 1_000_000 }).tier, TIER.NONE);
+  assert.equal(resolveTier({ contextWindow: 1_000_000 }).reason, 'NO_MEASUREMENT');
+  assert.equal(resolveTier({ totalTokens: 900_000, contextWindow: 1_000_000 }).ratio, 0.9);
   assert.equal(formatRatio(0.624), '62.4%');
   assert.equal(formatRatio(undefined), '—');
 });
@@ -160,7 +195,7 @@ function makeDriverEnvironment(options = {}) {
 }
 
 test('driver：开关关闭时 pre-step 不测量、不压缩、不修剪，且总是 next()', async () => {
-  const env = makeDriverEnvironment({ auto: false, totalTokens: 900 });
+  const env = makeDriverEnvironment({ auto: false, totalTokens: 900_000 });
   const agent = makeAgent();
   let nextCalled = 0;
   const decision = await env.driver.onPreStep({ agent, signal: { aborted: false } }, async () => {
@@ -183,7 +218,7 @@ test('driver：开关打开且低于 L1 阈值时什么也不做', async () => {
 });
 
 test('driver：L1 区间只做一次批量修剪（不调模型）', async () => {
-  const env = makeDriverEnvironment({ auto: true, totalTokens: 650 });
+  const env = makeDriverEnvironment({ auto: true, totalTokens: 650_000 });
   const agent = makeAgent();
   const outcome = await env.driver.runAutoTier(agent, { aborted: false });
   assert.equal(outcome.tier, TIER.PRUNE);
@@ -194,7 +229,7 @@ test('driver：L1 区间只做一次批量修剪（不调模型）', async () =>
 });
 
 test('driver：L2 区间走官方 compactIfNeeded("pressure")（修剪+摘要同一事务）', async () => {
-  const env = makeDriverEnvironment({ auto: true, totalTokens: 900 });
+  const env = makeDriverEnvironment({ auto: true, totalTokens: 900_000 });
   const agent = makeAgent();
   const outcome = await env.driver.runAutoTier(agent, { aborted: false });
   assert.equal(outcome.tier, TIER.COMPACT);
@@ -206,7 +241,7 @@ test('driver：L2 区间走官方 compactIfNeeded("pressure")（修剪+摘要同
 });
 
 test('driver：pre-step 内异常被吞掉，仍然 next()（宿主不兜异常）', async () => {
-  const env = makeDriverEnvironment({ auto: true, totalTokens: 900 });
+  const env = makeDriverEnvironment({ auto: true, totalTokens: 900_000 });
   env.engine.compactIfNeeded = async () => {
     throw new Error('boom');
   };
@@ -280,7 +315,7 @@ test('driver：溢出恢复是安全网，autoCompact 关闭时也介入', async
 });
 
 test('driver：自动压缩连续失败 3 次后熔断，空闲（轮结束）后重置', async () => {
-  const env = makeDriverEnvironment({ auto: true, totalTokens: 900 });
+  const env = makeDriverEnvironment({ auto: true, totalTokens: 900_000 });
   const agent = makeAgent();
   let attempts = 0;
   env.engine.compactIfNeeded = async () => {
@@ -308,7 +343,7 @@ test('driver：自动压缩连续失败 3 次后熔断，空闲（轮结束）�
 });
 
 test('driver：自动压缩成功后清零失败计数', async () => {
-  const env = makeDriverEnvironment({ auto: true, totalTokens: 900 });
+  const env = makeDriverEnvironment({ auto: true, totalTokens: 900_000 });
   const agent = makeAgent();
   let shouldFail = true;
   env.engine.compactIfNeeded = async () => {
@@ -325,34 +360,51 @@ test('driver：自动压缩成功后清零失败计数', async () => {
   assert.equal(env.driver.statusFor(agent).breakerOpen, false);
 });
 
-test('driver：statusFor 给出有效窗口与熔断状态', () => {
+test('driver：statusFor 给出有效窗口、熔断状态与最近决策', () => {
   const env = makeDriverEnvironment({ auto: true });
   const agent = makeAgent({ contextWindow: 1_000, maxTokens: 200 });
   assert.equal(env.driver.effectiveWindowFor(agent), 800);
-  assert.deepEqual(env.driver.statusFor(agent), {
-    autoFailures: 0,
-    breakerOpen: false,
-    effectiveWindow: 800
-  });
+  const status = env.driver.statusFor(agent);
+  assert.equal(status.autoFailures, 0);
+  assert.equal(status.breakerOpen, false);
+  assert.equal(status.effectiveWindow, 800);
+  assert.equal(status.lastPruned, 0);
+  // 小窗口下预算被 headroom 吃光：明确给出 NO_PRESSURE_BUDGET，而不是假装「没压力」。
+  assert.equal(status.lastDecision.tier, TIER.NONE);
+  assert.equal(status.lastDecision.reason, 'NO_PRESSURE_BUDGET');
+  assert.equal(status.lastDecision.window, 800);
 });
 
-test('driver：自动压缩守卫让官方 pressure 路径在关闭时真正停手，且可恢复', async () => {
+test('driver：autoCompact 关闭时 statusFor 明确回答 AUTO_OFF（为什么没压）', () => {
   const env = makeDriverEnvironment({ auto: false });
   const agent = makeAgent();
+  const status = env.driver.statusFor(agent);
+  assert.equal(status.lastDecision.tier, TIER.NONE);
+  assert.equal(status.lastDecision.reason, 'AUTO_OFF');
+});
+
+test('driver：仲裁器三态 —— 关=交还官方、开+外部=让路、开+插件自己=放行', async () => {
+  const env = makeDriverEnvironment({ auto: false, totalTokens: 900_000 });
+  const agent = makeAgent();
   const original = env.engine.compactIfNeeded;
-  // 第一次 pre-step 会安装守卫。
+  // 第一次 pre-step 会安装仲裁器。
   await env.driver.onPreStep({ agent, signal: { aborted: false } }, async () => undefined);
   assert.notEqual(env.engine.compactIfNeeded, original);
-  // 关闭时 pressure 路径返回 null（官方 listener 因此不做任何事）。
-  assert.equal(await env.engine.compactIfNeeded(agent, 'pressure', { aborted: false }), null);
-  // 溢出恢复路径仍放行（安全网）。
+  // ① 关闭时：pressure 路径**转发给官方**（5.3.0 之前这里返回 null，等于把官方兜底关掉）。
+  const offPressure = await env.engine.compactIfNeeded(agent, 'pressure', { aborted: false });
+  assert.equal(offPressure.shadowedTokenCount, 4_200);
+  assert.equal(env.calls.compactIfNeeded.length, 1);
+  // ② 关闭时：溢出恢复仍放行（安全网）。
   const overflow = await env.engine.compactIfNeeded(agent, 'context-overflow', { aborted: false });
   assert.equal(overflow.shadowedTokenCount, 4_200);
-  // 打开后 pressure 路径恢复。
+  // ③ 打开后：外部（官方 listener）的 pressure 调用被让路 → null。
   env.setAuto(true);
-  const pressure = await env.engine.compactIfNeeded(agent, 'pressure', { aborted: false });
-  assert.equal(pressure.shadowedTokenCount, 4_200);
-  // 卸载后恢复原方法。
+  assert.equal(await env.engine.compactIfNeeded(agent, 'pressure', { aborted: false }), null);
+  // ④ 打开后：插件自己的 L2 调用必须放行（否则自己把自己拦住）。
+  const own = await env.driver.runAutoTier(agent, { aborted: false });
+  assert.equal(own.tier, TIER.COMPACT);
+  assert.equal(own.compacted, true);
+  // ⑤ 卸载后恢复原方法。
   for (const dispose of env.driver.attach()) dispose();
   assert.equal(env.engine.compactIfNeeded, original);
 });
@@ -360,12 +412,19 @@ test('driver：自动压缩守卫让官方 pressure 路径在关闭时真正停�
 test('driver：pruneAll / describe / diag 的稳定形状', async () => {
   const env = makeDriverEnvironment({ auto: true, totalTokens: 0 });
   const agent = makeAgent();
-  assert.deepEqual(env.driver.pruneAll(agent), { available: true, pruned: 2, charsRemoved: 123 });
+  // 不带决策 → 回退官方全量修剪（兼容旧调用方）。
+  assert.deepEqual(env.driver.pruneAll(agent), {
+    available: true,
+    pruned: 2,
+    charsRemoved: 123,
+    selective: false
+  });
   assert.deepEqual(env.driver.describe(), {
     autoCompact: true,
     pruneRatio: DEFAULT_PRUNE_RATIO,
     compactRatio: DEFAULT_COMPACT_RATIO,
     warningRatio: DEFAULT_WARNING_RATIO,
+    headroomTokens: 65_536,
     maxOverflowRetries: DEFAULT_MAX_OVERFLOW_RETRIES,
     autoFailureLimit: DEFAULT_AUTO_FAILURE_LIMIT
   });
@@ -374,4 +433,104 @@ test('driver：pruneAll / describe / diag 的稳定形状', async () => {
   assert.equal(diag.hasPruner, true);
   assert.equal(diag.hasTokenMeter, true);
   assert.equal(typeof diag.guardedEngines, 'number');
+});
+
+test('driver：pruneIfNeeded 在压力未达 L1 阈值时跳过修剪（不再「先剪后失败」）', () => {
+  const env = makeDriverEnvironment({ auto: true, totalTokens: 100 });
+  const agent = makeAgent();
+  const outcome = env.driver.pruneIfNeeded(agent);
+  assert.equal(outcome.skipped, true);
+  assert.equal(outcome.pruned, 0);
+  assert.equal(outcome.reason, 'BELOW_PRUNE_RATIO');
+  // 关键：一次 pruner 都没调用 —— 这就是 R7 的修复点。
+  assert.equal(env.calls.prune, 0);
+});
+
+test('driver：pruneIfNeeded 在压力达 L1 阈值时按需修剪', () => {
+  const env = makeDriverEnvironment({ auto: true, totalTokens: 650_000 });
+  const agent = makeAgent();
+  const outcome = env.driver.pruneIfNeeded(agent);
+  assert.equal(outcome.skipped, false);
+  assert.equal(outcome.pruned, 2);
+  assert.equal(env.calls.prune, 1);
+});
+
+/** 构造一个可被「按需修剪」驱动的假会话（只实现 pruneSelective 用到的方法）。 */
+function makePrunableSession(entries) {
+  const events = new Map();
+  const appended = [];
+  let seq = 100;
+  for (const entry of entries) {
+    events.set(entry.seq, {
+      seq: entry.seq,
+      type: 'tool/result',
+      data: { message: { role: 'tool', content: [{ type: 'text', text: entry.text }] } }
+    });
+  }
+  return {
+    appended,
+    requestContext: () => ({ contextWindow: 1_000_000 }),
+    requestHeader: () => ({ config: { maxTokens: 0 } }),
+    get surface() {
+      return { nodes: [...events.keys()] };
+    },
+    eventAt: (target) => events.get(target),
+    deriveEventMessage: (event) => event.data.message,
+    append: (type, data, options) => {
+      const next = { seq, type, data, ...options };
+      appended.push(next);
+      seq += 1;
+      return next;
+    }
+  };
+}
+
+test('driver：按需修剪从新到旧剪，省够就停（不碰更早的节点）', () => {
+  const env = makeDriverEnvironment({ auto: true, totalTokens: 650_000 });
+  const agent = makeAgent();
+  // 三个超预算工具结果：seq 1（最早）、2、3（最新）。
+  const session = makePrunableSession([
+    { seq: 1, text: 'a'.repeat(20_000) },
+    { seq: 2, text: 'b'.repeat(20_000) },
+    { seq: 3, text: 'c'.repeat(20_000) }
+  ]);
+  agent.session = session;
+  // pruneContent：砍到只剩 100 字符（省 19,900 字符 ≈ 4,975 tokens）。
+  env.pruner.pruneContent = (blocks) => [{ type: 'text', text: blocks[0].text.slice(0, 100) }];
+  env.meter.estimateMessage = (message) => message.content[0].text.length;
+
+  const outcome = env.driver.runAutoTier(agent, { aborted: false });
+  return outcome.then((decision) => {
+    assert.equal(decision.tier, TIER.PRUNE);
+    // 只需要省 650,000 − 600,000 = 50,000 tokens；一个节点只省 ~19,900，
+    // 所以会继续剪到够为止，但**从最新开始**：先 3、再 2、再 1。
+    const replaced = session.appended.filter((event) => event.surfaceOp !== undefined).map((event) => event.surfaceOp.startSeq);
+    assert.deepEqual(replaced, [3, 2, 1]);
+    // 每个替换前都有一条影子价格事件（否则会话会拒绝写入）。
+    const shadowPrices = session.appended.filter((event) => event.type === 'compaction/prune');
+    assert.equal(shadowPrices.length, replaced.length);
+    assert.equal(shadowPrices[0].data.shadowedSeqs[0], 3);
+    // 不再回退到官方全量修剪。
+    assert.equal(env.calls.prune, 0);
+  });
+});
+
+test('driver：按需修剪省够目标后停止（不把更早节点也剪掉）', () => {
+  const env = makeDriverEnvironment({ auto: true, totalTokens: 620_000 });
+  const agent = makeAgent();
+  const session = makePrunableSession([
+    { seq: 1, text: 'a'.repeat(20_000) },
+    { seq: 2, text: 'b'.repeat(20_000) }
+  ]);
+  agent.session = session;
+  // 每个节点省 10,000 tokens；目标只差 20,000 → 剪两个刚好够，但不该再往下剪（没有第三个）。
+  env.pruner.pruneContent = (blocks) => [{ type: 'text', text: blocks[0].text.slice(0, 10_000) }];
+  env.meter.estimateMessage = (message) => message.content[0].text.length;
+
+  return env.driver.runAutoTier(agent, { aborted: false }).then(() => {
+    const replaced = session.appended
+      .filter((event) => event.surfaceOp !== undefined)
+      .map((event) => event.surfaceOp.startSeq);
+    assert.deepEqual(replaced, [2, 1]);
+  });
 });

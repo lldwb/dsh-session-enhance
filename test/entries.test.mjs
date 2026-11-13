@@ -96,6 +96,18 @@ test('会话增强行声明 autoCompact 设置：volatile、默认关闭，并�
   assert.equal(typeof parsed.autoCompact.get, 'function');
   assert.equal(parsed.autoCompact.get(), false);
 
+  // 两级阈值也可配（volatile，设置页保存后热更新）。
+  for (const [key, expected] of [
+    ['pruneRatio', 0.6],
+    ['compactRatio', 0.8],
+  ]) {
+    const ratioField = copyEntry.Config.dict[key];
+    assert.equal(ratioField.type, 'number', key);
+    assert.equal(ratioField.meta.volatile, true, `${key} 必须 volatile`);
+    assert.equal(ratioField.meta.default, expected, key);
+    assert.equal(parsed[key].get(), expected, key);
+  }
+
   // apply 会在 settings 服务在场时声明「自绘页」策略（auto:false）。
   const ctx = mockCtx();
   copyEntry.apply(ctx);

@@ -11,9 +11,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+  checkpointTextOf,
   classifyRole,
   failureResult,
   flattenDescendants,
+  isCompactCheckpoint,
   looksInjected,
   lookupSession,
   messageTextOf,
@@ -295,6 +297,56 @@ test('messagesOf 按 data.source.kind 滤掉 0.2.2 的框架注入（runtime-con
       [2, 'assistant'],
     ],
   );
+});
+
+test('messagesOf：压缩检查点映射成 summary 角色，并剥掉引导语与标签', () => {
+  // 官方 compactCheckpointSource 落地的是 user/message，source.kind = 'compact-checkpoint'。
+  const checkpoint = {
+    seq: 20,
+    type: 'user/message',
+    time: 1_700_001_000_000,
+    data: {
+      source: { kind: 'compact-checkpoint', compactionId: 'c1' },
+      content: [
+        {
+          type: 'text',
+          text:
+            'This is an automatically generated checkpoint condensing an earlier span of the conversation to free up context. ' +
+            'Treat the captured context as established background and build on it without restating it. ' +
+            'Continue the task directly from the messages that follow, without acknowledging this checkpoint.\n\n<compacted-summary>',
+        },
+        { type: 'text', text: '## Primary Request and Intent\n- 帮我看下鸡腿标注' },
+        { type: 'text', text: '</compacted-summary>' },
+      ],
+    },
+  };
+  const messages = messagesOf({ events: [checkpoint, ASSISTANT_EVENT] }, 10);
+  assert.deepEqual(
+    messages.map((message) => message.role),
+    ['summary', 'assistant'],
+  );
+  // 不是用户说的话：不能以引导语开头，也不能残留标签。
+  assert.equal(messages[0].text.startsWith('This is an automatically generated checkpoint'), false);
+  assert.equal(messages[0].text.includes('<compacted-summary>'), false);
+  assert.equal(messages[0].text.includes('</compacted-summary>'), false);
+  assert.ok(messages[0].text.startsWith('## Primary Request and Intent'));
+  assert.equal(isCompactCheckpoint(checkpoint), true);
+  assert.equal(isCompactCheckpoint(USER_EVENT), false);
+});
+
+test('messagesOf：检查点缺标签时原样保留内容（宁可多显示也不吞）', () => {
+  const untagged = {
+    seq: 21,
+    type: 'user/message',
+    time: 1_700_001_010_000,
+    data: {
+      source: { kind: 'compact-checkpoint', compactionId: 'c2' },
+      content: [{ type: 'text', text: '## Current Work\n- 正在改压缩' }],
+    },
+  };
+  const messages = messagesOf({ events: [untagged] }, 10);
+  assert.equal(messages[0].role, 'summary');
+  assert.equal(messages[0].text, '## Current Work\n- 正在改压缩');
 });
 
 test('messagesOf 对没有 source 字段的老日志仍按文本前缀滤注入', () => {

@@ -61,9 +61,17 @@ export const SETTINGS_NAMESPACE = name;
  *
  * - `autoCompact`：分级自动压缩总开关，**默认关闭**；volatile ⇒ 设置页保存后原地热更新，
  *   下一次 `agent/pre-step` 立即按新值执行，不需要重启。
+ *   **5.3.0 起语义变了**：关闭 = 交还官方自动压缩（80% 兜底照常工作），而不是「什么都不压」。
+ * - `pruneRatio`：L1 微压缩阈值（占有效窗口），默认 0.6；volatile。
+ * - `compactRatio`：L2 深度压缩阈值，默认 0.8；volatile。
+ *
+ * 两个比例都会被收敛到合法区间（0,1]，且 `pruneRatio` 不允许 ≥ `compactRatio`
+ * （否则 L1 永不触发）——收敛逻辑在 `lib/compact/tiers.mjs` 的 `resolveTier`。
  */
 export const Config = z.object({
   autoCompact: z.boolean().default(false).volatile(),
+  pruneRatio: z.number().default(0.6).volatile(),
+  compactRatio: z.number().default(0.8).volatile(),
 });
 
 export { BUILD };
@@ -79,6 +87,12 @@ export function apply(ctx, config) {
   /** 每次读取都是最新值（volatile 字段是活引用，不是快照）。 */
   const readAutoCompact = () => readOption(config, 'autoCompact', false) === true;
 
+  /** 两个阈值同样每次读最新值（设置页保存后热更新）。 */
+  const readTierRatios = () => ({
+    pruneRatio: readOption(config, 'pruneRatio', 0.6),
+    compactRatio: readOption(config, 'compactRatio', 0.8),
+  });
+
   const lookup = buildLookupTool(ctx);
   ctx.effect(() => ctx.tools.register(lookup), 'dsh-session-enhance: tool session_lookup');
 
@@ -90,7 +104,7 @@ export function apply(ctx, config) {
   );
 
   // 分级自动压缩：L1 修剪 / L2 修剪+摘要 / L3 溢出恢复，全部由 autoCompact 控制。
-  const driver = createCompactionDriver({ ctx, readAutoCompact, logger: ctx.logger });
+  const driver = createCompactionDriver({ ctx, readAutoCompact, readTierRatios, logger: ctx.logger });
   ctx.effect(() => {
     const disposers = driver.attach();
     return () => {

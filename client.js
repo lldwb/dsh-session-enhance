@@ -137,6 +137,8 @@ window.__ModuleLoader__.load({
       'context.autoOn': 'auto compaction: on',
       'context.autoOff': 'auto compaction: off',
       'context.autoHint': 'Tiered compaction: prune at {prune} of the effective window, summarize at {compact}.',
+      'context.decisionHint': 'Last decision: {tier} ({reason}).',
+      'context.decisionPruned': 'Last decision: {tier} ({reason}); {n} tool results pruned so far.',
       'context.nearLimit': 'context almost full',
       'context.nearLimitTitle': 'Context is close to the window limit — compact now to avoid a context-overflow failure.',
       'context.breakerOpen': 'auto compaction paused',
@@ -217,6 +219,8 @@ window.__ModuleLoader__.load({
       'context.autoOn': '自动压缩：开',
       'context.autoOff': '自动压缩：关',
       'context.autoHint': '分级压缩：有效窗口 {prune} 时批量清理工具输出，{compact} 时修剪并摘要历史。',
+      'context.decisionHint': '最近一次决策：{tier}（{reason}）。',
+      'context.decisionPruned': '最近一次决策：{tier}（{reason}）；累计已清理 {n} 个工具输出。',
       'context.nearLimit': '上下文即将用尽',
       'context.nearLimitTitle': '上下文接近窗口上限，建议立即压缩以避免溢出失败。',
       'context.breakerOpen': '自动压缩已暂停',
@@ -1359,6 +1363,8 @@ window.__ModuleLoader__.load({
     let contextAutoEffectiveWindow = null;
     let contextAutoFailures = 0;
     let contextBreakerOpen = false;
+    let contextLastDecision = null;
+    let contextLastPruned = 0;
     let contextAutoProbeSession = '';
     let contextObserver = null;
     let contextInterval = null;
@@ -1482,6 +1488,9 @@ window.__ModuleLoader__.load({
             typeof value.effectiveWindow === 'number' ? value.effectiveWindow : null;
           contextAutoFailures = typeof value.autoFailures === 'number' ? value.autoFailures : 0;
           contextBreakerOpen = value.breakerOpen === true;
+          contextLastDecision =
+            value.lastDecision !== null && typeof value.lastDecision === 'object' ? value.lastDecision : null;
+          contextLastPruned = typeof value.lastPruned === 'number' ? value.lastPruned : 0;
           if (value.canCompact === false) contextCanCompact = false;
           renderContextAction(ctx, t);
         })
@@ -1553,6 +1562,29 @@ window.__ModuleLoader__.load({
       if (nearLimit) nextTitle = `${nextTitle}\n${t('context.nearLimitTitle')}`;
       if (contextBreakerOpen) {
         nextTitle = `${nextTitle}\n${t('context.breakerTitle', { n: contextAutoFailures })}`;
+      }
+      // 最近一次分级决策：回答「为什么这一轮没压」（关着 / 没测量 / 未到阈值 / 熔断）。
+      const decisionTier =
+        contextLastDecision !== null && typeof contextLastDecision.tier === 'string'
+          ? contextLastDecision.tier
+          : '';
+      const decisionReason =
+        contextLastDecision !== null && typeof contextLastDecision.reason === 'string'
+          ? contextLastDecision.reason
+          : '';
+      if (decisionTier !== '') {
+        nextTitle = `${nextTitle}\n${
+          contextLastPruned > 0
+            ? t('context.decisionPruned', {
+                tier: decisionTier,
+                reason: decisionReason === '' ? '—' : decisionReason,
+                n: contextLastPruned,
+              })
+            : t('context.decisionHint', {
+                tier: decisionTier,
+                reason: decisionReason === '' ? '—' : decisionReason,
+              })
+        }`;
       }
       if (button.title !== nextTitle) button.title = nextTitle;
     }

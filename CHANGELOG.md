@@ -3,6 +3,80 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 5.3.0 — 2026-11-13
+
+### 行为变化（用户需要知道的一条）：`autoCompact` 关闭 = **交还官方自动压缩**
+
+5.2.0 及以前，关闭 `autoCompact` 时插件的守卫会对官方的主动压力压缩返回 `null`，等于
+**把官方 80% 的兜底也一起关掉了**，只剩 L3（请求被提供方拒绝后才救）。这是「装插件 +
+开关关着」这个中间态最危险的地方：用户以为「维持原样」，实际是「没有任何主动压缩」。
+
+5.3.0 起守卫改成三态仲裁：
+
+| 情形 | 行为 |
+|---|---|
+| 非 `pressure`（溢出恢复 / 手动 / 切模型） | 原样转发（安全网永不拦） |
+| `pressure` 且**关闭** `autoCompact` | **转发给官方**（关 = 没装插件） |
+| `pressure` 且**打开** `autoCompact`，调用方是官方监听 | 返回 `null`（插件独占，避免同一窗口压两次） |
+| `pressure` 且**打开** `autoCompact`，调用方是本插件 | 放行 |
+
+顺带修掉一条更隐蔽的双压缩：以前开关打开时，插件 `prepend` 先压一次、官方 pre-step 监听
+随后**又**调一次 `compactIfNeeded`；当官方阈值低于插件阈值（小窗口）时同一请求窗口会压两次。
+
+### 修复
+
+- **R7：手动压缩不再「先剪后失败」。** 以前 `pruneAll` 在**还不知道有没有可压缩范围**之前
+  就执行：对一个没有可压缩历史的会话点压缩，会永久剪掉工具结果中间段、然后返回 `NO_RANGE`
+  ——压缩没发生，损失发生了。现在只有压力达到 L1 阈值才修剪（`pruneIfNeeded`），跳过时
+  结果里带 `pruneSkipped: true` + `pruneReason`。
+- **R9：分享页不再把机器摘要伪装成用户发言。** 压缩检查点落地的是 `user/message`
+  （`source.kind === 'compact-checkpoint'`），以前会以 `user` 角色出现在分享页。现在映射成
+  `summary` 角色，并剥掉「This is an automatically generated checkpoint…」引导语与
+  `<compacted-summary>` 标签（`messagesOf` / `checkpointTextOf`）。
+- **R4：阈值公式与官方逐字对齐。** 以前是 `窗口 − 输出预留`，官方是
+  `min(窗口 × 比例, 窗口 − 预留 − headroomTokens 65536)`。1M 窗口下两者恰好相等，但小窗口
+  下官方会在 ~54k 就压、旧公式要等到 ~96k（等于接管后把兜底阈值推后了）。窗口小于压缩余量
+  时返回 `NO_PRESSURE_BUDGET`（官方在同样配置下抛 `TargetPressureConfigError`，不压缩）。
+
+### 新能力
+
+- **按需修剪（L1 从新到旧，省够就停）。** 以前 `pruneSession` 会把**所有**超预算工具结果
+  一次换掉，包括很早的节点——表层替换会让从第一个被替换 token 起的前缀缓存全部失效，等于把
+  断点推到最前面。现在从新到旧剪、省够目标就停；前提缺失（自定义 pruner / 无 tokenMeter）时
+  自动回退官方全量修剪。替换协议与官方一致（`compaction/prune` 影子价格 + `surface.replace`
+  + `sourceEventSeqs`）。
+- **`pruneRatio` / `compactRatio` 可配**（volatile，改后热更新）。设置页仍只有「自动压缩」开关；
+  两个比例通过 profile 补丁设置，例如
+  `- id: dsh-session-enhance` + `config: { pruneRatio: 0.7, compactRatio: 0.85 }`。
+- **决策可见**：`get` RPC 新增 `lastDecision` / `lastPruned` / `headroomTokens`，动作行
+  tooltip 直接显示「最近一次决策：none（AUTO_OFF）」这类信息——「为什么这一轮没压」终于有答案
+  （`AUTO_OFF` / `NO_MEASUREMENT` / `NO_WINDOW` / `NO_PRESSURE_BUDGET` / `BELOW_PRUNE_RATIO` /
+  `NO_PRUNER` / `NO_COMPACTION` / `BREAKER_OPEN`）。
+
+### 用户需要做什么
+
+- **无需改配置。** 但如果你此前**故意**用「关掉开关」来禁用一切自动压缩：现在关掉开关等于
+  交还官方（官方会在 80% 自动压缩）。想彻底不压，需要停用本插件的压缩行或把官方的
+  `compaction-basic` 设为 `auto: false`。
+- 升级包并**重启 DSH**（client 清单是服务器启动时的快照）。
+
+### 验证
+
+- 单测 **142/142**（新增：仲裁器三态、`pruneIfNeeded` 跳过/执行、按需修剪新到旧与「省够即停」、
+  官方公式对齐（1M / 128k 两组）、`NO_PRESSURE_BUDGET`、检查点 → summary 角色与去标签、
+  `lastDecision` / `AUTO_OFF`、Config 三个 volatile 字段）；
+- `node --check` 通过（index.js / client.js / 三个 lib 文件）；
+- devkit headless 沙箱真实 Loader，两组强制低阈值回归：
+  - **开**（`autoCompact:true` + `pruneRatio:0.0001`）：会话日志出现 **2 条 `compaction/prune` +
+    2 条 `surface.replace`**，被剪的工具结果里出现官方 `[... tool result middle pruned ...]` 标记，
+    `compaction/summary` = 0（L2 阈值故意留在 0.99）——证明按需修剪在真实 Loader 里真的执行；
+  - **关**（`autoCompact:false` + 官方 `thresholdRatio:0.0001`）：出现 `compaction/start` 与
+    `compaction/end`（end 带 `error: summary is not smaller than the shadowed content`，是这个极端
+    阈值下官方安全网的预期拒绝）——证明守卫在关闭时**转发**给了官方，而旧版本这里返回 `null`、
+    根本不会出现 compaction 事件；
+- devkit web/UI 沙箱：`dsh-session-enhance@5.3.0` client 半进页面清单、控制台 0 错误、详情页
+  显示 v5.3.0、自绘设置卡「自动压缩」正常渲染。
+
 ## 5.2.0 — 2026-11-13
 
 ### 新能力：第三个组件「中断重试」（补官方「继续生成」不覆盖的主动停止）

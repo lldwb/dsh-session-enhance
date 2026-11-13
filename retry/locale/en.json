@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Interrupted retry",
+    "description": "After you stop a turn, a Retry button appears in the composer and resumes the interrupted turn through the Host. The official Continue action covers model failures only; this component covers user interruptions."
+  }
+}

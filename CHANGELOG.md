@@ -3,6 +3,49 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 5.2.0 — 2026-11-13
+
+### 新能力：第三个组件「中断重试」（补官方「继续生成」不覆盖的主动停止）
+
+DSH 0.2.2-rc.2 官方的「继续生成」只在**失败**后可继续（`turn/end` 的 `reason.kind === 'error'`，
+且错误码属于 RATE_LIMIT / SERVER / TIMEOUT / TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并且
+有已准入的用户工作）；用户主动点「停止」的一轮是 `aborted`，官方不给入口。5.2.0 新增独立组件
+「中断重试」补这个空缺。
+
+- **新 Loader 行** `dsh-session-enhance-retry`（name `dsh-session-enhance/retry`，显示名
+  「中断重试」）：Loader 行从 2 行变 3 行，可单独启停；
+- **RPC 通道** `/dsh-session-enhance-retry`（端点 `pending` / `retry` / `diag`）；
+- **事件判定**：监听 `session/event`，`turn/end` 且 `reason.kind === 'aborted'` 且
+  `reason.reason.kind === 'user'` 时记录「可重试」；`turn/start` 或新的用户消息到来即作废；
+- **记录只在内存里，TTL 30 分钟**：中断后没人点就过期；Host 重启后记录丢失（需重新触发一次停止）；
+- **界面入口**：composer 右侧的「重试」按钮（槽位 `conversation.input.right`，主按钮之前，
+  **不遮挡**官方的发送 / 「继续生成」按钮），三态 `ready` / `busy` / `failed`，选择器
+  `data-interrupted-retry`；
+- **点击后的语义**：Host 用 `agent.followup()` 发一条中性 user 消息（「上一轮被用户中断。
+  请从中断处继续完成，不要复述已完成的部分。」）驱动**新的一轮**——历史里会多这条消息，
+  不是原地重试；
+- **与官方分工**：官方 = 失败，本组件 = 中断（`aborted` + 用户主动停止），两者互斥、不会对
+  同一轮同时出现；失败永远交给官方；
+- 组件停用后浏览器半的能力探测返回 405，按钮换成隐藏占位（`data-interrupted-retry="hidden"`）。
+
+### 用户需做什么
+
+- **无需改配置**；升级包并**重启 DSH** 生效（client 清单是服务器启动时的快照，刷新页面不够）；
+- 注意 `- id: dsh-session-enhance-retry` 在 5.0 被移除后于 5.2 重新用于本组件：profile 补丁层
+  里留着的 `disabled: true` 现在表示停用「中断重试」（想启用就删掉该行）。
+
+### 验证
+
+- 单测 **130/130**（新增 `test/retry/*` 21 例 + entries 三入口 1 例）；
+- `node --check client.js` 通过；
+- devkit headless 沙箱真实 Loader：合成树 3 行（`dsh-session-enhance` / `-share` / `-retry`），
+  任务正常完成（logger 不落 stderr，行激活证据由 UI 沙箱提供）；
+- devkit web/UI 沙箱：`dsh-session-enhance@5.2.0 is loaded`、控制台 0 错误、
+  `[data-interrupted-retry]` 隐藏占位存在（槽位注册成功）、详情页「包含的组件
+  共 3 个 · 3 运行中」（会话增强 / 会话分享 / 中断重试）、当前版本 5.2.0；
+- web 沙箱（真实 HTTP）：页面内 `POST /dsh-session-enhance-retry/pending` 返回 200 业务信封
+  `{pending:false,recoverable:null}`。
+
 ## 5.1.0 — 2026-11-12
 
 ### 行为变化：移除标题栏「恢复子智能体」按钮（工具保留）

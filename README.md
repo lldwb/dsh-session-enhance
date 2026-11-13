@@ -1,46 +1,53 @@
 # 会话增强 · dsh-session-enhance
 
-**一个插件包，两个可单独启停的组件**：会话检视（按 ID 查会话与子代理 + 标题栏复制 ID）、会话分享；第一个组件还带**分级上下文压缩**（自动/手动，设置页可开关）。
+**一个插件包，三个可单独启停的组件**：会话检视（按 ID 查会话与子代理 + 标题栏复制 ID）、会话分享、中断重试（用户主动停止的一轮可重试）；第一个组件还带**分级上下文压缩**（自动/手动，设置页可开关）。
 
 > 开源（MIT）。仓库地址：<https://github.com/lldwb/dsh-session-enhance>
 >
 > **5.0.0 移除了「失败重试」组件（破坏性）**：DSH 0.2.2-rc.2 官方已内置失败恢复
-> （composer 的「继续生成」），本插件不再提供重试按钮。升级前必读
-> [5.0 迁移](#50-移除失败重试组件破坏性)。
+> （composer 的「继续生成」），本插件不再提供失败重试。升级前必读
+> [5.0 迁移](#50-移除失败重试组件破坏性)。**5.2.0 起新增的「中断重试」组件只处理用户主动
+> 停止**（官方不覆盖的 `aborted` 场景），与已移除的失败重试不是同一个东西，见下方
+> 「中断重试（5.2 起）」。
 >
 > **4.0.0 起包名/仓库名由 `dsh-session-inspect` 改为 `dsh-session-enhance`，显示名回到「会话增强」**。
-> 4.0.0 时这个包是「一包三组件」的会话能力合集（检视 / 分享 / 重试）；5.0.0 移除重试后是
-> 「一包两组件」（检视 / 分享）。显示名「会话增强」才是对整体用途的描述；
-> `dsh-session-id`（2.x）只覆盖三组件之一，`dsh-session-inspect`（3.x）又只描述
-> 检视这一面。改名历史与迁移步骤见下方 [4.0 改名](#40-改名)。
+> 4.0.0 时这个包是「一包三组件」的会话能力合集（检视 / 分享 / 失败重试）；5.0.0 移除失败重试后
+> 是「一包两组件」（检视 / 分享）；5.2.0 新增「中断重试」后回到「一包三组件」
+> （检视 / 分享 / 中断重试，第三个与已移除的「失败重试」不是同一个东西）。
+> 显示名「会话增强」才是对整体用途的描述；`dsh-session-id`（2.x）只覆盖三组件之一，
+> `dsh-session-inspect`（3.x）又只描述检视这一面。改名历史与迁移步骤见下方 [4.0 改名](#40-改名)。
 >
 > **2.0.0 起拆成三个 Loader 行**：「设置 → 插件 → 会话增强 → 包含的组件」里会看到 3 个
 > 组件，每个都有独立开关。1.x 只有一行（三件事捆在一起，只能整体开关）。
-> **5.0.0 起「失败重试」行已移除，只剩 2 个组件（会话增强 / 会话分享）。**
+> **5.0.0 一度只剩 2 个组件（会话增强 / 会话分享）；5.2.0 起又回到 3 个
+> （会话增强 / 会话分享 / 中断重试）。**
 >
 > **原「失败重试」插件（`dsh-turn-retry`）已于 1.0.0 并入本插件**：它的目录、profile 行与
 > GitHub 仓库都已删除。升级时请先卸载旧的 `dsh-turn-retry`，否则会出现两个重试按钮。
-> （以上为历史说明；5.0.0 起本插件自己的重试组件也已移除，见
-> [5.0 迁移](#50-移除失败重试组件破坏性)。）
+> （以上为历史说明；5.0.0 起本插件自己的失败重试组件也已移除，见
+> [5.0 迁移](#50-移除失败重试组件破坏性)。5.2.0 起同名的 `-retry` Loader 行重新出现，但那是
+> 新组件「中断重试」——只处理用户主动停止，不是旧的失败重试。）
 
-## 两个组件
+## 三个组件
 
 | 组件（界面显示名） | Loader 行 | 提供什么 |
 |---|---|---|
 | 会话增强 | `dsh-session-enhance` | 会话标题栏复制按钮 + 工具 `session_lookup`（按 id 查会话与全部子代理）+ 官方「上下文已用」面板里的**分级压缩**动作（4.5 起自动/手动）+ 工具 `session_resume_subagents`（恢复子智能体，5.1 起只有工具入口） |
 | 会话分享 | `dsh-session-enhance/share` | 标题栏分享按钮 + 工具 `session_share` + 免登录只读页 `/share/<token>` |
+| 中断重试 | `dsh-session-enhance/retry`（行 id `dsh-session-enhance-retry`） | 用户主动停止后 composer 右侧的「重试」按钮 + RPC `/dsh-session-enhance-retry`；只补官方「继续生成」不覆盖的中断场景（失败仍交给官方） |
 
-> **为什么第一个组件叫「会话增强」而不是「会话 ID / 会话检视」**：浏览器半（两块界面）只能挂在
+> **为什么第一个组件叫「会话增强」而不是「会话 ID / 会话检视」**：浏览器半（三块界面）只能挂在
 > **精确包名**那一行上——`@deepseek-ai/dsh-client-modules` 的 `locatePkgJson()` 只接受
 > 精确包名，子路径 specifier 直接返回 `undefined`，那一行就不会有 client 半。所以第一行
 > 必须是 `dsh-session-enhance`，它的组件标题只能等于包根 `locale/`（也就是卡片标题「会话增强」）。
-> 另一行是子路径，有 `share/locale/`，所以能叫「会话分享」。
+> 另两行是子路径，各自有 `share/locale/`、`retry/locale/`，所以能叫「会话分享」「中断重试」。
 
-两部分互相独立：只装 Host 半也能查会话，只装浏览器半也能复制 id / 分享。
+三部分互相独立：只装 Host 半也能查会话，只装浏览器半也能复制 id / 分享 / 中断重试。
 
-> 5.0.0 起没有「失败重试」组件：`dsh-session-enhance/retry` 行、`retry/locale/`、
-> `exports` 的 `./retry` 与 RPC 通道 `/dsh-turn-retry` 都已删除，重试改用官方的
-> 「继续生成」（见下方「重试：用官方的「继续生成」」）。
+> **别把「中断重试」和 5.0 移除的「失败重试」搞混**：5.0.0 删掉的是旧的失败重试组件
+> （`/dsh-turn-retry` 通道、`data-turn-retry` 选择器、失败后自动覆盖层），失败后请用官方
+> 「继续生成」；5.2.0 重新插入的 `dsh-session-enhance/retry` 行是**新组件「中断重试」**，
+> 只处理用户主动停止的那一轮。两者场景互斥（见下方「中断重试（5.2 起）」）。
 
 ## 4.0 改名
 
@@ -48,7 +55,7 @@
 |---|---|---|---|
 | 包名 / 仓库 | `dsh-session-id` | `dsh-session-inspect` | `dsh-session-enhance` |
 | 显示名 | 会话增强 | 会话检视 | **会话增强（英文 Session Enhance）** |
-| Loader 行 id | `dsh-session-id` / `-share` / `-retry` | `dsh-session-inspect` / `-share` / `-retry` | `dsh-session-enhance` / `-share` / `-retry`（5.0.0 起 `-retry` 行已移除） |
+| Loader 行 id | `dsh-session-id` / `-share` / `-retry` | `dsh-session-inspect` / `-share` / `-retry` | `dsh-session-enhance` / `-share` / `-retry`（5.0.0 移除 `-retry`，5.2.0 起以「中断重试」重新出现） |
 | 分享 RPC 通道 | `/dsh-session-id` | `/dsh-session-inspect` | `/dsh-session-enhance` |
 | 分享记录目录 | `<DSH_HOME>/dsh-session-id/` | `<DSH_HOME>/dsh-session-inspect/` | `<DSH_HOME>/dsh-session-enhance/`（旧目录只读回退） |
 
@@ -60,18 +67,23 @@
 3. 重启 DSH（client 清单是服务器启动时的快照，刷新页面不够）。
 
 > 4.0.0 时还有第 3 条「如果你曾停用『失败重试』组件，把 `- id: <旧包名>-retry` 改成
-> `- id: dsh-session-enhance-retry`」。**5.0.0 起该行已移除，这条不再适用**：profile 补丁层里
-> 若还有 `- id: dsh-session-enhance-retry`，请直接删除，见 [5.0 迁移](#50-移除失败重试组件破坏性)。
+> `- id: dsh-session-enhance-retry`」。**5.0.0 起该行被移除，这条不再适用**；而 **5.2.0 起同名行
+> 重新用于新组件「中断重试」**——你保留或新写的 `- id: dsh-session-enhance-retry` + `disabled: true`
+> 现在表示**停用中断重试**（不是旧的失败重试）。详见 [5.0 迁移](#50-移除失败重试组件破坏性)
+> 与下方「中断重试（5.2 起）」。
 
-**4.0.0 改名时刻意保留的兼容标识**（改名不改它们，避免无谓回归与历史断层；5.0.0 起重试相关项已随组件移除）：
+**4.0.0 改名时刻意保留的兼容标识**（改名不改它们，避免无谓回归与历史断层；5.0.0 起重试相关项已随旧组件移除，5.2.0 起部分随新组件恢复）：
 
 - 分享动作通道仍是 `/dsh-session-enhance`（4.0 起；`/dsh-session-inspect`、`/dsh-session-id` 只作历史）；
 - 界面选择器 `data-session-share`（分享 / 复制）；
 - `exports` 子路径：`./share`、`./client`、`./locale/*.json` 结构不变；
-  **`./retry`、`./retry/locale/*.json`、`./retry/icon` 于 5.0.0 移除**；
-- 5.0.0 一并移除的重试标识：RPC 通道 `/dsh-turn-retry`、`RETRY_SOURCE_KIND` 与
-  `dsh-session-id-retry-` 消息前缀、界面选择器 `data-turn-retry` / `data-dsh-turn-retry-button`
-  （见 [5.0 迁移](#50-移除失败重试组件破坏性)）。
+  **`./retry`、`./retry/locale/*.json`、`./retry/icon` 于 5.0.0 移除**，5.2.0 随「中断重试」
+  组件又全部重新出现（`./retry` → `retry/index.js`，`./retry/locale/*.json`，
+  `./retry/icon` → `icon.svg`）；
+- 5.0.0 移除的旧「失败重试」标识不会回来：RPC 通道 `/dsh-turn-retry`、`RETRY_SOURCE_KIND` 与
+  `dsh-session-id-retry-` 消息前缀、界面选择器 `data-turn-retry` / `data-dsh-turn-retry-button`。
+  5.2.0 的「中断重试」是另一套：RPC `/dsh-session-enhance-retry`、选择器
+  `data-interrupted-retry`（见 [5.0 迁移](#50-移除失败重试组件破坏性) 与下方「中断重试（5.2 起）」）。
 
 分享记录不会丢：新路径没有文件时会按 3.x → 2.x 顺序只读加载历史 `shares.json`；一旦有新写入
 就落到新路径，旧文件原样保留（回滚到旧版本也能继续读）。
@@ -99,11 +111,12 @@ DSH 0.2.2-rc.2 已内置失败恢复。
 - 界面：composer 里的重试覆盖层，以及选择器 `data-turn-retry` / `data-dsh-turn-retry-button`。
 
 保留：会话增强（复制会话 ID、`session_lookup`、`session_resume_subagents`、分级上下文压缩）
-与会话分享，行为不变。
+与会话分享，行为不变。（5.2.0 起新增第三个组件「中断重试」，见下方用法；它不是 5.0 移除的
+「失败重试」——`/dsh-turn-retry` 通道与 `data-turn-retry` 选择器不会回来。）
 
 ### 用户必须做什么（升级步骤）
 
-1. **删掉 profile 补丁层里的 retry 行 override**：如果你曾停用（或配置）「失败重试」组件，
+1. **处理 profile 补丁层里的 retry 行 override**：如果你在 4.x 曾停用「失败重试」组件，
    profile 的补丁层里会有这样一行：
 
    ```yaml
@@ -111,34 +124,43 @@ DSH 0.2.2-rc.2 已内置失败恢复。
      disabled: true
    ```
 
-   5.0.0 起这个 Loader 行已经不存在，必须**整条删掉**（不是改名）。
+   5.0.0 时这个 Loader 行不存在，应**整条删掉**（不是改名）。**5.2.0 起同 id 行重新用于
+   「中断重试」**：删掉这一行 = 启用新组件；保留 `disabled: true` = 停用中断重试。
 2. 升级包本身（`dsh plugin add` / 更新本地 link）并执行 `pnpm install`；
 3. **重启 DSH**（client 清单是服务器启动时的快照，刷新页面不够）。重启后
-   「设置 → 插件 → 会话增强 → 包含的组件」应该只剩 **2 个**（会话增强 / 会话分享）。
+   「设置 → 插件 → 会话增强 → 包含的组件」在 5.0.0 时是 **2 个**（会话增强 / 会话分享）；
+   **5.2.0 起是 3 个**（多一个「中断重试」）。
 
 ### 边界：官方「继续生成」只覆盖失败，不覆盖主动停止
 
-- 官方入口出现在**一轮以失败结束**之后；你点了停止的那一轮是正常结束，没有「继续生成」，
-  也不会有任何重试按钮。想接着做就在输入框里发一句话（例如「继续」）。
+- 官方入口出现在**一轮以失败结束**之后：`error`，错误码属于 RATE_LIMIT / SERVER / TIMEOUT /
+  TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并且有已准入的用户工作。你点了停止的那一轮是
+  `aborted`（用户主动停止），官方**不覆盖**，不会出现「继续生成」。
+- **5.2.0 起这个空缺由本插件的「中断重试」组件补上**（composer 右侧的「重试」按钮，见下方
+  「中断重试（5.2 起）」）；官方本身仍不覆盖主动停止。
 - 官方的继续是**新一轮**（会留下一条 `source.kind: 'retry'` 的空 user 消息），不是 4.x
-  那种「在同一 turn / step 原地重新调用模型」。
+  那种「在同一 turn / step 原地重新调用模型」；「中断重试」同样是新一轮（`agent.followup()`）。
 - `CONTEXT_WINDOW_EXCEEDED` 是确定性失败，重发只会再次超长，别指望重试解决——用下面的
   压缩能力（自动 / 手动分级压缩）。
 
 ## 停用某个组件之后
 
 浏览器半只有一份（`dsh.client` 是包级声明，不能按行拆），它会跟着第一行一起加载。为了
-不让被停用的组件留下"点了没反应"的按钮，浏览器半启动时会发一次**能力探测**请求：
+不让被停用的组件留下"点了没反应"的按钮，浏览器半启动时会在两个子组件的通道上各发一次
+**能力探测**请求（分享 `/dsh-session-enhance`、中断重试 `/dsh-session-enhance-retry`）：
 
 - Host 的 RPC 前缀路由只在对应行启用时才注册；
-- 组件在 → `POST /dsh-session-enhance` 返回 **200**（缺参数的业务信封也是 200）；
+- 组件在 → `POST /dsh-session-enhance`（或 `/dsh-session-enhance-retry`）返回 **200**
+  （缺参数的业务信封也是 200）；
 - 组件停用 → 请求落到 SPA fallback，返回 **405**。
 
 探测不阻塞 UI 注册、最多退避重试 3 次；判定不了的（网络异常、非 200/405）一律乐观保留，
 不会因为一次抖动把按钮永久藏掉。于是：
 
 - 停用**会话分享** → 标题栏分享按钮换成隐藏占位（`data-session-share="disabled"`）；
-- 停用**会话增强**（第一行）→ 两块界面随 client 半一起消失，`session_lookup` 也不可用；
+- 停用**中断重试** → composer 右侧的重试按钮换成隐藏占位（`data-interrupted-retry="hidden"`），
+  按钮不渲染；
+- 停用**会话增强**（第一行）→ 三块界面随 client 半一起消失，`session_lookup` 也不可用；
 - 重新启用后刷新页面，按钮自动回来（探测只做一次，不写任何持久缓存）。
 
 ## 安装
@@ -219,7 +241,8 @@ origin；两者都拿不到时创建会明确报错，而不是给一个打不�
 
 ### 重试：用官方的「继续生成」（5.0 起）
 
-**5.0.0 起本插件不再提供重试按钮**，改用 DSH 0.2.2-rc.2 官方内置的失败恢复：
+**5.0.0 起本插件不再提供失败重试按钮**，改用 DSH 0.2.2-rc.2 官方内置的失败恢复
+（5.2.0 另有只处理「中断」的「重试」按钮，见下一节「中断重试（5.2 起）」，不冲突）：
 
 - **入口**：一轮以失败结束后，composer 上会出现官方的「继续生成」入口（`input.continue`）；
   点它即由官方 `retry(failureSeq)` 继续这一轮。本插件不再参与，也不会出现额外的覆盖层按钮。
@@ -229,14 +252,44 @@ origin；两者都拿不到时创建会明确报错，而不是给一个打不�
   的空 user 消息。
 - **是新一轮，不是原地重试**：官方的继续会留下上面那条空 user 消息，不同于 4.x 的
   「在同一 turn / step 原地重新调用模型」。
-- **停止后没有入口**：官方只覆盖「失败」，不覆盖「用户主动停止」。点了停止之后这一轮
-  正常结束，没有「继续生成」；要接着做就在输入框里发一句话（例如「继续」）。
+- **停止后官方没有入口**：官方只覆盖「失败」，不覆盖「用户主动停止」。点了停止之后这一轮
+  正常结束，没有「继续生成」；**5.2.0 起本插件的「中断重试」组件补这个空缺**（见下一节），
+  或者直接在输入框里发一句话（例如「继续」）。
 - **上下文溢出不要重试**：`CONTEXT_WINDOW_EXCEEDED` 是确定性失败，重发只会再次超长。
   请用 composer 左侧的「上下文 / 压缩」（见下一节），或启用官方 `dsh-compaction-basic`
   让系统在达到阈值时自动压缩。
 
 > 4.x 的原重试行为（原地重试、停止后 followup、30 分钟可重试记录、错误码提示）已随组件
 > 移除，历史实现见 CHANGELOG 的 3.1.0 / 4.1.0 / 5.0.0 条目。
+
+### 中断重试（5.2 起）
+
+官方「继续生成」只覆盖**失败**，不覆盖你主动点「停止」的那一轮（`turn/end` 的 `reason.kind`
+是 `aborted` 而不是 `error`）。5.2.0 新增的**「中断重试」组件**专门补这个空缺：
+
+- **触发条件**：你在某轮中途按了停止，Host 收到
+  `turn/end { reason: { kind: 'aborted', reason: { kind: 'user' } } }` 时记录一条「可重试」；
+  该会话出现新的 `turn/start` 或新的用户消息后，记录立即**作废**（已经继续过了就不再给入口）；
+- **按钮位置**：composer 右侧、主按钮之前的「重试」按钮（槽位 `conversation.input.right`），
+  不遮挡官方的发送 / 「继续生成」按钮；
+- **三态**：`ready`（有可重试记录，按钮可点；每 30 秒向 Host 复查一次，记录没了就自己隐藏）→
+  点击后 `busy`（按钮置灰、等待 Host 完成）→ `failed`（这次重试没成功时显示错误码约 3 秒，
+  随后隐藏并重新查询——记录还在就回到可点状态）。会话正在跑或挂着子智能体时按钮不显示；
+- **点击后做什么**：Host 用 `agent.followup()` 发一条中性的 user 消息
+  （「上一轮被用户中断。请从中断处继续完成，不要复述已完成的部分。」），驱动**新的一轮**
+  ——历史里会多这条消息，不是原地重试（4.x 的原地重试已随组件移除，架构上也无法对已结束的
+  turn 原地重发）；
+- **30 分钟 TTL**：中断后没人点，记录 30 分钟后过期；期间切到别的会话、刷新页面再回来仍能点；
+- **边界：Host 重启后记录丢失**：记录只存在内存里（不落盘），DSH 重启后要重新触发一次「停止」
+  才会再出现按钮；
+- **可单独启停**：停用 `dsh-session-enhance-retry` 行后，浏览器半的能力探测拿到 405，按钮换成
+  隐藏占位（`data-interrupted-retry="hidden"`），不会留下"点了没反应"的按钮。
+
+**与官方「继续生成」的分工**：官方 = 失败（`error`，且错误码属于 RATE_LIMIT / SERVER /
+TIMEOUT / TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并有已准入的用户工作）；本组件 = 中断
+（`aborted` 且是用户主动停止）。两者**互斥**，不会对同一轮同时出现；失败永远交给官方。
+
+> 无需改配置，升级后**重启 DSH** 生效（client 清单是服务器启动时的快照，刷新页面不够）。
 
 ### 手动压缩：注入官方「上下文已用」面板（4.2 起；4.3 起走官方 `/compact` 命令）
 
@@ -400,6 +453,7 @@ AutoCompact → Reactive Compact）。本插件按 DSH 的压缩 seam 做了对�
 |---|---|---|
 | 分享 | `conversation.session.header.utilities`（标题栏右侧小按钮） | -11 |
 | 复制 ID | 同上 | -10 |
+| 中断重试 | `conversation.input.right`（composer 右侧，主按钮之前） | 0 |
 | 上下文（隐藏会话跟踪） | `conversation.input.left`（不渲染可见 UI，只记"当前会话是谁"） | 0 |
 | 设置页（自动压缩开关） | `plugins.bundle.config`（key = 包名，渲染在「设置 → 插件 → 已安装 → 会话增强」详情页） | — |
 
@@ -456,9 +510,10 @@ Host 半的 `execute(args, exec)` 则从 `exec.agent.session.id` 取调用方会
 
 | 层 | 内容 | 结果 |
 |---|---|---|
+| 5.2.0 新增「中断重试」组件 / DSH 0.2.2-rc.2 | 单测 **130/130**（新增 `test/retry/*` 21 例 + entries 三入口 1 例）；`node --check client.js`；devkit headless 沙箱真实 Loader：合成树 3 行（`dsh-session-enhance` / `-share` / `-retry`），任务正常完成（logger 不落 stderr，行激活证据由 UI 沙箱提供）；devkit web/UI 沙箱：`dsh-session-enhance@5.2.0 is loaded`、控制台 0 错误、`[data-interrupted-retry]` 隐藏占位存在（槽位注册成功）、详情页「包含的组件 共 3 个 · 3 运行中」（会话增强 / 会话分享 / 中断重试）、当前版本 5.2.0；页面内 `POST /dsh-session-enhance-retry/pending` 返回 200 业务信封 `{pending:false,recoverable:null}` | 通过 |
 | 5.1.0 移除「恢复子智能体」按钮 / DSH 0.2.2-rc.2 | 单测 **108/108**（`SUBAGENT_RPC_CHANNEL` 常量用例改写为「恢复文案稳定」，计数不变）；`node --check client.js`；devkit headless 沙箱真实 Loader：合成树仍 2 行、`session_resume_subagents`（dryRun）实调返回「子智能体共 0 个，可恢复 0 个」；devkit web/UI 沙箱：`dsh-session-enhance@5.1.0 is loaded`、控制台 0 错误、页面无 `[data-session-resume]`、详情页「包含的组件 共 2 个 · 2 运行中」、当前版本 5.1.0（web 沙箱无可用模型、未能创建会话，标题栏按钮未实操；静态确认分享/复制槽位注册仍在） | 通过 |
 | 5.0.0 移除失败重试组件 / DSH 0.2.2-rc.2 | 单测 **108/108**（原 167；`test/retry/*` 58 条 + `test/entries` 1 条，共 59 个用例随组件删除）；`node --check client.js`；devkit headless 沙箱真实 Loader：合成树只有 2 行 Loader 行（`dsh-session-enhance` / `dsh-session-enhance-share`）、`session_lookup` 实调返回当前会话摘要；devkit web/UI 沙箱：`dsh-session-enhance@5.0.0 is loaded`、控制台 0 错误、页面无 `[data-turn-retry]` 且 `dataset.dshTurnRetry` 为 undefined、详情页「包含的组件 共 2 个 · 2 运行中」（会话增强 / 会话分享）、当前版本 5.0.0 | 通过 |
-| 离线单测 | `node --test`：严格 JSON-Schema 子集、required 覆盖、返回值自校验、消息过滤、血缘拍平、分享存储（幂等/撤销/持久化/损坏文件/BOM/旧目录只读回退）、HTML 转义、分享视图、`session_share` 全流程、分级压缩、子智能体恢复、两入口形状 | **108/108 通过** |
+| 离线单测 | `node --test`：严格 JSON-Schema 子集、required 覆盖、返回值自校验、消息过滤、血缘拍平、分享存储（幂等/撤销/持久化/损坏文件/BOM/旧目录只读回退）、HTML 转义、分享视图、`session_share` 全流程、分级压缩、子智能体恢复、中断记录与 RPC 端点、三入口形状 | **130/130 通过** |
 | headless 沙箱 | 真实 Loader：`session_lookup`（无参数 / 不存在 id）；真实 `subagent` 派生后反查 `role=subagent`、`parentSessionId`；`session_share` 在无 web server 的部署里返回结构化失败 | 通过 |
 | web 沙箱（真实 HTTP） | RPC `share.create` → 公开页 200（约 4.5 KB，含消息与只读徽标）→ `?download=1` 返回 `attachment` → 未知 token 404 → `POST` 405 → 撤销后再访问 404；CSP 头存在 | 通过 |
 | UI 沙箱 | 真实浏览器：标题栏分享/复制按钮可见；分享对话框创建/复制/停止全流程；composer 区域正常、无重试覆盖层 | 通过 |
@@ -488,9 +543,11 @@ Host 半的 `execute(args, exec)` 则从 `exec.agent.session.id` 取调用方会
 ```
 index.js            组件①「会话增强」Host 半：注册 session_lookup（同时是包根导出）
 share/index.js      组件②「会话分享」Host 半：session_share + /share 路由 + 分享 RPC
+retry/index.js      组件③入口：name/inject/apply，apply 时装配 lib/retry（中断监听 + RPC 通道）
 locale/             包根词典：卡片标题与组件①的标题/描述（两者共用这一份）
 share/locale/       组件②的标题/描述（子路径 specifier 不读包根 package.json）
-lib/build.mjs       两个组件共用的构建戳
+retry/locale/       组件③的标题/描述
+lib/build.mjs       三个组件共用的构建戳
 lib/service.mjs     会话视图折叠（血缘 / 标题 / 消息 / 失败同一形状），可离线单测
 lib/tools.mjs       聚合门面（buildTools 兼容 1.x）+ re-export 两个构建器
 lib/tools/lookup.mjs  session_lookup 的参数与输出 schema（手写严格子集）
@@ -505,9 +562,12 @@ lib/render.mjs      自包含只读 HTML（转义、CSP、深浅色、打印友�
 lib/shares.mjs      shares.json 存储（原子写、容忍 BOM、损坏不覆盖、2.x 旧目录只读回退）
 lib/rpc.mjs         分享的认证 RPC 通道（/dsh-session-enhance）
 lib/public.mjs      免登录的 /share/<token> 只读路由
-client.js           浏览器半：两块界面 + 对话框 + toast + i18n + 设置页卡片
-cordis.patch.yml    根作用域 insert 两行（不按 preset 挂载）
-test/               分享/会话视图/两入口测试
+lib/retry/host.mjs  组件③ Host 侧：session/event 监听（turn/end 中断判定）、followup 驱动、装配 RPC 通道
+lib/retry/recovery.mjs 中断后「可重试」记录（RecoveryStore，TTL 30 分钟，仅内存）
+lib/retry/rpc.mjs   组件③的 RPC 通道（/dsh-session-enhance-retry，pending / retry / diag）
+client.js           浏览器半：三块界面 + 对话框 + toast + i18n + 设置页卡片
+cordis.patch.yml    根作用域 insert 三行（不按 preset 挂载）
+test/               分享/会话视图/三入口测试；test/retry/ 是组件③的测试
 ```
 
 - **严格 schema 是最大的坑**：第三方插件不能 `import defineTool`，参数与返回值都要手写

@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-enhance",
-  "version": "5.1.0",
-  "description": "会话增强：按 ID 查看任意会话与它的全部子代理，标题栏复制会话 ID，免登录只读分享链接，以及类似 Claude Code 的分级上下文压缩（自动/手动，设置页可开关）。两个可单独启停的组件。",
+  "version": "5.2.0",
+  "description": "会话增强：按 ID 查看任意会话与它的全部子代理，标题栏复制会话 ID，免登录只读分享链接，用户中断的一轮可重试（补官方「继续生成」不覆盖的中断场景），以及类似 Claude Code 的分级上下文压缩（自动/手动，设置页可开关）。三个可单独启停的组件。",
   "type": "module",
   "license": "MIT",
   "private": true,
@@ -10,16 +10,20 @@
   "exports": {
     ".": "./index.js",
     "./share": "./share/index.js",
+    "./retry": "./retry/index.js",
     "./client": "./client.js",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json",
     "./share/locale/*.json": "./share/locale/*.json",
-    "./share/icon": "./icon.svg"
+    "./retry/locale/*.json": "./retry/locale/*.json",
+    "./share/icon": "./icon.svg",
+    "./retry/icon": "./icon.svg"
   },
   "files": [
     "index.js",
     "client.js",
     "share/**",
+    "retry/**",
     "lib/**",
     "cordis.patch.yml",
     "locale/*.json",
@@ -46,7 +50,10 @@
     "session-id",
     "subagent",
     "clipboard",
-    "share"
+    "share",
+    "retry",
+    "turn",
+    "interrupt"
   ],
   "repository": {
     "type": "git",
@@ -58,7 +65,7 @@
   },
   "meta": {
     "title": "会话增强",
-    "description": "两个独立组件：按 ID 查看任意会话与它的全部子代理（含标题栏复制会话 ID）并带分级上下文压缩（自动/手动，设置页可开关）；把会话分享成免登录只读链接。"
+    "description": "三个独立组件：按 ID 查看任意会话与它的全部子代理（含标题栏复制会话 ID）并带分级上下文压缩（自动/手动，设置页可开关）；把会话分享成免登录只读链接；用户点了停止的一轮可以在 composer 上重试（官方「继续生成」只覆盖模型失败）。"
   },
   "dsh": {
     "bundle": {

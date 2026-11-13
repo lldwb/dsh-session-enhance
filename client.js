@@ -1,14 +1,18 @@
 /**
- * `dsh-session-enhance` —— 浏览器半：会话标题栏的「分享会话」「复制会话 ID」两个组件。
+ * `dsh-session-enhance` —— 浏览器半：会话标题栏的「分享会话」「复制会话 ID」与 composer
+ * 右侧的「中断重试」三个组件。
  *
- * ## 这个 bundle 里有两个组件
+ * ## 这个 bundle 里有三个组件
  *
  * 1. **会话 ID**：标题栏一键复制 session id，交给 Agent 按 id 查会话、子代理与历史；
- * 2. **会话分享**：标题栏生成只读分享链接（免登录的只读 HTML 页由 Host 半渲染）。
+ * 2. **会话分享**：标题栏生成只读分享链接（免登录的只读 HTML 页由 Host 半渲染）；
+ * 3. **中断重试**：用户主动停止（`turn/end` 的 `aborted` + `reason.user`）后，在 composer
+ *    右侧给一个「重试」圆钮，点一下让 Host 接着跑被中断的上一轮。
  *
- * 「失败重试」不再由本插件提供：DSH 0.2.2 起官方已内置（composer 的
- * `retry(failureSeq)` + conversationContinuation 投影，用户可见文案「继续生成」），
- * 原先那个把 composer 发送按钮盖成「重试」的组件已整体移除。
+ * 「失败重试」组件（5.0.0 移除的那个，把 composer 发送按钮盖成「重试」）不再由本插件
+ * 提供：DSH 0.2.2 起官方已内置模型失败重试（composer 的 `retry(failureSeq)` +
+ * conversationContinuation 投影，用户可见文案「继续生成」）。第 3 个组件只补官方覆盖
+ * 不到的「用户主动停止」场景，两者互斥、不重叠。
  *
  * ## 会话 ID 与分享解决什么问题
  *
@@ -21,8 +25,10 @@
  *    Host 半生成（免登录只读 HTML），浏览器半只负责「生成 / 复制 / 打开 / 下载 / 停止」
  *    这套交互。
  *
- * 两个按钮都挂在同一个 `conversation.session.header.utilities` list 槽位里：分享 order
- * -11、复制 order -10，所以从左到右是「分享、复制、⋯」—— 分享是更重的动作，放在最左。
+ * 标题栏那两个按钮都挂在同一个 `conversation.session.header.utilities` list 槽位里：
+ * 分享 order -11、复制 order -10，所以从左到右是「分享、复制、⋯」—— 分享是更重的动作，
+ * 放在最左。中断重试按钮不在这里：它挂在 composer 的 `conversation.input.right` 槽位
+ * （主发送按钮之前），只在「上一轮被用户中断」时出现。
  *
  * ## 为什么是手写 bundle（而不是构建产物）
  *
@@ -107,6 +113,12 @@ window.__ModuleLoader__.load({
       'share.toastRevoked': 'Sharing stopped',
       'share.toastFailed': 'The operation failed.',
 
+      // 中断重试（composer 右侧）
+      'retry.button': 'Retry',
+      'retry.hint': 'Previous turn was interrupted — click to retry',
+      'retry.busy': 'Retrying…',
+      'retry.failed': 'Retry did not take effect ({code})',
+
       // 上下文用量 + 手动压缩
       'context.label': 'Context',
       'context.compact': 'Compact',
@@ -180,6 +192,12 @@ window.__ModuleLoader__.load({
       'share.toastCopied': '链接已复制',
       'share.toastRevoked': '已停止分享',
       'share.toastFailed': '操作失败。',
+
+      // 中断重试（composer 右侧）
+      'retry.button': '重试',
+      'retry.hint': '上一轮被中断 —— 点击重试',
+      'retry.busy': '正在重试…',
+      'retry.failed': '重试未生效（{code}）',
 
       // 上下文用量 + 手动压缩
       'context.label': '上下文',
@@ -270,12 +288,35 @@ window.__ModuleLoader__.load({
     const SHARE_SLOT_ORDER = -11;
 
     /**
+     * 中断重试按钮的槽位名：官方 composer 右侧、主发送按钮之前。
+     *
+     * 这是官方 `conversation.input.right` slot（session scope，按会话注入），所以按钮
+     * 天然落在输入框那一行、不会挡住发送；不是标题栏槽位，别和上面三个混用。
+     */
+    const RETRY_SLOT_NAME = 'conversation.input.right';
+
+    /** 中断重试贡献的 id（`data-interrupted-retry` 定位属性与它不同源，这里只做槽位标识）。 */
+    const RETRY_SLOT_ID = 'session-interrupted-retry';
+
+    /** 该槽位目前只有本插件一个贡献，order 0 即可（不抢别人的位置）。 */
+    const RETRY_SLOT_ORDER = 0;
+
+    /**
      * Host 半 `lib/rpc.mjs` 注册的前缀路由。
      *
      * 客户端不能 import Host 包，所以这个字符串在这里重复一遍；改名时必须同时改
      * `lib/rpc.mjs` 里的前缀，否则按钮点了只会报「操作失败」。
      */
     const RPC_CHANNEL = '/dsh-session-enhance';
+
+    /**
+     * 中断重试的 Host 通道（`lib/retry/rpc.mjs` 注册）。
+     *
+     * 与分享通道分开：分享走 `/dsh-session-enhance`，中断重试走这里（端点
+     * `pending` / `retry` / `diag`）。改名时必须与 Host 半一起改，否则按钮点了只会
+     * 显示「重试未生效」。
+     */
+    const RETRY_RPC_CHANNEL = '/dsh-session-enhance-retry';
 
     /**
      * 图标按钮的样式。
@@ -380,29 +421,30 @@ window.__ModuleLoader__.load({
 
     // #region 组件能力探测
     /**
-     * 两个 Host 组件行的启用状态（浏览器半据此决定要不要渲染对应 UI）。
+     * 三个 Host 组件行的启用状态（浏览器半据此决定要不要渲染对应 UI）。
      *
      * ## 为什么需要探测
      *
      * 浏览器半是**包级一份**（`dsh.client` 不能按行拆），只要承载它的第一行还在，
-     * 它就一定被加载。而 Host 侧的「会话分享」是独立的一条 Loader 行，可以在
-     * 「设置 → 插件 → 会话增强 → 包含的组件」里单独停用。停用之后它注册的
-     * RPC 前缀路由不再存在，请求会落到 SPA fallback —— 于是按钮还挂在标题栏上，
-     * 点一下却永远失败。这才是"组件拆了但边界没生效"。
+     * 它就一定被加载。而 Host 侧的「会话分享」「中断重试」是两条独立的 Loader 行，
+     * 可以在「设置 → 插件 → 会话增强 → 包含的组件」里单独停用。停用之后它们注册的
+     * RPC 前缀路由不再存在，请求会落到 SPA fallback —— 于是按钮还挂在标题栏 /
+     * composer 上，点一下却永远失败。这才是"组件拆了但边界没生效"。
      *
      * ## 信号
      *
      * Host 的 prefix 路由只在对应行启用时注册。实测（2026-10-28，真实 Loader）：
      *
-     * - 组件在 → `POST /dsh-session-enhance` 返回 **200** + 业务信封；
+     * - 组件在 → `POST /dsh-session-enhance`（分享）/ `POST /dsh-session-enhance-retry`
+     *   （中断重试）返回 **200** + 业务信封；
      * - 组件停用 → 落到 SPA fallback，返回 **405**、空 body。
      *
      * 所以 `200 = 在`、`405 = 停用`。其它状态（401 / 5xx / 网络异常）无法判定，
      * 一律按"在"处理（乐观）——宁可多一个按钮，也不要把正在工作的按钮撤掉。
      */
-    const CAPABILITY_INITIAL = { share: true };
+    const CAPABILITY_INITIAL = { share: true, retry: true };
 
-    /** 能力快照源：`{ share }` 一个布尔值，分享 UI 订阅它。 */
+    /** 能力快照源：`{ share, retry }` 两个布尔值，分享 UI 与中断重试 UI 各订阅一路。 */
     const capabilityStore = createSnapshotStore(CAPABILITY_INITIAL);
 
     /**
@@ -927,6 +969,351 @@ window.__ModuleLoader__.load({
             'share-dialog'
           )
         ]
+      });
+    }
+    // #endregion
+
+    // #region 中断重试
+    /**
+     * 「重试」图标：一对顺时针循环箭头（被中断 = 上一轮半途停下，重试就是接着跑）。
+     *
+     * 与复制/分享图标同样的自绘路线（不赌 primitives 的图标导出名），`currentColor`
+     * 描边、颜色由按钮继承；`busy` 时的旋转由文档级样式表里的 keyframes 驱动。
+     *
+     * @param {boolean} busy - 是否正在重试。
+     * @returns {any} 17×17 的 SVG 元素。
+     */
+    function retryIcon(busy) {
+      return jsxs('svg', {
+        width: 17,
+        height: 17,
+        viewBox: '0 0 20 20',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.5,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+        focusable: 'false',
+        style: {
+          display: 'block',
+          ...(busy === true ? { animation: 'dsh-interrupted-retry-spin 900ms linear infinite' } : {})
+        },
+        children: [
+          jsx('path', { d: 'M4.1 7.9a6.2 6.2 0 0 1 10.9-1.6' }),
+          jsx('path', { d: 'M15.2 2.9v2.7h-2.7' }),
+          jsx('path', { d: 'M15.9 12.1a6.2 6.2 0 0 1-10.9 1.6' }),
+          jsx('path', { d: 'M4.8 17.1v-2.7h2.7' })
+        ]
+      });
+    }
+
+    /**
+     * 中断重试按钮的文档级样式：旋转动画 + 本插件选择器的 hover/disabled 规则。
+     *
+     * 只写 `[data-dsh-interrupted-retry-button]`（不碰官方 CSS class）；按钮的尺寸、
+     * 色板与圆角仍走内联样式。卸载时整条移除，不在页面里留垃圾。
+     *
+     * @returns {() => void} 清理函数。
+     */
+    function installInterruptedRetryStyle() {
+      if (typeof document === 'undefined') return () => {};
+      const style = document.createElement('style');
+      style.setAttribute('data-dsh-enhance-retry-style', '');
+      style.textContent = [
+        '@keyframes dsh-interrupted-retry-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}',
+        '[data-dsh-interrupted-retry-button]:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,0.14));}',
+        '[data-dsh-interrupted-retry-button]:disabled{opacity:.4;cursor:default;}'
+      ].join('');
+      document.head.appendChild(style);
+      return () => {
+        style.remove();
+      };
+    }
+
+    /**
+     * 每个会话一份的「中断重试」快照源，状态为
+     * `{ kind: 'hidden'|'ready'|'busy'|'failed', code? }`。
+     *
+     * 只在「上一轮被用户主动中断」时显示按钮：
+     *
+     * - 会话正在跑（`session.running === true`）或挂着子智能体时一律隐藏 —— 这两种
+     *   状态下不存在"被中断的上一轮"可重试；
+     * - 否则问 Host 的 `pending`：有可重试记录 → ready，没有 → hidden。
+     *
+     * `session/event` 与 session 快照的订阅让按钮跟着事件流即时出现/消失；Host 的内存
+     * 记录会因重启丢失，所以 ready 时每 30 秒再查一次自愈。
+     *
+     * @param {any} ctx - 浏览器插件上下文。
+     * @param {string} sessionId - 当前会话 id。
+     * @returns {any} `{ getSnapshot, subscribe, retry, dispose }`。
+     */
+    function createInterruptedRetry(ctx, sessionId) {
+      const hidden = Object.freeze({ kind: 'hidden' });
+      const base = createSnapshotStore(hidden);
+      let listeners = 0;
+      let binding;
+      let unsubscribeEvents;
+      let unsubscribeSession;
+      let recheckTimer;
+      let failTimer;
+      let inflight = false;
+      let disposed = false;
+
+      /**
+       * 调 Host 的 retry 通道。
+       *
+       * 没连上时返回 undefined（调用方按 NO_CONNECTION 收口）；传输层异常照抛，
+       * 调用方按 TRANSPORT 收口。`connection` 缺失是合法状态（设置页/旧 Host），
+       * 不该让按钮炸掉。
+       */
+      const call = async (method, payload) => {
+        const connection = ctx.connection;
+        if (connection === undefined || connection === null) return undefined;
+        const rpc = connection.rpc;
+        if (rpc === undefined || rpc === null || typeof rpc.call !== 'function') return undefined;
+        return rpc.call(RETRY_RPC_CHANNEL, method, payload);
+      };
+
+      /** 从 RPC 信封里取 value（失败返回 undefined）。 */
+      const valueOf = (result) =>
+        result !== null && typeof result === 'object' && result.ok === true ? result.value : undefined;
+
+      /** 从失败的 RPC 信封里取错误码。 */
+      const codeOf = (result) => {
+        const error = result !== null && typeof result === 'object' ? result.error : undefined;
+        return error !== null && typeof error === 'object' && typeof error.code === 'string' ? error.code : undefined;
+      };
+
+      const emit = (next) => base.set(next);
+
+      const clearRecheck = () => {
+        if (recheckTimer !== undefined) {
+          clearTimeout(recheckTimer);
+          recheckTimer = undefined;
+        }
+      };
+
+      /** ready 时每 30 秒复查一次：Host 重启丢了记录时按钮要能自己消失。 */
+      const scheduleRecheck = () => {
+        if (disposed || recheckTimer !== undefined) return;
+        recheckTimer = setTimeout(() => {
+          recheckTimer = undefined;
+          if (disposed) return;
+          if (base.getSnapshot().kind === 'ready') void refresh();
+        }, 30_000);
+      };
+
+      /** 读当前会话快照（拿不到时返回 undefined，按"不确定"处理）。 */
+      const sessionSnapshot = () => {
+        if (binding === undefined || binding === null) return undefined;
+        const session = binding.session;
+        if (session === undefined || session === null || typeof session.getSnapshot !== 'function') return undefined;
+        try {
+          return session.getSnapshot();
+        } catch {
+          return undefined;
+        }
+      };
+
+      /**
+       * 重查一次「有没有可重试的中断」。
+       *
+       * 先看本地的运行态再问 Host：会话在跑 / 挂着子智能体时直接隐藏，不发请求。
+       * `inflight` 防并发重入（事件流可能密集触发）。
+       */
+      const refresh = async () => {
+        if (disposed || inflight || sessionId === '') return;
+        const session = sessionSnapshot();
+        const running = session !== null && session !== undefined && typeof session === 'object' ? session.running : undefined;
+        const subagent = session !== null && session !== undefined && typeof session === 'object' ? session.subagent : undefined;
+        if (running === true || (subagent !== undefined && subagent !== null)) {
+          emit(hidden);
+          clearRecheck();
+          return;
+        }
+        inflight = true;
+        try {
+          const value = valueOf(await call('pending', { sessionId }));
+          if (disposed) return;
+          const recoverable = value !== null && typeof value === 'object' ? value.recoverable : undefined;
+          if (recoverable !== null && typeof recoverable === 'object') {
+            const current = base.getSnapshot();
+            // 正在重试的请求还没回来时不要把它打回 ready（否则按钮会闪一下）。
+            emit(current.kind === 'busy' ? current : { kind: 'ready', turn: recoverable.turn });
+            scheduleRecheck();
+          } else {
+            emit(hidden);
+            clearRecheck();
+          }
+        } catch {
+          // 传输抖动不改状态：宁可保留当前按钮，也不要闪一下；下一次事件会再查。
+        } finally {
+          inflight = false;
+        }
+      };
+
+      /** 点一下「重试」：把记录交给 Host，由 Host 发一条中性消息驱动新的一轮。 */
+      const retry = async () => {
+        if (disposed) return;
+        const current = base.getSnapshot();
+        if (current.kind !== 'ready') return;
+        if (failTimer !== undefined) {
+          clearTimeout(failTimer);
+          failTimer = undefined;
+        }
+        emit({ kind: 'busy' });
+        /** 失败态展示 3 秒，然后回 hidden 并重查（记录此时可能已被 Host 取走/过期）。 */
+        const showFailure = (code) => {
+          if (disposed) return;
+          emit({ kind: 'failed', code });
+          failTimer = setTimeout(() => {
+            failTimer = undefined;
+            if (disposed) return;
+            emit(hidden);
+            void refresh();
+          }, 3_000);
+        };
+        try {
+          const result = await call('retry', { sessionId });
+          if (disposed) return;
+          if (result === undefined) {
+            showFailure('NO_CONNECTION');
+            return;
+          }
+          if (valueOf(result) !== undefined) {
+            // 成功：先隐藏。Host 用掉了记录（pending 会回到 null），新的一轮开始
+            // 时事件流会重新判定；这里不主动 refresh，避免旧记录残留导致闪回。
+            emit(hidden);
+            clearRecheck();
+            return;
+          }
+          showFailure(codeOf(result) ?? 'UNKNOWN');
+        } catch {
+          showFailure('TRANSPORT');
+        }
+      };
+
+      /** 事件流很密（每个 token 都有事件），但这个回调只做一次本地判断，开销可忽略。 */
+      const onChange = () => {
+        void refresh();
+      };
+
+      const start = () => {
+        const sessions = ctx.sessions;
+        if (sessions !== undefined && sessions !== null && typeof sessions.binding === 'function') {
+          try {
+            binding = sessions.binding(sessionId);
+          } catch {
+            binding = undefined;
+          }
+          if (binding !== undefined && binding !== null) {
+            if (
+              binding.eventSource !== undefined &&
+              binding.eventSource !== null &&
+              typeof binding.eventSource.subscribe === 'function'
+            ) {
+              unsubscribeEvents = binding.eventSource.subscribe(onChange);
+            }
+            if (binding.session !== undefined && binding.session !== null && typeof binding.session.subscribe === 'function') {
+              unsubscribeSession = binding.session.subscribe(onChange);
+            }
+          }
+        }
+        void refresh();
+      };
+
+      const stop = () => {
+        if (unsubscribeEvents !== undefined) {
+          unsubscribeEvents();
+          unsubscribeEvents = undefined;
+        }
+        if (unsubscribeSession !== undefined) {
+          unsubscribeSession();
+          unsubscribeSession = undefined;
+        }
+        clearRecheck();
+        if (failTimer !== undefined) {
+          clearTimeout(failTimer);
+          failTimer = undefined;
+        }
+        binding = undefined;
+      };
+
+      return {
+        getSnapshot: base.getSnapshot,
+        subscribe: (listener) => {
+          listeners += 1;
+          // 首个订阅者出现才启动：renderer 卸载按钮后没必要继续订阅事件流。
+          if (listeners === 1) start();
+          const unsubscribe = base.subscribe(listener);
+          return () => {
+            unsubscribe();
+            listeners -= 1;
+            if (listeners === 0) stop();
+          };
+        },
+        retry,
+        dispose: () => {
+          disposed = true;
+          stop();
+        }
+      };
+    }
+
+    /**
+     * composer 右侧的「中断重试」圆钮。
+     *
+     * hooks 顺序固定：先读状态、再读能力探测，两者都在提前 return 之前调用。
+     * 隐藏时返回隐藏占位而不是 null —— 组件保持挂载，订阅才不会被拆掉（用户点停止后
+     * Host 的记录经事件流到达，按钮要能立刻出现）。
+     *
+     * @param {any} props - 槽位注入的 props。
+     * @returns {any} 按钮或隐藏占位。
+     */
+    function InterruptedRetryButton(props) {
+      const state = props.useInterruptedRetry((value) => value);
+      const capability = props.useCapability((value) => value.retry);
+      const t = props.t;
+      const kind = state === null || state === undefined ? 'hidden' : state.kind;
+      if (capability === false || kind === 'hidden' || kind === undefined) {
+        return jsx('span', { style: { display: 'none' }, 'data-interrupted-retry': 'hidden' });
+      }
+      const busy = kind === 'busy';
+      const failed = kind === 'failed';
+      const code = failed && state.code !== undefined ? String(state.code) : '';
+      const title = failed
+        ? t('retry.failed', { code: code === '' ? 'UNKNOWN' : code })
+        : busy
+          ? t('retry.busy')
+          : t('retry.hint');
+      return jsx('button', {
+        type: 'button',
+        'data-dsh-interrupted-retry-button': '',
+        'data-interrupted-retry': kind,
+        ...(failed ? { 'data-retry-failed': '' } : {}),
+        title,
+        'aria-label': title,
+        disabled: busy,
+        style: {
+          width: '28px',
+          height: '28px',
+          minWidth: '28px',
+          padding: 0,
+          flex: 'none',
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          border: 'none',
+          borderRadius: '999px',
+          background: 'transparent',
+          cursor: busy ? 'default' : 'pointer',
+          color: failed ? 'var(--dsw-alias-label-danger, #d92d20)' : 'var(--dsw-alias-label-secondary, currentColor)'
+        },
+        onClick: () => {
+          void props.interruptedRetry.retry();
+        },
+        children: retryIcon(busy)
       });
     }
     // #endregion
@@ -1578,7 +1965,8 @@ window.__ModuleLoader__.load({
     const inject = ['slots', 'locale', 'connection', 'sessions', 'configForms'];
 
     /**
-     * 挂载两个按钮，并把分享对话框的全部状态与动作绑到各自的 Session。
+     * 挂载标题栏的复制/分享两个按钮与 composer 右侧的中断重试按钮，并把分享对话框的
+     * 全部状态与动作绑到各自的 Session。
      *
      * 注册包在 `ctx.slots.inject(SLOT_NAME, …)` 里，而不是裸 `ctx.slots.register`：
      * 槽位名属于 `@deepseek-ai/dsh-client-ui-conversation`，浏览器插件之间的加载顺序
@@ -1587,8 +1975,8 @@ window.__ModuleLoader__.load({
      * 不显示。
      *
      * 每个 Session 各有一份 `inject()` 结果（renderer 按 entry × 会话缓存），所以
-     * Toast / 分享快照天然是「每个会话一个」—— 两个会话同时打开时，点其中一个的按钮
-     * 不会让另一个的标题栏也弹 Toast 或打开对话框。
+     * Toast / 分享快照 / 中断重试快照天然是「每个会话一个」—— 两个会话同时打开时，
+     * 点其中一个的按钮不会让另一个的标题栏也弹 Toast 或打开对话框。
      *
      * @param {any} ctx - 浏览器插件上下文。
      * @returns {void}
@@ -1597,13 +1985,17 @@ window.__ModuleLoader__.load({
       const t = ctx.locale.bind(NS);
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-session-enhance: 词典');
 
-      // 组件能力探测：只探测一次，结果写进 capabilityStore；分享 UI 订阅它。
+      // 组件能力探测：只探测一次，结果写进 capabilityStore；分享/中断重试两个 UI 各订阅一路。
       //
-      // 探测**不阻塞**注册：先按"在"渲染，探测出停用后再收起。这样既不会因为
+      // 探测**不阻塞**注册：先按"都在"渲染，探测出停用后再收起。这样既不会因为
       // 一次网络抖动把按钮永久藏掉，也不会有"闪一下"的问题（正常情况探测结果与
       // 初始值一致，store 的 set 在值没变时不通知）。
-      void probeComponent(RPC_CHANNEL, 'share.status').then((share) => {
-        if (capabilityStore.getSnapshot().share !== share) capabilityStore.set({ share });
+      void Promise.all([
+        probeComponent(RPC_CHANNEL, 'share.status'),
+        probeComponent(RETRY_RPC_CHANNEL, 'pending')
+      ]).then(([share, retry]) => {
+        const current = capabilityStore.getSnapshot();
+        if (current.share !== share || current.retry !== retry) capabilityStore.set({ share, retry });
       });
 
       // 连续点击时让每条 Toast 都有新序号（key 变化 → 重新挂载 → 重新播放动画）。
@@ -1812,6 +2204,35 @@ window.__ModuleLoader__.load({
         )
       );
 
+      // ---- 中断重试：官方「继续生成」覆盖不到的「用户主动停止」场景 ----
+      //
+      // 挂在官方 composer 的 `conversation.input.right` 槽位（session scope）：渲染在
+      // 输入框右侧、主发送按钮之前，所以不会挡住发送；按钮只在「上一轮被用户中断」时
+      // 出现（与官方「继续生成」互斥：官方只在模型失败时出现）。
+      ctx.slots.inject(RETRY_SLOT_NAME, () =>
+        ctx.slots.register(
+          {
+            name: RETRY_SLOT_NAME,
+            id: RETRY_SLOT_ID,
+            order: RETRY_SLOT_ORDER,
+            locale: NS,
+            inject: (sessionId) => {
+              const store = createInterruptedRetry(
+                ctx,
+                String(sessionId === undefined || sessionId === null ? '' : sessionId)
+              );
+              return {
+                hooks: { interruptedRetry: store, capability: capabilityStore },
+                interruptedRetry: store
+              };
+            }
+          },
+          InterruptedRetryButton
+        )
+      );
+      // 旋转动画与 hover/disabled 规则（选择器只命中本插件自己的按钮，卸载时移除）。
+      ctx.effect(() => installInterruptedRetryStyle(), 'dsh-session-enhance: interrupted retry style');
+
       // 上下文：官方 ContextMeter 面板里的「压缩」动作。
       //
       // 官方 meter 已经显示用量（系统提示词 / 工具定义 / 对话消息），所以这里不再
@@ -1883,6 +2304,7 @@ window.__ModuleLoader__.load({
     // 纯函数与组件导出：离线冒烟（没有浏览器、没有真实 renderer）靠它们检查合并后的
     // bundle 形状；不影响运行时。
     exports.ContextSessionTracker = ContextSessionTracker;
+    exports.InterruptedRetryButton = InterruptedRetryButton;
     exports.AutoCompactCard = AutoCompactCard;
     exports.AutoCompactToggleRow = AutoCompactToggleRow;
     exports.settingsBooleanField = settingsBooleanField;

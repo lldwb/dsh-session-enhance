@@ -48,7 +48,7 @@ if (openTurn === null) throw new SessionFormatError('tool/result replacement is 
 
 ### 已知边界
 
-- 本版只**防止**再次写坏，不自动修复已经损坏的日志。已损坏的会话需要单独修（删掉 turn 之外的 prune+replace 对，并重编号 seq）。
+- 本版只**防止**再次写坏，不自动修复已经损坏的日志。已损坏的会话用 `scripts/repair-session-log.mjs` 修（四道门禁、默认 dry-run、`--apply` 才写并先备份）。
 - 修剪被跳过时压力仍在，下一次请求可能再次触发；这是有意的——宁可这次不压，也不能写坏日志。
 
 ## 5.3.0 — 2026-11-13

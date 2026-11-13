@@ -564,6 +564,29 @@ Host 半的 `execute(args, exec)` 则从 `exec.agent.session.id` 取调用方会
 > ——`agent.followup()` 的 user 消息漏 `role`（重试必失败 **且**该会话之后读不出来）、
 > `SessionTitleObservation.title` 被当成字符串（标题从来没渲染过）。详见 CHANGELOG 的 2.1.0 一节。
 
+## 修复被写坏的会话日志
+
+5.3.0 及更早的按需修剪会在 **turn 之外** append surface 替换事件，DSH 的重放校验因此把整份日志判 corrupt —— 症状是**会话历史读不出来**（`session_lookup` 只显示「没有可读的语义消息」）且**会话无法冷恢复**。5.3.1 起不再写坏，存量用脚本修：
+
+```powershell
+# 默认 dry-run：报告会改什么 + 跑完四道校验，不写任何文件
+node scripts/repair-session-log.mjs "C:\Users\<你>\.dsh\sessions\<工作区>\<会话id>\session.v4.jsonl.zstd"
+
+# 确认无误后写回（先自动备份为 <file>.bak-<时间戳>）
+node scripts/repair-session-log.mjs "<同上>" --apply
+```
+
+修法：整对删除「`compaction/prune` + 它紧跟的 replacement」，保留被修剪的原始 `tool/result` 原样（内容不丢、surface 不残缺），重编号 seq 并重映射**全部** seq 引用（`sourceEventSeqs` / `surfaceOp` / `shadowedSeqs` / `shadowedRange` / `messageSeqs` / `developer/message.headerSeq`），引用到已删事件的从列表剔除并去重。
+
+四道门禁（任一不过就中止、不碰原文件）：
+
+1. turn/step 规则 0 违规
+2. seq 唯一 + 连续 + 引用无悬空
+3. **DSH 自己的 `Session.fromRestore`**（从 `app.asar` 抽出真实校验器跑）
+4. 打包回读逐字节一致
+
+**已知边界**：带「整段压缩摘要」（`surfaceOp: replace` 覆盖很大范围、`sourceEventSeqs` 很长）的会话可能在第 3 道门禁失败，报 `surface replace: sourceEventSeqs must include every shadowed surface node` —— 删掉 prune 后原节点回到 surface，而摘要的替换范围覆盖它却没引用它。这种要单独处理（把该节点补进摘要的 `sourceEventSeqs`），脚本会拒绝写坏、原文件不动。
+
 ## 开发笔记
 
 ```
@@ -574,6 +597,7 @@ locale/             包根词典：卡片标题与组件①的标题/描述（�
 share/locale/       组件②的标题/描述（子路径 specifier 不读包根 package.json）
 retry/locale/       组件③的标题/描述
 lib/build.mjs       三个组件共用的构建戳
+scripts/repair-session-log.mjs  存量损坏日志的修复工具（四道门禁，默认 dry-run）
 lib/service.mjs     会话视图折叠（血缘 / 标题 / 消息 / 失败同一形状），可离线单测
 lib/tools.mjs       聚合门面（buildTools 兼容 1.x）+ re-export 两个构建器
 lib/tools/lookup.mjs  session_lookup 的参数与输出 schema（手写严格子集）

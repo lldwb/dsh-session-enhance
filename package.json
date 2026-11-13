@@ -31,7 +31,8 @@
     "README.md",
     "CHANGELOG.md",
     "LICENSE",
-    "test/**"
+    "test/**",
+    "scripts/**"
   ],
   "engines": {
     "node": ">=20.0.0"

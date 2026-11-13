@@ -464,6 +464,51 @@ test('lookupSession：表层读取失败不影响元信息', async () => {
   assert.deepEqual(value.messages, []);
 });
 
+test('lookupSession：表层读取失败必须把错误说出来，不能伪装成「会话为空」', async () => {
+  // 真实事故（2026-11-13）：日志被判 corrupt，工具却只显示「没有可读的语义消息」，
+  // 用户以为历史丢了。读失败与空会话是两件事，摘要里必须能区分。
+  const cause =
+    'stored session "s1" is corrupt: SessionFormatError: tool/result replacement is outside an open turn';
+  const value = await lookupSession({
+    sessionQuery: fakeQuery({
+      async readSurface() {
+        throw new Error(cause);
+      },
+    }),
+    sessionId: ROOT.id,
+    currentId: 'root-1',
+    includeMessages: true,
+    messageLimit: 10,
+  });
+
+  assert.equal(value.ok, true);
+  assert.deepEqual(value.messages, []);
+  // 摘要里要出现原始错误与「不是没有内容」的判据。
+  assert.match(value.summary, /读取会话表层失败/);
+  assert.match(value.summary, /outside an open turn/);
+  assert.match(value.summary, /不是.*会话没有内容/);
+  // 不许再出现那句会被误读成「会话是空的」的文案。
+  assert.doesNotMatch(value.summary, /没有可读的语义消息/);
+});
+
+test('lookupSession：表层读成功但确实没有语义消息时，仍用「可能为空」的措辞', async () => {
+  const value = await lookupSession({
+    sessionQuery: fakeQuery({
+      async readSurface() {
+        return { session: ROOT, inheritedEventCount: 0, capturedThroughSeq: 1, events: [] };
+      },
+    }),
+    sessionId: ROOT.id,
+    currentId: 'root-1',
+    includeMessages: true,
+    messageLimit: 10,
+  });
+
+  assert.deepEqual(value.messages, []);
+  assert.match(value.summary, /没有可读的语义消息/);
+  assert.doesNotMatch(value.summary, /读取会话表层失败/);
+});
+
 test('renderLookup：祖先链与不完整血缘都写进摘要', async () => {
   const query = fakeQuery({
     async traceSession() {

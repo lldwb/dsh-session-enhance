@@ -172,6 +172,9 @@ function makeDriverEnvironment(options = {}) {
     compaction: engine,
     toolResultPruner: pruner,
     tokenMeter: meter,
+    // `agents` 只在测「修剪必须先有开放 turn」时注入；省略时 serviceOf 返回 undefined，
+    // 驱动器的 isTurnOpen 回退为 true（保持既有用例的行为）。
+    ...(options.agents === undefined ? {} : { agents: options.agents }),
     agentPresets: {
       serviceFor: (_agent, name) => services[name]
     }
@@ -533,4 +536,90 @@ test('driver：按需修剪省够目标后停止（不把更早节点也剪掉�
       .map((event) => event.surfaceOp.startSeq);
     assert.deepEqual(replaced, [2, 1]);
   });
+});
+
+// ── 回归：修剪必须落在开放 turn 内 ────────────────────────────────────────────
+//
+// 真实事故（2026-11-13）：手动压缩在 `turn/end` 之后跑，把 7 对
+// `compaction/prune` + `tool/result(surfaceOp: replace)` append 到 turn 之外，
+// DSH 重放校验报 `SessionFormatError: tool/result replacement is outside an open turn`，
+// 整份会话日志被判 corrupt —— 历史读不出来、会话也无法冷恢复。
+
+/** 造一个「turn 是否开放」可控的 agents 服务。 */
+function makeAgents({ turnOpen }) {
+  return {
+    turnBoundaryOf: () => ({
+      openTurnStartSeq: turnOpen ? 100 : null,
+      lastStepStartSeq: 100,
+      lastStepBoundary: { kind: turnOpen ? 'start' : 'end', seq: 100 },
+      lastTurn: 11
+    })
+  };
+}
+
+/** 造一份「压力已达 L1、且有可剪工具结果」的环境。 */
+function makePrunableEnvironment({ turnOpen }) {
+  const env = makeDriverEnvironment({ auto: true, totalTokens: 650_000, agents: makeAgents({ turnOpen }) });
+  const agent = makeAgent();
+  const session = makePrunableSession([{ seq: 1, text: 'a'.repeat(20_000) }]);
+  agent.session = session;
+  env.pruner.pruneContent = (blocks) => [{ type: 'text', text: blocks[0].text.slice(0, 100) }];
+  env.meter.estimateMessage = (message) => message.content[0].text.length;
+  return { env, agent, session };
+}
+
+test('driver：turn 已关闭时拒绝修剪（否则日志会被写坏）', async () => {
+  const { env, agent, session } = makePrunableEnvironment({ turnOpen: false });
+
+  const decision = await env.driver.runAutoTier(agent, { aborted: false });
+
+  // 决策层仍然认为该剪（压力确实超了），但执行层必须停手。
+  assert.equal(decision.tier, TIER.PRUNE);
+  assert.equal(decision.pruned, 0);
+  // 一条事件都不许写：写一条就损坏。
+  assert.equal(session.appended.length, 0);
+  // 也不许回退到官方全量修剪 —— 它同样 append surface 替换。
+  assert.equal(env.calls.prune, 0);
+});
+
+test('driver：手动修剪（pruneAll）在 turn 已关闭时同样停手并标记原因', () => {
+  const { env, agent, session } = makePrunableEnvironment({ turnOpen: false });
+
+  const outcome = env.driver.pruneAll(agent);
+
+  assert.equal(outcome.available, true);
+  assert.equal(outcome.pruned, 0);
+  assert.equal(outcome.skippedOutsideTurn, true);
+  assert.equal(session.appended.length, 0);
+  assert.equal(env.calls.prune, 0);
+});
+
+test('driver：turn 开放时正常修剪（守卫不误伤）', async () => {
+  const { env, agent, session } = makePrunableEnvironment({ turnOpen: true });
+
+  const decision = await env.driver.runAutoTier(agent, { aborted: false });
+
+  assert.equal(decision.tier, TIER.PRUNE);
+  assert.equal(decision.pruned, 1);
+  const replaced = session.appended.filter((event) => event.surfaceOp !== undefined);
+  assert.equal(replaced.length, 1);
+  assert.equal(replaced[0].surfaceOp.startSeq, 1);
+  // 影子价格事件照旧先写。
+  const shadowPrices = session.appended.filter((event) => event.type === 'compaction/prune');
+  assert.equal(shadowPrices.length, 1);
+});
+
+test('driver：agents 服务缺失时保持旧行为（无法判断就不阻断修剪）', async () => {
+  // 不注入 agents：serviceOf 返回 undefined → isTurnOpen 回退 true。
+  const env = makeDriverEnvironment({ auto: true, totalTokens: 650_000 });
+  const agent = makeAgent();
+  const session = makePrunableSession([{ seq: 1, text: 'a'.repeat(20_000) }]);
+  agent.session = session;
+  env.pruner.pruneContent = (blocks) => [{ type: 'text', text: blocks[0].text.slice(0, 100) }];
+  env.meter.estimateMessage = (message) => message.content[0].text.length;
+
+  const decision = await env.driver.runAutoTier(agent, { aborted: false });
+
+  assert.equal(decision.pruned, 1);
+  assert.equal(session.appended.filter((event) => event.surfaceOp !== undefined).length, 1);
 });

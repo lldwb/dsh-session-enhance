@@ -3,6 +3,54 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 5.3.1 — 2026-11-13
+
+修两个真实事故暴露的缺陷。**前者会写坏会话日志，后者会让「日志坏了」看起来像「会话是空的」。**
+
+### 修复 1：修剪落在开放 turn 之外 → 会话日志被判 corrupt（数据损坏）
+
+`lib/compact/host.mjs` 的按需修剪自己 append surface 替换事件：
+
+```js
+session.append('compaction/prune', { shadowedSeqs: [seq], ... });
+session.append('tool/result', { ...event.data, message },
+  { surfaceOp: { op: 'replace', startSeq: seq, endSeq: seq }, sourceEventSeqs: [seq] });
+```
+
+但没有检查**当前是否有开放的 turn**。DSH 的重放校验器对 surface 替换有硬规则：
+
+```
+if (openTurn === null) throw new SessionFormatError('tool/result replacement is outside an open turn')
+```
+
+于是只要修剪发生在 `turn/end` 之后（手动压缩 / `/compact`、或 turn 刚被用户取消的尾巴），替换事件就落到 turn 之外，**整份日志永久损坏**：`readSession` / `readSurface` 全部失败，会话历史读不出来，会话也无法冷恢复。
+
+**真实事故（2026-11-13）**：会话 `session-61fde2b3…` 在用户取消 turn 11 之后跑压缩，7 对 prune+replace 落在 `turn/end` 之后（seq 428–441），整份日志被判 corrupt。
+
+**修法**：新增 `isTurnOpen(agent)`，用官方投影 `agents.turnBoundaryOf(session).openTurnStartSeq` 判断；**turn 不开放时一律不剪**（按需路径与官方全量回退都不走，因为两者都 append surface 替换）。服务缺失（老版本 / 离线测试）时回退为「允许」，保持旧行为。
+
+### 修复 2：`readSurface` 失败被静默吞掉 → 历史损坏伪装成「会话为空」
+
+`lib/service.mjs` 的 `lookupSession` 原本 `catch { messages = []; }` —— 错误丢了，用户只看到「没有可读的语义消息」，会以为历史没了。
+
+**修法**：把失败原因带进摘要——`⚠️ **读取会话表层失败**：<原始错误>`，并明确写「这**不是**『会话没有内容』——事件还在磁盘上，但当前读不出来」。表层读取成功但确实没有语义消息时，仍用原来的「可能为空」措辞。两种情形可区分。
+
+### 验证
+
+离线单测 **126/126** 通过。新增回归：
+
+- `turn 已关闭时拒绝修剪`（一条事件都不写、也不回退官方全量修剪）
+- `手动修剪 pruneAll 在 turn 已关闭时停手并标记 skippedOutsideTurn`
+- `turn 开放时正常修剪`（守卫不误伤）
+- `agents 服务缺失时保持旧行为`
+- `表层读取失败必须把错误说出来，不能伪装成「会话为空」`
+- `表层读成功但无消息时仍用「可能为空」措辞`
+
+### 已知边界
+
+- 本版只**防止**再次写坏，不自动修复已经损坏的日志。已损坏的会话需要单独修（删掉 turn 之外的 prune+replace 对，并重编号 seq）。
+- 修剪被跳过时压力仍在，下一次请求可能再次触发；这是有意的——宁可这次不压，也不能写坏日志。
+
 ## 5.3.0 — 2026-11-13
 
 ### 行为变化（用户需要知道的一条）：`autoCompact` 关闭 = **交还官方自动压缩**

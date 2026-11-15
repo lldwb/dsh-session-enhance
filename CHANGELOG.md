@@ -3,6 +3,66 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 5.4.0 — 2026-11-15
+
+### 新增能力：会话 id 三种写法都认（修「按 id 读取不到」）
+
+**现象**（真实事故，会话 `session-31874d86-f141-4c7c-962c-6ca39014bbb8` 的 seq 2699/2700）：
+
+```
+用户 seq 2690：session-559eb381-39ff-42bf-b3b6-4ae109b37eb1会话提到的 `dsh-desktop-control` 插件…
+调用 seq 2699：session_lookup {"sessionId":"559eb381-39ff-42bf-b3b6-4ae109b37eb1"}
+结果 seq 2700：❌ 找不到会话 `559eb381-39ff-42bf-b3b6-4ae109b37eb1`
+```
+
+**根因**：`session_lookup` 把 `sessionId` 原样交给 `sessionQuery.traceSession()`，而后者是
+**精确匹配**（`tracing.ts` 里 `byId.get(sessionId)` 未命中就抛
+`SESSION_QUERY_SESSION_NOT_FOUND`）。同一个会话在用户与模型手里有三种合法写法，指向同一份
+日志，但字符串各不相同：
+
+| 写法 | 从哪来 |
+|---|---|
+| `session-<uuid>` | 根会话在 header 里的真实 id；「复制会话 ID」复制的内容 |
+| `<uuid>` | **子代理会话**的真实 id（`origin: "subagent"` 的会话没有前缀）；也是 `subagents/<uuid>/` 目录名 |
+| `dsh-session-session-<uuid>.zip` | 会话导出文件名（`@` 引用 zip 时就是它） |
+
+事故里模型把 `session-` 前缀丢了、还粘上了后面的中文（用户原话里 id 与正文之间没有分隔符），
+于是整串精确匹配失败。**模型丢前缀是高频行为，工具却只接受唯一一种字符串**——这是工具的问题。
+
+**修法**（`lib/service.mjs`）：
+
+- 新增 `sessionUuidOf()`：从任意写法里取出 UUID（容忍路径、`.zip`、`session-` / `dsh-session-`
+  前缀、以及 id 后面粘着的正文；大小写不敏感）。
+- 新增 `matchSessionId()`：精确 id 未命中时，用 `sessionQuery.listSessions()` 按 UUID 回查语料库。
+  返回 `found` / `ambiguous`（同一 UUID 命中多个会话时**报不唯一**，不随便挑一个）/
+  `none` / `unavailable`（回查本身失败，把原因带出去）。
+- 新增 `traceSessionById()`：**精确匹配仍是快路径**（不多付 listing）；只有
+  `SESSION_QUERY_SESSION_NOT_FOUND` 才回查并重试。归一化成功时在摘要里明说
+  「你给的 `X` 与真实 id `Y` 是同一个会话」，不悄悄改写。
+- `lookupSession()` 改用 `traceSessionById()`，且后续 `readSurface()` 用**归一化后的 id**
+  （否则元信息读到了、消息仍读不到）。
+- `session_share` 的 `create` / `status` 同样归一化；分享记录落在**真实 id** 上，
+  否则分享页按记录里的 id 读不到会话。
+- 找不到时的提示补上三种写法的说明；回查失败时附上原始错误（「存储不可用」不再伪装成
+  「会话不存在」）。
+- 两个工具的 `sessionId` 参数描述写明接受三种写法（模型看到的就是它）。
+
+**边界**：`session_resume_subagents` 没动——它查的是**在线 Agent**（不是历史），语义不同，
+失败信息也不同。取消信号（`AbortError`）在回查里原样抛出，不会被记成「会话不存在」。
+
+**验证**：
+
+- 单测 **162/162**（新增 11 条：`sessionUuidOf` 三种写法 / 裸 UUID 归一化 / 导出文件名 /
+  id 粘正文 / 子代理裸 UUID / 快路径不多列语料库 / 无 UUID 不回查 / 不唯一 / 回查失败 /
+  取消原样抛出 / 分享记录落在真实 id）。
+- devkit headless 沙箱（真实 Loader + 真实 `sessionQuery` + 从本机拷进去的真实会话日志）：
+  - 裸 UUID → 归一化并带提示；完整 id → 无提示，两者其余内容一致；
+  - `C:\…\dsh-session-session-<uuid>.zip` → 归一化成功；
+  - 裸 UUID + `includeMessages=true` → 真的读到该会话最近消息（seq 1327/1329/1341），
+    证明 `readSurface` 用的是归一化后的 id；
+  - 事故会话 `31874d86` 的裸 UUID → 成功；
+  - 全零 UUID → 「找不到会话」+ 三种写法提示，输出仍通过运行时 schema 校验。
+
 ## 5.3.2 — 2026-11-14
 
 ### 修复：免登录分享页在 DSH 0.2.2-rc.3 上会被认证拦掉

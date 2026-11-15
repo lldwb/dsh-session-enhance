@@ -22,6 +22,7 @@ import {
   messagesOf,
   readTitles,
   renderLookup,
+  sessionUuidOf,
   titleTextOf,
   toIso,
   truncateText,
@@ -674,3 +675,266 @@ test('failureResult 始终是完整形状', () => {
   assert.deepEqual(Object.keys(value).sort(), Object.keys(lookupTool().output.schema.properties).sort());
   assert.deepEqual(validateValue(value, lookupTool().output.schema), []);
 });
+
+// #region 会话 id 归一化（2026-11-15 真实事故：会话 id 前缀被丢掉 → 「找不到会话」）
+//
+// 事故现场（会话 session-31874d86 的 seq 2699/2700）：用户写的是
+// `session-559eb381-…会话提到的…`，模型把 `session-` 前缀丢掉、又粘上了后面的中文，
+// `session_lookup` 拿整串去精确匹配，直接回「找不到会话」——而那份会话就在本机。
+// 三种写法（`session-<uuid>` / 裸 `<uuid>` / `dsh-session-session-<uuid>.zip`）指向同一份日志，
+// 归一化的锚点是 UUID。
+
+/** 事故里那个根会话的真实 id：带 `session-` 前缀。 */
+const UUID_ROOT_ID = 'session-559eb381-39ff-42bf-b3b6-4ae109b37eb1';
+
+/** 同一棵树的子代理：真实 id 是**裸 UUID**（子代理会话没有前缀）。 */
+const UUID_CHILD_ID = '1da52432-571f-458c-a8f0-5716e8cf2d59';
+
+/** 事故里的根会话头。 */
+const UUID_ROOT = {
+  version: 1,
+  id: UUID_ROOT_ID,
+  createdAt: 1_700_001_000_000,
+  cwd: 'C:\\Users\\32471\\Documents\\deepseek-harness\\ungrouped',
+  isSeeded: false,
+  agentPreset: 'standard',
+};
+
+/** 事故里的子代理会话头。 */
+const UUID_CHILD = {
+  version: 1,
+  id: UUID_CHILD_ID,
+  createdAt: 1_700_001_100_000,
+  cwd: 'C:\\Users\\32471\\Documents\\deepseek-harness\\ungrouped',
+  parentSession: UUID_ROOT_ID,
+  origin: 'subagent',
+  delegationDepth: 1,
+  isSeeded: false,
+};
+
+/**
+ * 照随附实现语义的假查询：`traceSession` **只认精确 id**（裸 UUID / 导出文件名一律
+ * `SESSION_QUERY_SESSION_NOT_FOUND`），另暴露 `listSessions` 供归一化回查。
+ *
+ * `listCalls` 记录语料库被列了几次：快路径不该多列。
+ *
+ * @param {any} [overrides] - 覆盖单个方法。
+ * @returns {any} 假 `sessionQuery`。
+ */
+function uuidQuery(overrides = {}) {
+  const records = [
+    { header: UUID_ROOT, live: true, persisted: true },
+    { header: UUID_CHILD, live: false, persisted: true },
+  ];
+  const query = {
+    listCalls: 0,
+    async traceSession(sessionId) {
+      const found = records.find((record) => record.header.id === sessionId);
+      if (found === undefined) {
+        const error = new Error(`session "${sessionId}" not found`);
+        error.code = 'SESSION_QUERY_SESSION_NOT_FOUND';
+        throw error;
+      }
+      return {
+        target: found,
+        ancestors: found.header.parentSession === undefined ? [] : [{ header: UUID_ROOT, live: true, persisted: true }],
+        descendants: [],
+        complete: true,
+      };
+    },
+    async readTitleSnapshots(ids) {
+      return ids.map((sessionId) => ({
+        status: 'fulfilled',
+        sessionId,
+        value: {
+          session: { id: sessionId },
+          title: { title: '远程配置飞牛应用默认地址', messageSeqs: [1], source: { kind: 'fallback' }, eventSeq: 1, updatedAt: 1_700_001_500_000 },
+        },
+      }));
+    },
+    async readSurface(sessionId) {
+      return { session: { id: sessionId }, inheritedEventCount: 0, capturedThroughSeq: 1, events: [USER_EVENT] };
+    },
+    async listSessions() {
+      query.listCalls += 1;
+      return records;
+    },
+    ...overrides,
+  };
+  return query;
+}
+
+test('sessionUuidOf 从三种写法里取出同一段 UUID', () => {
+  const uuid = '559eb381-39ff-42bf-b3b6-4ae109b37eb1';
+  const same = [
+    uuid,
+    `session-${uuid}`,
+    `dsh-session-session-${uuid}.zip`,
+    `C:\\Users\\32471\\Downloads\\dsh-session-session-${uuid}.zip`,
+    // 事故现场：id 后面直接粘着正文，没有分隔符。
+    `session-${uuid}会话提到的`,
+    `  session-${uuid}  `,
+  ];
+  for (const value of same) assert.equal(sessionUuidOf(value), uuid, value);
+  // 大写也认（UUID 大小写不敏感），归一化输出统一小写。
+  assert.equal(sessionUuidOf(uuid.toUpperCase()), uuid);
+  assert.equal(sessionUuidOf('missing-id'), '');
+  assert.equal(sessionUuidOf(undefined), '');
+  assert.equal(sessionUuidOf(42), '');
+});
+
+test('lookupSession：裸 UUID 归一化到带 session- 前缀的真实 id（2026-11-15 真实事故）', async () => {
+  const query = uuidQuery();
+  const value = await lookupSession({
+    sessionQuery: query,
+    sessionId: '559eb381-39ff-42bf-b3b6-4ae109b37eb1',
+    currentId: '',
+    includeMessages: true,
+    messageLimit: 5,
+  });
+
+  assert.equal(value.ok, true);
+  assert.equal(value.targetId, UUID_ROOT_ID);
+  assert.equal(value.session.id, UUID_ROOT_ID);
+  assert.equal(value.session.title, '远程配置飞牛应用默认地址');
+  assert.equal(value.messages.length, 1);
+  // 归一化必须写进摘要：模型下一轮要引用真实 id，用户也要知道「我给的写法被认成了哪个会话」。
+  assert.match(value.summary, /归一化/);
+  assert.match(value.summary, /559eb381-39ff-42bf-b3b6-4ae109b37eb1/);
+  assert.deepEqual(validateValue(value, lookupTool().output.schema), []);
+});
+
+test('lookupSession：会话导出文件名（整条路径 + .zip）也能归一化', async () => {
+  const value = await lookupSession({
+    sessionQuery: uuidQuery(),
+    sessionId: 'C:\\Users\\32471\\Downloads\\dsh-session-session-559eb381-39ff-42bf-b3b6-4ae109b37eb1.zip',
+    currentId: '',
+    includeMessages: false,
+    messageLimit: 5,
+  });
+  assert.equal(value.ok, true);
+  assert.equal(value.session.id, UUID_ROOT_ID);
+  assert.match(value.summary, /归一化/);
+});
+
+test('lookupSession：id 后面粘了正文也能归一化（事故里的原样粘贴）', async () => {
+  const value = await lookupSession({
+    sessionQuery: uuidQuery(),
+    sessionId: 'session-559eb381-39ff-42bf-b3b6-4ae109b37eb1会话提到的',
+    currentId: '',
+    includeMessages: false,
+    messageLimit: 5,
+  });
+  assert.equal(value.ok, true);
+  assert.equal(value.session.id, UUID_ROOT_ID);
+});
+
+test('lookupSession：子代理的裸 UUID 照常命中（不能一律加 session- 前缀）', async () => {
+  const value = await lookupSession({
+    sessionQuery: uuidQuery(),
+    sessionId: UUID_CHILD_ID,
+    currentId: '',
+    includeMessages: false,
+    messageLimit: 5,
+  });
+  assert.equal(value.ok, true);
+  assert.equal(value.session.id, UUID_CHILD_ID);
+  assert.equal(value.session.role, 'subagent');
+  assert.equal(value.session.parentSessionId, UUID_ROOT_ID);
+  // 精确命中 = 快路径：不该为了归一化多列一次语料库。
+  assert.doesNotMatch(value.summary, /归一化/);
+});
+
+test('lookupSession：精确 id 命中时不额外列语料库（快路径不变慢）', async () => {
+  const query = uuidQuery();
+  const value = await lookupSession({
+    sessionQuery: query,
+    sessionId: UUID_ROOT_ID,
+    currentId: '',
+    includeMessages: false,
+    messageLimit: 5,
+  });
+  assert.equal(value.ok, true);
+  assert.equal(query.listCalls, 0);
+});
+
+test('lookupSession：没有 UUID 的 id 不会去列语料库', async () => {
+  const query = uuidQuery();
+  const value = await lookupSession({
+    sessionQuery: query,
+    sessionId: 'missing-id',
+    currentId: '',
+    includeMessages: false,
+    messageLimit: 5,
+  });
+  assert.equal(value.ok, false);
+  assert.match(value.summary, /找不到会话/);
+  assert.equal(query.listCalls, 0, '没有 UUID 可回查时不该列语料库');
+});
+
+test('lookupSession：同一 UUID 命中多个会话时明确报不唯一，不随便挑一个', async () => {
+  const query = uuidQuery({
+    async listSessions() {
+      return [
+        { header: UUID_ROOT, live: true, persisted: true },
+        { header: { ...UUID_ROOT, id: '559eb381-39ff-42bf-b3b6-4ae109b37eb1' }, live: false, persisted: true },
+      ];
+    },
+  });
+  const value = await lookupSession({
+    sessionQuery: query,
+    sessionId: '559eb381-39ff-42bf-b3b6-4ae109b37eb1',
+    currentId: '',
+    includeMessages: false,
+    messageLimit: 5,
+  });
+  assert.equal(value.ok, false);
+  assert.match(value.summary, /不唯一/);
+  assert.match(value.summary, /session-559eb381-39ff-42bf-b3b6-4ae109b37eb1/);
+  assert.match(value.summary, /559eb381-39ff-42bf-b3b6-4ae109b37eb1/);
+  assert.deepEqual(validateValue(value, lookupTool().output.schema), []);
+});
+
+test('lookupSession：回查语料库失败时把原因带出来，不伪装成「会话不存在」', async () => {
+  // 2026-11-15 的另一份日志里真的出现过 `session history storage is unavailable`：
+  // 「存储挂了」和「没有这个会话」是两件事，摘要里必须能区分。
+  const query = uuidQuery({
+    async listSessions() {
+      throw new Error('session history storage is unavailable');
+    },
+  });
+  const value = await lookupSession({
+    sessionQuery: query,
+    sessionId: '559eb381-39ff-42bf-b3b6-4ae109b37eb1',
+    currentId: '',
+    includeMessages: false,
+    messageLimit: 5,
+  });
+  assert.equal(value.ok, false);
+  assert.match(value.summary, /找不到会话/);
+  assert.match(value.summary, /回查/);
+  assert.match(value.summary, /storage is unavailable/);
+  assert.deepEqual(validateValue(value, lookupTool().output.schema), []);
+});
+
+test('lookupSession：取消信号原样抛出，不被当成「会话不存在」', async () => {
+  const abort = new Error('aborted');
+  abort.name = 'AbortError';
+  const query = uuidQuery({
+    async listSessions() {
+      throw abort;
+    },
+  });
+  const value = await lookupSession({
+    sessionQuery: query,
+    sessionId: '559eb381-39ff-42bf-b3b6-4ae109b37eb1',
+    currentId: '',
+    includeMessages: false,
+    messageLimit: 5,
+  });
+  assert.equal(value.ok, false);
+  // 走到「查询会话失败」这条通用分支，而不是「找不到会话」。
+  assert.match(value.summary, /查询会话失败/);
+  assert.doesNotMatch(value.summary, /回查/);
+});
+// #endregion

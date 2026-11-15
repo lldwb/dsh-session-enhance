@@ -361,6 +361,49 @@ test('session_share 工具：create / status / revoke / list 全流程', async (
   }
 });
 
+test('session_share 工具：裸 UUID / 导出文件名也能归一化，分享记录落在真实 id 上', async () => {
+  // 与 `session_lookup` 同一类真实事故（2026-11-15）：用户 / 模型给的会话 id 少了
+  // `session-` 前缀。分享记录必须落在**真实 id** 上——否则分享页按记录里的 id 读不到会话。
+  const dir = temporaryDir();
+  try {
+    const store = createShareStore({ storeFile: sharesFilePath(dir) });
+    const uuid = '559eb381-39ff-42bf-b3b6-4ae109b37eb1';
+    const realId = `session-${uuid}`;
+    const header = { id: realId, createdAt: 1_700_000_000_000, cwd: 'E:\\work', isSeeded: false };
+    const query = {
+      async traceSession(sessionId) {
+        if (sessionId !== realId) {
+          const error = new Error(`session "${sessionId}" not found`);
+          error.code = 'SESSION_QUERY_SESSION_NOT_FOUND';
+          throw error;
+        }
+        return { target: { header, live: true, persisted: true }, ancestors: [], descendants: [], complete: true };
+      },
+      async listSessions() {
+        return [{ header, live: true, persisted: true }];
+      },
+    };
+    const tool = buildTools({ get: () => undefined }, { store, sessionQuery: () => query, originOf: () => 'http://127.0.0.1:5555' }).find(
+      (entry) => entry.name === 'session_share',
+    );
+
+    const created = await tool.execute({ action: 'create', sessionId: uuid }, {});
+    assert.equal(created.ok, true);
+    assert.match(created.summary, /归一化/);
+    assert.equal(store.listForSession(realId).length, 1, '记录应落在真实 id 上');
+    assert.equal(store.listForSession(uuid).length, 0, '不该把裸 UUID 写进存储');
+    assert.deepEqual(validateValue(created, tool.output.schema), []);
+
+    // status 用裸 UUID 也要能查到同一条分享。
+    const status = await tool.execute({ action: 'status', sessionId: uuid }, {});
+    assert.equal(status.ok, true);
+    assert.equal(status.shares.length, 1);
+    assert.equal(status.shares[0].token, created.shares[0].token);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('session_share 工具：拿不到分享地址时不留下孤儿记录', async () => {
   const dir = temporaryDir();
   try {

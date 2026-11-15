@@ -190,11 +190,28 @@ dsh plugin add .
 
 拿到 id 后可以直接贴进任何会话问 Agent，例如"用 session_lookup 看看 `<id>`，它有哪些子代理？"
 
+**id 的三种写法都认**（同一个会话，指向同一份日志）：
+
+| 写法 | 从哪来 | 例子 |
+|---|---|---|
+| `session-<uuid>` | 根会话的真实 id；「复制会话 ID」按钮复制的就是它 | `session-559eb381-39ff-42bf-b3b6-4ae109b37eb1` |
+| `<uuid>` | **子代理会话**的真实 id（没有前缀）；也是 `~/.dsh/sessions/…/subagents/<uuid>/` 的目录名 | `1da52432-571f-458c-a8f0-5716e8cf2d59` |
+| `dsh-session-session-<uuid>.zip` | 会话导出文件名（用户用 `@` 引用 zip 时就是它）；整条路径、带不带 `.zip` 都行 | `C:\Users\me\Downloads\dsh-session-session-559eb381-….zip` |
+
+归一化的锚点是 **UUID**：精确 id 没命中时，插件会用 `sessionQuery.listSessions()` 按 UUID 回查一次
+语料库，命中就把真实 id 用起来，并在摘要里明说「你给的 X 与真实 id Y 是同一个会话」——
+不会悄悄改写。命中多个时报「不唯一」而不是随便挑一个；回查本身失败（例如存储不可用）时
+把原始错误带出来，不会伪装成「会话不存在」。
+
+> 为什么需要这个（真实事故 2026-11-15）：用户在会话里写 `session-559eb381-…会话提到的…`，
+> 模型把前缀丢掉、又粘上了后面的中文，`session_lookup` 拿整串去精确匹配，回「找不到会话」——
+> 而那份会话就在本机。精确匹配只该是快路径，不该是唯一路径。
+
 ### `session_lookup`
 
 | 参数 | 必填 | 默认 | 含义 |
 |---|---|---|---|
-| `sessionId` | 否 | 当前会话 | 目标会话 id。省略时查调用它的会话本身 |
+| `sessionId` | 否 | 当前会话 | 目标会话 id，三种写法都认（见上）。省略时查调用它的会话本身 |
 | `includeMessages` | 否 | `true` | 是否附带最近消息 |
 | `messageLimit` | 否 | `10`（上限 200） | 返回多少条最近消息 |
 
@@ -225,6 +242,8 @@ inheritedEventCount 种子会话从父会话继承的事件数
 
 Agent 也能分享：用户明确要求时，工具 `session_share` 支持
 `create` / `status` / `revoke` / `list` 四个动作（描述里写明"只有用户明确要求时才调用"）。
+`sessionId` 同样接受三种写法（完整 id / 裸 UUID / 导出文件名）；归一化后**分享记录落在真实
+id 上**——否则分享页会按记录里的 id 读不到会话。
 
 #### 分享支持到什么程度（重要）
 
@@ -547,6 +566,7 @@ Host 半的 `execute(args, exec)` 则从 `exec.agent.session.id` 取调用方会
 
 | 层 | 内容 | 结果 |
 |---|---|---|
+| 5.4.0 会话 id 三种写法 / DSH 0.2.2-rc.2 运行时 | 单测 **162/162**（新增 11 例：`sessionUuidOf` 三种写法 + 大小写 + 无 UUID、裸 UUID 归一化、导出文件名（整条路径）、id 粘正文、子代理裸 UUID、精确命中不多列语料库、无 UUID 不回查、同 UUID 不唯一、回查失败带原因、取消原样抛出、分享记录落在真实 id）；`node --check` 改动文件；devkit headless 沙箱（真实 Loader + 真实 `sessionQuery.listSessions()` + 从本机拷入的真实会话日志 `session-31874d86…` / `session-559eb381…`）：裸 UUID → 归一化 + 摘要提示、完整 id → 无提示且其余一致、`C:\…\dsh-session-session-<uuid>.zip` → 归一化、裸 UUID + `includeMessages=true` → 真读到 seq 1327/1329/1341、事故会话裸 UUID → 成功、全零 UUID → 「找不到会话」+ 三种写法提示，全部输出通过运行时 schema 校验（无 `tool returned invalid output`） | 通过 |
 | 5.3.2 适配 DSH 0.2.2-rc.3 / DSH 0.2.2-rc.3（checkout `39163dd30f`） | 单测 **150/150**（新增 `test/routes.test.mjs` 3 例：分享页路由 `auth === 'anonymous'`、分享 handler 自身仍只认 token（404/405/200）、三条 RPC 通道保持默认 `required`）；`node --check` 改动文件；核对结果：`webServer.register` 新增 `auth`（默认 `required`，`packages/host/webserver/src/index.ts:123-124,780-788`）→ 分享页显式匿名；`connection.admit` 与 `PeerAdmission` 形状未变（`packages/client/connection/src/rpc.ts:121-123,225`）；`ctx.on` 的 `prepend` 仍在（`vendor/cordis/src/events.ts:111-118`）；`settings.configure` / `tools.register` / `sessionQuery.*` / `subagents.listDescendants` / `agents.turnBoundaryOf` / `compaction.compactNow|compactIfNeeded` / `toolResultPruner.pruneSession` / `tokenMeter.contextPressure` / `session.append` 等均未变；client 半 6 个 ui-primitives 导出与 4 个槽位名、`configForms.get|whileServed`、`SettingsFormModel.bind` 全部仍在；rc.2 向后兼容已核对安装版 `app.asar` 的 `dsh-host-webserver/src/index.ts:445-452`（`register()` 不读 `auth`） | 离线通过；真实 Loader 待 Lead 在目标版本运行时验证 |
 | 5.2.0 新增「中断重试」组件 / DSH 0.2.2-rc.2 | 单测 **130/130**（新增 `test/retry/*` 21 例 + entries 三入口 1 例）；`node --check client.js`；devkit headless 沙箱真实 Loader：合成树 3 行（`dsh-session-enhance` / `-share` / `-retry`），任务正常完成（logger 不落 stderr，行激活证据由 UI 沙箱提供）；devkit web/UI 沙箱：`dsh-session-enhance@5.2.0 is loaded`、控制台 0 错误、`[data-interrupted-retry]` 隐藏占位存在（槽位注册成功）、详情页「包含的组件 共 3 个 · 3 运行中」（会话增强 / 会话分享 / 中断重试）、当前版本 5.2.0；页面内 `POST /dsh-session-enhance-retry/pending` 返回 200 业务信封 `{pending:false,recoverable:null}` | 通过 |
 | 5.1.0 移除「恢复子智能体」按钮 / DSH 0.2.2-rc.2 | 单测 **108/108**（`SUBAGENT_RPC_CHANNEL` 常量用例改写为「恢复文案稳定」，计数不变）；`node --check client.js`；devkit headless 沙箱真实 Loader：合成树仍 2 行、`session_resume_subagents`（dryRun）实调返回「子智能体共 0 个，可恢复 0 个」；devkit web/UI 沙箱：`dsh-session-enhance@5.1.0 is loaded`、控制台 0 错误、页面无 `[data-session-resume]`、详情页「包含的组件 共 2 个 · 2 运行中」、当前版本 5.1.0（web 沙箱无可用模型、未能创建会话，标题栏按钮未实操；静态确认分享/复制槽位注册仍在） | 通过 |

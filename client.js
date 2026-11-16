@@ -1371,10 +1371,29 @@ window.__ModuleLoader__.load({
     let contextNoteTimer;
 
     /**
-     * 判断一个 `role=dialog` 元素是不是官方上下文 panel。
+     * 判断一个 `role=dialog` 元素是不是官方 **ContextMeter（「上下文已用」）** 面板。
      *
-     * 特征：内部有 `<dl>`（三行 breakdown）且文本里带 `NN%`。本插件自己的分享对话框
-     * 没有 `<dl>`，不会被误判。
+     * ⚠️ 这个判据必须严格：composer 里还有**两个用量面板**（「本轮用量」/「Token 用量」），
+     * 它们同样是 `role="dialog"` + 含 `<dl>` + 文本里有 `NN%`（缓存命中 99.9%）。早期判据
+     * 只查这三条，于是「压缩」动作被注入进了那两个面板——用户截图指出那里不该有压缩按钮。
+     *
+     * 官方 ContextMeter 的结构（随附包源码 `dsh-client-ui-conversation/src/client/
+     * skeleton/ContextMeter.tsx`）：
+     *
+     *   <div role="dialog" aria-label="上下文已用">
+     *     <div class=header>… 45% … ~477K / 1M …</div>      ← 已用 / 窗口这组数字
+     *     <div class=bar><div style="width:45%"/>…</div>     ← 分段进度条
+     *     <dl class=rows>
+     *       <div class=row><dt><span class=swatch/>系统提示词</dt><dd>~10.3K</dd></div>
+     *       … 恰好三行（系统提示词 / 工具定义 / 对话消息）
+     *
+     * 而「本轮用量」面板（`dsh-client-ui-chat/src/client/chat/TurnUsagePanel.tsx`）的
+     * `<dl data-turn-usage-details>` 是**扁平的 dt/dd**，没有行容器、没有色块。
+     *
+     * 因此判据 = 三条同时成立：`dl` 的直接子元素恰好 3 个 div 行、每行都有 `dt` 且 `dt`
+     * 内含色块 `span`、面板文本里有「~已用 / 窗口」这组数字（与语言无关）。
+     * 任何一条不满足就**不注入**：宁可按钮不出现（composer 里还有别的手动压缩入口），
+     * 也绝不能出现在错误的窗口里。
      *
      * @param {Element} node - 候选节点。
      * @returns {boolean} 是否官方上下文 panel。
@@ -1382,22 +1401,43 @@ window.__ModuleLoader__.load({
     function isContextPanel(node) {
       if (node === null || node === undefined) return false;
       if (node.getAttribute('role') !== 'dialog') return false;
-      if (node.querySelector('dl') === null) return false;
-      return /\d+%/.test(node.textContent ?? '');
+      // 显式排除两个用量面板：它们的 dl 带源码里写死的 data 属性，是最稳的判据。
+      // - 「本轮用量」→ `dsh-client-ui-chat/src/client/chat/TurnUsagePanel.tsx` 的 `data-turn-usage-details`
+      // - 「Token 用量」→ 同包 `StatsPills.tsx` 的 `data-session-stats-details`
+      if (node.querySelector('[data-turn-usage-details]') !== null) return false;
+      if (node.querySelector('[data-session-stats-details]') !== null) return false;
+      const list = node.querySelector('dl');
+      if (list === null) return false;
+      const rows = list.querySelectorAll(':scope > div');
+      if (rows.length !== 3) return false;
+      for (const row of rows) {
+        if (row.querySelector('dt') === null) return false;
+        // 每行 dt 里有一个色块 span（图例）。用量面板没有。
+        if (row.querySelector('dt span') === null) return false;
+      }
+      // 头部「~已用 / 窗口」（例如 `~477K / 1M`）：用量面板显示的是 `2,692,918 tok`，没有这个比值。
+      return /~?\d[\d.,]*\s*[KMB]?\s*\/\s*~?\d[\d.,]*\s*[KMB]?/i.test(node.textContent ?? '');
     }
 
     /**
      * 找当前打开的官方上下文 panel。
+     *
+     * 官方用 CSS anchor positioning 定位面板（内联 `position-anchor: --dsh-context-…`），
+     * 带这个样式的那个一定是 ContextMeter；浏览器不支持该属性时退回结构判据的结果。
      *
      * @returns {Element | null} panel 或 null。
      */
     function findContextPanel() {
       if (typeof document === 'undefined') return null;
       const dialogs = document.querySelectorAll('[role="dialog"]');
+      let fallback = null;
       for (const node of dialogs) {
-        if (isContextPanel(node)) return node;
+        if (!isContextPanel(node)) continue;
+        const style = typeof node.getAttribute === 'function' ? (node.getAttribute('style') ?? '') : '';
+        if (style.includes('position-anchor')) return node;
+        if (fallback === null) fallback = node;
       }
-      return null;
+      return fallback;
     }
 
     /**

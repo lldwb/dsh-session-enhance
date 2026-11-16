@@ -12,14 +12,19 @@ import test from 'node:test';
 
 import {
   checkpointTextOf,
+  clampNestedMessageLimit,
   classifyRole,
+  DEFAULT_NESTED_MESSAGE_LIMIT,
   failureResult,
   flattenDescendants,
   isCompactCheckpoint,
   looksInjected,
   lookupSession,
+  MAX_NESTED_MESSAGE_LIMIT,
   messageTextOf,
   messagesOf,
+  NESTED_SESSION_CAP,
+  nestedDigestOf,
   readTitles,
   renderLookup,
   sessionUuidOf,
@@ -936,5 +941,332 @@ test('lookupSession：取消信号原样抛出，不被当成「会话不存在�
   // 走到「查询会话失败」这条通用分支，而不是「找不到会话」。
   assert.match(value.summary, /查询会话失败/);
   assert.doesNotMatch(value.summary, /回查/);
+});
+// #endregion
+
+// #region 谱系内容读取（子会话 / 孙会话 / 上级会话都要能读到内容）
+//
+// 用户诉求（2026-11-16）：按 id 读会话时，要连带读到它的子会话、子会话的子会话；
+// 如果目标是子会话，还要知道它的上级会话。元数据（祖先链 + 递归后代）早就有了，
+// 这次补的是**内容**：每个谱系会话的「任务 + 最近消息」。
+
+/** 三层谱系的会话头：root → child-a → grand-a，root → child-b。 */
+const TREE_HEADERS = {
+  'session-root': { version: 1, id: 'session-root', createdAt: 1_700_010_000_000, cwd: 'E:\\work', isSeeded: false, agentPreset: 'standard' },
+  'child-a': {
+    version: 1,
+    id: 'child-a',
+    createdAt: 1_700_010_100_000,
+    cwd: 'E:\\work',
+    parentSession: 'session-root',
+    origin: 'subagent',
+    delegationDepth: 1,
+    isSeeded: false,
+    agentPreset: 'commander',
+  },
+  'grand-a': {
+    version: 1,
+    id: 'grand-a',
+    createdAt: 1_700_010_200_000,
+    cwd: 'E:\\work',
+    parentSession: 'child-a',
+    origin: 'subagent',
+    delegationDepth: 2,
+    isSeeded: false,
+    agentPreset: 'cordis',
+  },
+  'child-b': {
+    version: 1,
+    id: 'child-b',
+    createdAt: 1_700_010_300_000,
+    cwd: 'E:\\work',
+    parentSession: 'session-root',
+    origin: 'subagent',
+    delegationDepth: 1,
+    isSeeded: false,
+    agentPreset: 'commander',
+  },
+};
+
+/** 每个会话的表层事件（任务 + 两三条消息）。 */
+const TREE_SURFACES = {
+  'session-root': [
+    { seq: 1, type: 'user/message', time: 1_700_010_001_000, data: { content: [{ type: 'text', text: '把 rc.2 适配做完' }] } },
+    { seq: 2, type: 'assistant/message', time: 1_700_010_002_000, data: { message: { content: [{ type: 'text', text: '我先拆成三条工作流' }] } } },
+  ],
+  'child-a': [
+    { seq: 1, type: 'user/message', time: 1_700_010_101_000, data: { content: [{ type: 'text', text: '你是小组长，负责 devkit 适配' }] } },
+    { seq: 2, type: 'assistant/message', time: 1_700_010_102_000, data: { message: { content: [{ type: 'text', text: '收到，我派一个子代理迁移测试' }] } } },
+    { seq: 3, type: 'tool/result', time: 1_700_010_103_000, data: { message: { content: [{ type: 'text', text: '不该出现' }] } } },
+    { seq: 4, type: 'assistant/message', time: 1_700_010_104_000, data: { message: { content: [{ type: 'text', text: '小组长收尾：三条都过了' }] } } },
+  ],
+  'grand-a': [
+    { seq: 1, type: 'user/message', time: 1_700_010_201_000, data: { content: [{ type: 'text', text: '迁移 guard 测试到 6.0.0' }] } },
+    { seq: 2, type: 'assistant/message', time: 1_700_010_202_000, data: { message: { content: [{ type: 'text', text: '迁移完成，34 条用例全绿' }] } } },
+  ],
+  'child-b': [
+    { seq: 1, type: 'user/message', time: 1_700_010_301_000, data: { content: [{ type: 'text', text: '你是小组长，负责 commander 适配' }] } },
+    { seq: 2, type: 'assistant/message', time: 1_700_010_302_000, data: { message: { content: [{ type: 'text', text: 'commander 7.0.0 已交付' }] } } },
+  ],
+};
+
+/**
+ * 照真实语义的假查询：`traceSession` 从静态谱系算出祖先与后代（父在前），
+ * `readSurface` 按 id 返回预置事件，`readTitleSnapshots` 返回标题。
+ *
+ * @param {{ broken?: string[], extraChildren?: number, surfaces?: Record<string, any[]> }} [options] - 定制行为。
+ * @returns {any} 假 `sessionQuery`。
+ */
+function treeQuery(options = {}) {
+  const broken = new Set(options.broken ?? []);
+  // 本地副本：`extraChildren` 只影响本用例，别污染模块级的 TREE_HEADERS
+  // （否则上一个用例造出来的会话会出现在下一个用例的谱系里）。
+  const headers = { ...TREE_HEADERS };
+  const extraCount = options.extraChildren ?? 0;
+  for (let index = 1; index <= extraCount; index += 1) {
+    const id = `extra-${index}`;
+    headers[id] = {
+      version: 1,
+      id,
+      createdAt: 1_700_010_400_000 + index,
+      cwd: 'E:\\work',
+      parentSession: 'session-root',
+      origin: 'subagent',
+      delegationDepth: 1,
+      isSeeded: false,
+    };
+  }
+  const ids = Object.keys(headers);
+  const recordOf = (id) => ({ header: headers[id], live: false, persisted: true });
+  const childrenOf = (id) => ids.filter((candidate) => headers[candidate].parentSession === id);
+  const ancestorsOf = (id) => {
+    const chain = [];
+    let current = headers[id];
+    while (current?.parentSession !== undefined) {
+      chain.push(current.parentSession);
+      current = headers[current.parentSession];
+    }
+    return chain;
+  };
+  const nodeOf = (id) => ({
+    session: recordOf(id),
+    descendants: childrenOf(id).map(nodeOf),
+  });
+
+  return {
+    async traceSession(id) {
+      if (headers[id] === undefined) {
+        const error = new Error(`session "${id}" not found`);
+        error.code = 'SESSION_QUERY_SESSION_NOT_FOUND';
+        throw error;
+      }
+      const ancestors = ancestorsOf(id).map(recordOf);
+      return {
+        target: recordOf(id),
+        ancestors,
+        descendants: childrenOf(id).map(nodeOf),
+        complete: true,
+        root: recordOf(ancestors.at(-1)?.header?.id ?? id),
+      };
+    },
+    async readTitleSnapshots(requested) {
+      return requested.map((id) => ({
+        status: 'fulfilled',
+        sessionId: id,
+        value: {
+          session: { id },
+          title: { title: `${id} 的标题`, messageSeqs: [1], source: { kind: 'fallback' }, eventSeq: 1, updatedAt: 1_700_010_900_000 },
+        },
+      }));
+    },
+    async readSurface(id) {
+      if (broken.has(id)) throw new Error(`stored session "${id}" is corrupt: SessionFormatError`);
+      const events = options.surfaces?.[id] ?? TREE_SURFACES[id] ?? [];
+      return { session: headers[id], inheritedEventCount: 0, capturedThroughSeq: events.length, events };
+    },
+    async listSessions() {
+      return ids.map(recordOf);
+    },
+  };
+}
+
+test('nestedDigestOf：任务取第一条用户消息，消息只保留最近 N 条', () => {
+  const digest = nestedDigestOf({ events: TREE_SURFACES['child-a'] }, 2);
+  assert.equal(digest.task, '你是小组长，负责 devkit 适配');
+  // tool/result 与注入上下文都不该出现，且只留最后 2 条。
+  assert.deepEqual(digest.messages.map((message) => message.seq), [2, 4]);
+  assert.equal(digest.messages.at(-1).text, '小组长收尾：三条都过了');
+
+  const empty = nestedDigestOf({ events: [] }, 2);
+  assert.deepEqual(empty, { task: '', messages: [] });
+  assert.deepEqual(nestedDigestOf(undefined, 2), { task: '', messages: [] });
+});
+
+test('clampNestedMessageLimit 收口到 1..MAX，非法值回落默认', () => {
+  assert.equal(clampNestedMessageLimit(undefined), DEFAULT_NESTED_MESSAGE_LIMIT);
+  assert.equal(clampNestedMessageLimit(5), 5);
+  assert.equal(clampNestedMessageLimit(0), 1);
+  assert.equal(clampNestedMessageLimit(-3), 1);
+  assert.equal(clampNestedMessageLimit(MAX_NESTED_MESSAGE_LIMIT + 99), MAX_NESTED_MESSAGE_LIMIT);
+  assert.equal(clampNestedMessageLimit(Number.NaN), DEFAULT_NESTED_MESSAGE_LIMIT);
+  assert.equal(clampNestedMessageLimit('3'), DEFAULT_NESTED_MESSAGE_LIMIT);
+});
+
+test('lookupSession：根会话默认读到子会话与孙会话的内容（任务 + 最近消息）', async () => {
+  const value = await lookupSession({
+    sessionQuery: treeQuery(),
+    sessionId: 'session-root',
+    currentId: '',
+    includeMessages: true,
+    messageLimit: 5,
+  });
+
+  assert.equal(value.ok, true);
+  // 后代元数据仍是父在前、带深度。
+  assert.deepEqual(
+    value.subagents.map((node) => [node.id, node.depth, node.parentId]),
+    [
+      ['child-a', 1, ''],
+      ['grand-a', 2, 'child-a'],
+      ['child-b', 1, ''],
+    ],
+  );
+  // 内容：两个子会话 + 一个孙会话，全是后代关系。
+  assert.deepEqual(
+    value.nested.map((node) => [node.id, node.relation, node.depth, node.parentId]),
+    [
+      ['child-a', 'descendant', 1, ''],
+      ['grand-a', 'descendant', 2, 'child-a'],
+      ['child-b', 'descendant', 1, ''],
+    ],
+  );
+  const grand = value.nested.find((node) => node.id === 'grand-a');
+  assert.equal(grand.title, 'grand-a 的标题');
+  assert.equal(grand.task, '迁移 guard 测试到 6.0.0');
+  assert.equal(grand.messages.at(-1).text, '迁移完成，34 条用例全绿');
+
+  assert.equal(value.nestedTruncated, 0);
+  assert.match(value.summary, /谱系内会话内容/);
+  assert.match(value.summary, /迁移 guard 测试到 6\.0\.0/);
+  assert.match(value.summary, /上级会话：`child-a`/);
+  assert.deepEqual(validateValue(value, lookupTool().output.schema), []);
+});
+
+test('lookupSession：目标是子会话时，祖先链与祖先内容都读得到', async () => {
+  const value = await lookupSession({
+    sessionQuery: treeQuery(),
+    sessionId: 'grand-a',
+    currentId: '',
+    includeMessages: true,
+    messageLimit: 5,
+  });
+
+  assert.equal(value.ok, true);
+  assert.equal(value.session.role, 'subagent');
+  assert.equal(value.session.parentSessionId, 'child-a');
+  assert.deepEqual(
+    value.ancestors.map((node) => node.id),
+    ['child-a', 'session-root'],
+  );
+  // 祖先也要有内容：谁派的它、上级当时在做什么。
+  assert.deepEqual(
+    value.nested.map((node) => [node.id, node.relation, node.depth]),
+    [
+      ['child-a', 'ancestor', 1],
+      ['session-root', 'ancestor', 2],
+    ],
+  );
+  const parent = value.nested[0];
+  assert.equal(parent.task, '你是小组长，负责 devkit 适配');
+  assert.equal(parent.parentId, 'session-root');
+  assert.match(value.summary, /\[祖先 1\]/);
+  assert.deepEqual(validateValue(value, lookupTool().output.schema), []);
+});
+
+test('lookupSession：includeNestedMessages=false 时只返回元数据（不读其他日志）', async () => {
+  const read = [];
+  const query = treeQuery();
+  const original = query.readSurface.bind(query);
+  query.readSurface = async (id, signal) => {
+    read.push(id);
+    return original(id, signal);
+  };
+
+  const value = await lookupSession({
+    sessionQuery: query,
+    sessionId: 'session-root',
+    currentId: '',
+    includeMessages: true,
+    messageLimit: 5,
+    includeNestedMessages: false,
+  });
+
+  assert.equal(value.ok, true);
+  assert.deepEqual(value.nested, []);
+  assert.deepEqual(read, ['session-root'], '关掉谱系内容后只该读目标会话');
+  assert.equal(value.subagentCount, 3);
+  assert.match(value.hint, /includeNestedMessages=true/);
+  assert.deepEqual(validateValue(value, lookupTool().output.schema), []);
+});
+
+test('lookupSession：includeMessages=false 时不读谱系内容', async () => {
+  const read = [];
+  const query = treeQuery();
+  const original = query.readSurface.bind(query);
+  query.readSurface = async (id, signal) => {
+    read.push(id);
+    return original(id, signal);
+  };
+
+  const value = await lookupSession({
+    sessionQuery: query,
+    sessionId: 'session-root',
+    currentId: '',
+    includeMessages: false,
+    messageLimit: 5,
+  });
+
+  assert.equal(value.ok, true);
+  assert.deepEqual(value.nested, []);
+  assert.deepEqual(read, []);
+  assert.equal(value.subagentCount, 3);
+});
+
+test('lookupSession：谱系会话数超过上限时读 NESTED_SESSION_CAP 个并报出剩余数量', async () => {
+  const extras = NESTED_SESSION_CAP + 3;
+  const value = await lookupSession({
+    sessionQuery: treeQuery({ extraChildren: extras }),
+    sessionId: 'session-root',
+    currentId: '',
+    includeMessages: true,
+    messageLimit: 3,
+  });
+
+  assert.equal(value.ok, true);
+  assert.equal(value.nested.length, NESTED_SESSION_CAP);
+  // 固定后代 3 个（child-a / grand-a / child-b）+ extras，减去单次上限即剩余。
+  assert.equal(value.nestedTruncated, 3 + extras - NESTED_SESSION_CAP);
+  assert.equal(value.nested.length + value.nestedTruncated, 3 + extras);
+  assert.match(value.summary, /还有 \d+ 个谱系内会话没读/);
+});
+
+test('lookupSession：某个谱系会话读失败时，其余内容照常返回并显示原始错误', async () => {
+  const value = await lookupSession({
+    sessionQuery: treeQuery({ broken: ['child-b'] }),
+    sessionId: 'session-root',
+    currentId: '',
+    includeMessages: true,
+    messageLimit: 3,
+  });
+
+  assert.equal(value.ok, true);
+  const brokenNode = value.nested.find((node) => node.id === 'child-b');
+  assert.equal(brokenNode.task, '');
+  assert.deepEqual(brokenNode.messages, []);
+  assert.match(brokenNode.error, /corrupt/);
+  // 其余会话不受影响。
+  assert.equal(value.nested.find((node) => node.id === 'grand-a').task, '迁移 guard 测试到 6.0.0');
+  assert.match(value.summary, /读取失败/);
+  assert.deepEqual(validateValue(value, lookupTool().output.schema), []);
 });
 // #endregion

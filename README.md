@@ -212,18 +212,33 @@ dsh plugin add .
 | 参数 | 必填 | 默认 | 含义 |
 |---|---|---|---|
 | `sessionId` | 否 | 当前会话 | 目标会话 id，三种写法都认（见上）。省略时查调用它的会话本身 |
-| `includeMessages` | 否 | `true` | 是否附带最近消息 |
-| `messageLimit` | 否 | `10`（上限 200） | 返回多少条最近消息 |
+| `includeMessages` | 否 | `true` | 是否附带最近消息（关掉就只返回元数据，连谱系内容也不读） |
+| `messageLimit` | 否 | `10`（上限 200） | 目标会话返回多少条最近消息 |
+| `includeNestedMessages` | 否 | `true` | 是否读取**谱系内其他会话**的内容（祖先 + 全部后代） |
+| `nestedMessageLimit` | 否 | `2`（上限 10） | 每个谱系会话返回多少条最近消息 |
 
 返回内容（结构 + 一段人可读的 markdown 摘要）：
 
 ```
 session            目标会话：id / 标题 / workspace / 预设 / 角色 / 父会话 / delegationDepth / live / persisted / 是否当前会话
 ancestors          已知父级链（由近到远）；血缘不完整时 complete=false 并给出 unresolvedParentId
-subagents          全部后代会话，父在前：id / 标题 / depth / parentId / 创建时间 / 状态
-messages           最近 N 条人对人消息（user / assistant / 压缩摘要）
+subagents          全部后代会话（**递归到孙会话、曾孙会话…**），父在前：id / 标题 / depth / parentId / 创建时间 / 状态
+nested             谱系内会话的**内容摘要**（祖先 + 全部后代）：
+                     id / 标题 / role / relation(ancestor|descendant) / depth / parentId（它的上级）
+                     task（它的第一条用户消息 = 它被交办的事） / messages（最近 N 条） / error（读失败时的原始错误）
+nestedTruncated    因单次上限（20 个）没读的谱系会话数
+messages           目标会话最近 N 条人对人消息（user / assistant / 压缩摘要）
 inheritedEventCount 种子会话从父会话继承的事件数
 ```
+
+**「顺着会话树读」是默认行为**：
+- 目标是根会话 → 摘要里带出每个子会话、子会话的子会话的「任务 + 最近消息」，一眼看清整条链谁在干什么；
+- 目标是子会话/孙会话 → 先给祖先链（`subagents` 递归的反向），再给每个上级的「任务 + 最近消息」，
+  所以「谁派的它、上级当时在做什么」都是一次调用里拿到的；
+- 读取是**按需且有上限**的：`includeNestedMessages=false` 或 `includeMessages=false` 就退回纯元数据；
+  谱系会话超过 20 个时只读前 20 个，并在摘要里写明「还有 N 个没读」；
+- 某个谱系会话的日志读不出来时**不影响其余**：该节点 `error` 带原始错误，摘要里标「读取失败」，
+  不会伪装成「这个子会话什么都没做」。
 
 只读：不创建、不修改、不删除任何会话。
 

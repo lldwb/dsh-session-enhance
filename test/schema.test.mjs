@@ -44,8 +44,14 @@ test('参数与输出 schema 都落在注册表允许的子集里', () => {
 test('可选参数不写进 required，必填参数必须声明在 properties 里', () => {
   const lookup = tools.find((tool) => tool.name === 'session_lookup');
   assert.ok(lookup, 'session_lookup 必须存在');
-  assert.deepEqual(lookup.parameters.required ?? [], [], 'session_lookup 的三个参数都应是可选的');
-  assert.deepEqual(Object.keys(lookup.parameters.properties).sort(), ['includeMessages', 'messageLimit', 'sessionId']);
+  assert.deepEqual(lookup.parameters.required ?? [], [], 'session_lookup 的参数都应是可选的');
+  assert.deepEqual(Object.keys(lookup.parameters.properties).sort(), [
+    'includeMessages',
+    'includeNestedMessages',
+    'messageLimit',
+    'nestedMessageLimit',
+    'sessionId',
+  ]);
 });
 
 test('输出 schema 的 required 覆盖全部 properties（严格对象不留 undefined）', () => {

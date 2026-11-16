@@ -3,6 +3,64 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 5.6.0 — 2026-11-16
+
+### 新能力：会话「先概括、再定向读」三件套（overview / search / read）
+
+**诉求**（用户原话）：「就是拿到会话 id 时可以知道整个会话的概括情况，然后再决定怎么读取，
+这些都需要整成工具，并且对应长会话还需要有对应的检索工具。你可以看看
+`session-aa989be9` 会话的情况，取会话信息很艰难。」
+
+**先看真实卡点**（不是凭感觉加工具）：把 `aa989be9` 的完整日志解开统计——**4468 个事件、
+736 次工具调用、680 条助手消息、2730 分钟跨度**。用 `session_lookup` 读这种会话只能拿到
+「最后 10 条、每条截断 800 字符」，既慢又看不出全貌。更硬的限制来自官方工具：在
+`session-aa989be9` 的日志里（seq 32）真实出现过
+
+```
+Error: session target is outside the caller workspace
+SESSION_QUERY_TOOL_UNAUTHORIZED
+```
+
+——官方 `session_event_search` / `session_event_read` **按工作区授权**，用户粘来的会话 id
+常常属于别的工作区（本次就是 `E:\顺灵 Boardmate`），于是「检索/精读」整条路被挡住。本插件
+走 `ctx.get('sessionQuery')` 服务，没有这层工具级限制，所以把检索与精读补在这里。
+
+**三个新工具**（都只读、都跨工作区可用）：
+
+| 工具 | 一次调用读什么 | 回答什么 |
+|---|---|---|
+| `session_overview` | 目标会话**一次**整份日志（`readSession`）+ 语料库列举 | 这是什么会话、多大（事件数/工具调用/回合/跨度）、被交办什么、最近在做什么、树长什么样、下一步该用哪个工具 |
+| `session_search` | 目标会话**一次**日志扫描（`filterEvents`） | 里面提到 X 的地方在哪（seq + 片段 + `nextFromSeq` 翻页） |
+| `session_read` | 目标会话**一次**日志读取（`readEvent` 窗口 / `readSurface` 尾部） | 某个 seq 前后到底写了什么（含 log-only / shadowed 事件） |
+
+实现要点（都在 `lib/inspect.mjs`）：
+
+- **统计必须用原始日志，不能用当前表层**——真实回归踩到：`tool/call`、`turn/start`、
+  `session/title` 都是 **log-only** 事件，按表层算会得出「工具调用 0 次、回合 0 次、标题为空」
+  这种明显错误的概览。改用 `sessionQuery.readSession()`（一次读整份日志）后：
+  工具调用 755、回合 13、标题正确。老部署没有 `readSession` 时降级为表层口径，并在摘要里
+  明说「log-only 事件可能缺失」。
+- 用户消息一律用 `isInjectedUserEvent` 过滤（注入的 runtime-context 不算「用户说了什么」）。
+- 检索走 `filterEvents` 的**字面扫描**而不是 FTS 索引：不依赖 sqlite 索引能否建起来
+  （真实遇到过 `SESSION_QUERY_PERSISTENCE_FAILED`），语义可预测（大小写不敏感、多词 AND、
+  seq 升序 + `nextFromSeq` 翻页）。
+- 失败语义与 `session_lookup` 共用 `resolveFailureSummary`（不唯一列候选、回查失败带原始错误、
+  三种 id 写法提示），四个工具口径一致。
+
+**验证**：
+
+- 单测 **188/188**（新增 `test/inspect.test.mjs` 18 例：`eventRoleOf` / `eventTextOf` /
+  `titleOfEvents` / `taskOfEvents` / `statsOfEvents` / 概览（含祖先、长会话提示、
+  readSession 缺失降级、读失败不整体失败）/ 检索（AND、翻页、无命中、引擎报错、terms 收口）/
+  读取（窗口、尾部、seq 不存在、缺 readEvent），每个输出都过运行时 schema 校验）。
+- devkit headless 沙箱 + **真实会话日志**（拷入 `session-aa989be9` 与另一工作区的
+  `session-062eb97a`）：
+  - `session_overview` → 4468 事件 / user 17 / assistant 700 / 工具调用 755 / 回合 13 /
+    跨度 2730 分钟，标题正确；
+  - `session_search`（**跨工作区**，query=`commander-plan`）→ 命中 seq 176/180/181，
+    带 `shadowed` / `log-only` 标记与片段，并给出「下一页从 seq 182 开始」；
+  - `session_read`（seq 1，before=1，after=2）→ 正确返回 seq 0–3 并标出目标事件。
+
 ## 5.5.0 — 2026-11-16
 
 ### 新能力：顺着会话树读——子会话、子会话的子会话、以及（目标是子会话时的）上级会话

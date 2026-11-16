@@ -242,6 +242,37 @@ inheritedEventCount 种子会话从父会话继承的事件数
 
 只读：不创建、不修改、不删除任何会话。
 
+### 长会话怎么读：`session_overview` → `session_search` → `session_read`
+
+`session_lookup` 是「把整棵树的内容一次读出来」的重工具。会话一长（真实案例：**4468 个事件、
+736 次工具调用、2730 分钟跨度**）这条路就不合适了——它只给最后几条、每条截断。
+三个补位工具构成一条「先概括、再定位、后精读」的路径：
+
+| 工具 | 一次调用读什么 | 回答什么 |
+|---|---|---|
+| `session_overview` | 目标会话**一次**整份日志 | 这是什么会话、多大（事件数 / 工具调用 / 回合 / 时间跨度）、任务是什么、最近在做什么、树里有哪些相关会话、下一步该用哪个工具 |
+| `session_search` | 目标会话**一次**日志扫描 | 里面提到 X 的地方在哪：命中 `seq` + 片段 + `nextFromSeq` 翻页 |
+| `session_read` | 目标会话**一次**日志读取 | 某个 `seq` 前后到底写了什么（含工具调用/结果、已被 prune 的 shadowed 事件） |
+
+**推荐顺序**（工具描述里也是这么写的）：拿到会话 id 先 `session_overview`；如果
+`stats.logEvents` 很大（几百以上），用 `session_search` 定位，再 `session_read` 精读；
+会话不长才直接 `session_lookup` 读全树。
+
+参数：
+
+| 工具 | 参数 | 默认 | 含义 |
+|---|---|---|---|
+| `session_overview` | `sessionId` / `related` / `recentLimit` | 当前会话 / `true` / `3`（上限 20） | 目标 id；是否列树（只取 header，不读内容）；带出多少条最近消息 |
+| `session_search` | `sessionId` / `query` / `limit` / `fromSeq` / `types` | 当前会话 / 必填 / `20`（上限 50）/ `0` / 全部 | 检索词（**字面、大小写不敏感**，空格分词 AND，最多 5 词）；翻页把上次的 `nextFromSeq` 传回 `fromSeq` |
+| `session_read` | `sessionId` / `seq` / `before` / `after` / `tailLimit` | 当前会话 / 省略=读尾部 / `3`（上限 50）/ `3`（上限 50）/ `10`（上限 100） | 窗口模式给 `seq`；尾读模式给 `tailLimit` |
+
+> **为什么检索要自己实现**：官方 `session_event_search` / `session_event_read` 带**工作区授权**
+> ——读别的工作区的会话会直接报
+> `Error: session target is outside the caller workspace`（`SESSION_QUERY_TOOL_UNAUTHORIZED`）。
+> 用户从界面复制来的会话 id 常常属于别的工作区，于是「检索/精读」整条路会被挡住。
+> 本插件的四个查询工具都走 `sessionQuery` 服务，没有这层工具级限制，只读、不做任何写操作。
+> 授权口径：**id 是用户主动给的**，等价于用户授权读这一份会话。
+
 ### 会话分享
 
 会话标题栏的**分享按钮**（复制按钮左侧）打开「分享会话」对话框：

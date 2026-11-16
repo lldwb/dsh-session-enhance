@@ -75,14 +75,24 @@ test('三个入口都导出 name / inject / apply，且 name 与 Loader 行的 s
   assert.deepEqual(retryEntry.inject, []);
 });
 
-test('会话增强行注册 session_lookup 与 session_resume_subagents', () => {
+test('会话增强行注册 session_lookup / overview / search / read 与 session_resume_subagents', () => {
   const ctx = mockCtx();
   copyEntry.apply(ctx);
 
   const names = ctx.collected.tools.map((tool) => tool.name);
-  assert.deepEqual(names, ['session_lookup', 'session_resume_subagents']);
+  assert.deepEqual(names, [
+    'session_lookup',
+    'session_overview',
+    'session_search',
+    'session_read',
+    'session_resume_subagents',
+  ]);
   assert.match(ctx.collected.tools[0].description, /session ID/i);
-  assert.match(ctx.collected.tools[1].description, /subagent/i);
+  // 「先概括、再定向读」三件套的描述里要能看出分工（模型只读描述选工具）。
+  assert.match(ctx.collected.tools[1].description, /how big|overview|first look/i);
+  assert.match(ctx.collected.tools[2].description, /search INSIDE one/i);
+  assert.match(ctx.collected.tools[3].description, /raw log text/i);
+  assert.match(ctx.collected.tools[4].description, /subagent/i);
 });
 
 test('会话增强行声明 autoCompact 设置：volatile、默认关闭，并关闭自动生成页', () => {

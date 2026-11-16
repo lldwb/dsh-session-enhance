@@ -3,11 +3,16 @@
  *
  * ## 它做什么
  *
- * 注册两个工具、一条上下文 RPC 通道，以及**分级上下文压缩**的自动驱动器：
+ * 注册五个工具、一条上下文 RPC 通道，以及**分级上下文压缩**的自动驱动器：
  *
- * - `session_lookup`：按会话 id 返回标题、工作区、预设、父级链、全部子代理
- *   （父在前、带 depth / parentId）、最近消息与继承事件数。省略 `sessionId` 时查当前
- *   会话——这就是"我给 Agent 一个会话 id，让它看看那个会话和它的子代理"那条路径。
+ * - `session_overview`：拿到会话 id 的**第一步**——一次日志读取给出「这是什么会话、多大、
+ *   谁派的、任务是什么、最近在做什么」+ 会话树骨架，并告诉你下一步该用哪个工具。
+ * - `session_lookup`：把整棵树的内容摘要一次读出来（含子会话、孙会话与祖先），
+ *   适合中短会话或已确定要看全树时。
+ * - `session_search`：**在一个会话内部**按关键词检索（字面、大小写不敏感、多词 AND），
+ *   返回 seq + 片段 + 翻页游标。官方 `session_event_search` 有工作区授权限制，
+ *   本工具没有——用户粘来的任意会话 id 都能搜。
+ * - `session_read`：按 seq 读原始日志窗口（含 log-only / shadowed 事件），或读尾部。
  * - `session_resume_subagents`：列出并冷恢复被终止的子智能体（`subagent` 派生的子会话与
  *   Agent Teams 的 teammate）。DSH 只允许父级通过 continuation 通道冷恢复它们，UI 打开
  *   子会话时会被 `ApiSessionSubagentOwnership` 拒绝；本工具把这条通道交给模型。
@@ -36,6 +41,9 @@
 import z from '@deepseek-ai/schemastery';
 
 import { buildLookupTool } from './lib/tools/lookup.mjs';
+import { buildOverviewTool } from './lib/tools/overview.mjs';
+import { buildReadTool } from './lib/tools/read.mjs';
+import { buildSearchTool } from './lib/tools/search.mjs';
 import { buildResumeSubagentsTool } from './lib/tools/subagents.mjs';
 import { BUILD } from './lib/build.mjs';
 import { createContextHandler, installContextChannel } from './lib/context/host.mjs';
@@ -96,6 +104,15 @@ export function apply(ctx, config) {
   const lookup = buildLookupTool(ctx);
   ctx.effect(() => ctx.tools.register(lookup), 'dsh-session-enhance: tool session_lookup');
 
+  // 「先概括、再定向读」三件套：概览（1 次日志读取）/ 会话内检索 / 按位置读原文。
+  // 它们都不受官方 session_event_* 的工作区授权限制，所以能读用户粘过来的任意会话 id。
+  const overview = buildOverviewTool(ctx);
+  ctx.effect(() => ctx.tools.register(overview), 'dsh-session-enhance: tool session_overview');
+  const search = buildSearchTool(ctx);
+  ctx.effect(() => ctx.tools.register(search), 'dsh-session-enhance: tool session_search');
+  const read = buildReadTool(ctx);
+  ctx.effect(() => ctx.tools.register(read), 'dsh-session-enhance: tool session_read');
+
   // 子智能体恢复：只注册模型工具（5.1.0 起标题栏按钮已移除，浏览器半不再有对应 UI）。
   const subagentHandler = createSubagentHandler({ ctx, logger: ctx.logger });
   ctx.effect(
@@ -134,6 +151,6 @@ export function apply(ctx, config) {
   }
 
   ctx.logger?.info?.(
-    `dsh-session-enhance: ready (2 tools + context rpc + tiered compaction, build=${BUILD})`,
+    `dsh-session-enhance: ready (5 tools + context rpc + tiered compaction, build=${BUILD})`,
   );
 }

@@ -242,7 +242,7 @@ inheritedEventCount 种子会话从父会话继承的事件数
 
 只读：不创建、不修改、不删除任何会话。
 
-### 长会话怎么读：`session_overview` → `session_search` → `session_read`
+### 长会话怎么读：`session_overview` → `session_grep` → `session_read`
 
 `session_lookup` 是「把整棵树的内容一次读出来」的重工具。会话一长（真实案例：**4468 个事件、
 736 次工具调用、2730 分钟跨度**）这条路就不合适了——它只给最后几条、每条截断。
@@ -251,11 +251,11 @@ inheritedEventCount 种子会话从父会话继承的事件数
 | 工具 | 一次调用读什么 | 回答什么 |
 |---|---|---|
 | `session_overview` | 目标会话**一次**整份日志 | 这是什么会话、多大（事件数 / 工具调用 / 回合 / 时间跨度）、任务是什么、最近在做什么、树里有哪些相关会话、下一步该用哪个工具 |
-| `session_search` | 目标会话**一次**日志扫描 | 里面提到 X 的地方在哪：命中 `seq` + 片段 + `nextFromSeq` 翻页 |
+| `session_grep` | 目标会话**一次**日志扫描 | 里面提到 X 的地方在哪：命中 `seq` + 片段 + `nextFromSeq` 翻页 |
 | `session_read` | 目标会话**一次**日志读取 | 某个 `seq` 前后到底写了什么（含工具调用/结果、已被 prune 的 shadowed 事件） |
 
 **推荐顺序**（工具描述里也是这么写的）：拿到会话 id 先 `session_overview`；如果
-`stats.logEvents` 很大（几百以上），用 `session_search` 定位，再 `session_read` 精读；
+`stats.logEvents` 很大（几百以上），用 `session_grep` 定位，再 `session_read` 精读；
 会话不长才直接 `session_lookup` 读全树。
 
 参数：
@@ -263,7 +263,7 @@ inheritedEventCount 种子会话从父会话继承的事件数
 | 工具 | 参数 | 默认 | 含义 |
 |---|---|---|---|
 | `session_overview` | `sessionId` / `related` / `recentLimit` | 当前会话 / `true` / `3`（上限 20） | 目标 id；是否列树（只取 header，不读内容）；带出多少条最近消息 |
-| `session_search` | `sessionId` / `query` / `limit` / `fromSeq` / `types` | 当前会话 / 必填 / `20`（上限 50）/ `0` / 全部 | 检索词（**字面、大小写不敏感**，空格分词 AND，最多 5 词）；翻页把上次的 `nextFromSeq` 传回 `fromSeq` |
+| `session_grep` | `sessionId` / `query` / `limit` / `fromSeq` / `types` | 当前会话 / 必填 / `20`（上限 50）/ `0` / 全部 | 检索词（**字面、大小写不敏感**，空格分词 AND，最多 5 词）；翻页把上次的 `nextFromSeq` 传回 `fromSeq` |
 | `session_read` | `sessionId` / `seq` / `before` / `after` / `tailLimit` | 当前会话 / 省略=读尾部 / `3`（上限 50）/ `3`（上限 50）/ `10`（上限 100） | 窗口模式给 `seq`；尾读模式给 `tailLimit` |
 
 > **为什么检索要自己实现**：官方 `session_event_search` / `session_event_read` 带**工作区授权**
@@ -272,6 +272,15 @@ inheritedEventCount 种子会话从父会话继承的事件数
 > 用户从界面复制来的会话 id 常常属于别的工作区，于是「检索/精读」整条路会被挡住。
 > 本插件的四个查询工具都走 `sessionQuery` 服务，没有这层工具级限制，只读、不做任何写操作。
 > 授权口径：**id 是用户主动给的**，等价于用户授权读这一份会话。
+
+> **为什么叫 `session_grep` 而不是 `session_search`（5.6.2）**：随附包的
+> `@deepseek-ai/dsh-tool-session-query` 已经注册了 `session_search`（跨会话检索）、
+> `session_event_search` / `session_event_read` / `session_trace` / `session_event_trace`。
+> 工具注册表对**重名是硬失败**，5.6.0 用 `session_search` 这个名字时，官方
+> 「会话搜索」插件的「会话历史工具」整行被标成「异常」：
+> `tool "session_search" is already registered`。所以本插件的会话内检索叫 `session_grep`
+> （语义也更准：字面匹配、不走索引）。`test/entries.test.mjs` 有一条门禁：本插件注册的
+> 工具名不得与随附包那五个官方名字重合。
 
 ### 会话分享
 

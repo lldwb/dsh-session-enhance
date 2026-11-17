@@ -75,7 +75,7 @@ test('三个入口都导出 name / inject / apply，且 name 与 Loader 行的 s
   assert.deepEqual(retryEntry.inject, []);
 });
 
-test('会话增强行注册 session_lookup / overview / search / read 与 session_resume_subagents', () => {
+test('会话增强行注册 session_lookup / overview / grep / read 与 session_resume_subagents', () => {
   const ctx = mockCtx();
   copyEntry.apply(ctx);
 
@@ -83,7 +83,7 @@ test('会话增强行注册 session_lookup / overview / search / read 与 sessio
   assert.deepEqual(names, [
     'session_lookup',
     'session_overview',
-    'session_search',
+    'session_grep',
     'session_read',
     'session_resume_subagents',
   ]);
@@ -93,6 +93,37 @@ test('会话增强行注册 session_lookup / overview / search / read 与 sessio
   assert.match(ctx.collected.tools[2].description, /search INSIDE one/i);
   assert.match(ctx.collected.tools[3].description, /raw log text/i);
   assert.match(ctx.collected.tools[4].description, /subagent/i);
+});
+
+test('工具名不得与随附包的官方工具重名（重名会让官方插件行整行激活失败）', () => {
+  // 真实事故（2026-11-17）：5.6.0 把会话内检索工具取名 `session_search`，与随附包的
+  // `@deepseek-ai/dsh-tool-session-query` 同名。工具注册表对重名是**硬失败**，于是
+  // 「设置 → 插件 → 实验性插件 → 会话搜索 → 会话历史工具」那一行被标成「异常」：
+  //   tool "session_search" is already registered (for a per-agent variant, register
+  //   through that agent's `agent.ctx` instead)
+  // 用户在插件页看到红字，官方跨会话检索也跟着不可用。修复：本插件改名为 `session_grep`。
+  //
+  // 这份名字清单抄自随附包源码 `dsh-tool-session-query/src/index.ts`（DSH 0.2.2-rc.3
+  // 的 `ctx.tools.register()` 五处 `name:`）。**升级 DSH 后要复核**，新增的官方工具名
+  // 也加进来——这条门禁的价值就是「别再撞名」。
+  const OFFICIAL_SESSION_TOOL_NAMES = [
+    'session_search',
+    'session_event_search',
+    'session_trace',
+    'session_event_trace',
+    'session_event_read',
+  ];
+
+  const ctx = mockCtx();
+  copyEntry.apply(ctx);
+  const ours = ctx.collected.tools.map((tool) => tool.name);
+  for (const name of ours) {
+    assert.equal(
+      OFFICIAL_SESSION_TOOL_NAMES.includes(name),
+      false,
+      `工具名 "${name}" 与官方 dsh-tool-session-query 重名：官方那行会整行激活失败`,
+    );
+  }
 });
 
 test('会话增强行声明 autoCompact 设置：volatile、默认关闭，并关闭自动生成页', () => {

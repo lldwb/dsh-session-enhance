@@ -3,6 +3,58 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 5.6.2 — 2026-11-17
+
+### 修复：工具名 `session_search` 与随附包撞名，导致官方「会话搜索」插件整行报异常
+
+**现象**（用户截图）：「设置 → 插件 → 实验性插件 → 会话搜索」页里，「包含的组件」下的
+**会话历史工具**（`optional-tool-session-query` / `@deepseek-ai/dsh-tool-session-query`）
+显示 **异常**，原因：
+
+```
+tool "session_search" is already registered (for a per-agent variant, register
+through that agent's `agent.ctx` instead)
+```
+
+**是我 5.6.0 引入的回归**：那一版新增的「会话内检索」工具取名 `session_search`，而随附包的
+`dsh-tool-session-query` 注册的五个工具里第一个就是 `session_search`（另外四个是
+`session_event_search` / `session_event_read` / `session_trace` / `session_event_trace`，
+抄自 `app.asar` 的 `dsh-tool-session-query/src/index.ts`）。工具注册表对重名**硬失败**，
+于是后注册的那一侧整行激活失败——官方那行被标成「异常」，它的五个工具（含跨会话检索）
+全部不可用。
+
+**修法**：
+
+- 本插件的会话内检索改名 **`session_search` → `session_grep`**（语义也更准：字面匹配、
+  大小写不敏感、不走 FTS 索引）。`session_lookup` / `session_overview` / `session_read` /
+  `session_resume_subagents` / `session_share` 与官方名字不冲突，保持不变。
+- 新增门禁测试「工具名不得与随附包的官方工具重名」：把官方那五个名字抄成常量清单
+  （注明版本与来源文件），注册出来的每个工具名与之相交就失败——下次再撞名会先在单测里红掉，
+  而不是让用户在插件页看到红字。升级 DSH 后需复核该清单。
+
+**验证**：
+
+- 单测 **189/189**（新增重名门禁 1 例；工具名断言改为 `session_grep`）。
+- 归因证据：`git show <5.6.1>:lib/tools/search.mjs` 里正是 `name: 'session_search'`；
+  全工作区扫描确认**没有其它插件**注册这个名字（其余命中只是测试夹具）。
+- devkit headless 沙箱（真实 Loader + 真实注册表）：用一次性探针插件在运行时打印
+  `ctx.tools.schemas()` 的全部工具名（`process.stderr` 输出，不依赖模型自述）——
+  官方 `@deepseek-ai/dsh-tool-session-query` 行与本插件**同时装载**时，注册表里共有
+  **11 个 `session_*` 工具并存**：
+
+  ```
+  session_event_read, session_event_search, session_event_trace,   ← 官方
+  session_grep, session_lookup, session_overview, session_read,
+  session_resume_subagents, session_share,                        ← 本插件
+  session_search, session_trace                                   ← 官方
+  ```
+
+  修复前官方的 `session_search` 会因重名注册失败（整行异常、五个工具全不可用），
+  修复后它与本插件的 `session_grep` 并存。
+
+**用户要做什么**：重启 DSH 后，官方「会话搜索」那一行会恢复「运行中」，跨会话检索
+（`session_search` / `session_event_*`）重新可用；本插件的会话内检索改用 `session_grep`。
+
 ## 5.6.1 — 2026-11-16
 
 ### 修复：「压缩」动作被注入进了错误的用量面板

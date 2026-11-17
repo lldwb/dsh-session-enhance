@@ -9,7 +9,7 @@
  *   谁派的、任务是什么、最近在做什么」+ 会话树骨架，并告诉你下一步该用哪个工具。
  * - `session_lookup`：把整棵树的内容摘要一次读出来（含子会话、孙会话与祖先），
  *   适合中短会话或已确定要看全树时。
- * - `session_search`：**在一个会话内部**按关键词检索（字面、大小写不敏感、多词 AND），
+ * - `session_grep`：**在一个会话内部**按关键词检索（字面、大小写不敏感、多词 AND），
  *   返回 seq + 片段 + 翻页游标。官方 `session_event_search` 有工作区授权限制，
  *   本工具没有——用户粘来的任意会话 id 都能搜。
  * - `session_read`：按 seq 读原始日志窗口（含 log-only / shadowed 事件），或读尾部。
@@ -109,7 +109,7 @@ export function apply(ctx, config) {
   const overview = buildOverviewTool(ctx);
   ctx.effect(() => ctx.tools.register(overview), 'dsh-session-enhance: tool session_overview');
   const search = buildSearchTool(ctx);
-  ctx.effect(() => ctx.tools.register(search), 'dsh-session-enhance: tool session_search');
+  ctx.effect(() => ctx.tools.register(search), 'dsh-session-enhance: tool session_grep');
   const read = buildReadTool(ctx);
   ctx.effect(() => ctx.tools.register(read), 'dsh-session-enhance: tool session_read');
 

@@ -1,5 +1,5 @@
 /**
- * 「先概括、再定向读」三件套的离线测试：`session_overview` / `session_search` / `session_read`。
+ * 「先概括、再定向读」三件套的离线测试：`session_overview` / `session_grep` / `session_read`。
  *
  * 用假 `sessionQuery` 固定住四个方法的形状（`traceSession` / `readSurface` /
  * `filterEvents` / `readEvent`），并让每个返回的**输出对象**都过一遍工具自己声明的
@@ -379,7 +379,7 @@ test('overviewSession：长会话提示改用检索（hint 里点名工具）', 
   });
   assert.equal(value.ok, true);
   assert.equal(value.stats.logEvents, 4302);
-  assert.match(value.hint, /session_search/);
+  assert.match(value.hint, /session_grep/);
   assert.match(value.hint, /session_read/);
 });
 

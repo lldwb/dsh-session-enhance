@@ -608,20 +608,21 @@ Host 半的 `execute(args, exec)` 则从 `exec.agent.session.id` 取调用方会
 （192 bit）随机、不可枚举、可撤销、每次请求现读日志（撤销即失效，也不在磁盘上多存一份
 会话内容）。
 
-⚠️ **这条路由必须显式 `auth: 'anonymous'`**（`lib/public.mjs`）。DSH 0.2.2-rc.3 起
-`webServer.register()` 的 `auth` 默认是 `'required'`：没有已认证 Peer 的请求会在
-**进入 handler 之前**被拒（无人决策时 503），分享链接就会直接打不开。匿名只免除**凭据**
-验证；Connection 的**来源**检查（Host/Origin 栅栏：loopback、监听地址或 `trustedHosts`）
-对匿名路由同样生效，所以"公开"指"不要求登录"，不是"任何 Host 都收"。
-旧版本（rc.2 及更早）的 `register()` 只是 `table.set(path, route)`、不读这个键，多写它在
-旧运行时上是静默无害的 —— 这也是本次不写 feature-detect 的原因。
+路由级**没有**认证声明可用：rc.5 的 `WebRoute` 只有 `kind` / `path` / `handler`
+（`packages/host/webserver/src/index.ts:52`），`webServer.register()` 只做
+`table.set(path, route)`（同文件 :445），不会在进入 handler 之前拒掉请求——**路由级
+`auth`（`'anonymous'` / `'required'`）、`webserver/authorize` 事件与 `503` 只存在于
+master 基线，rc.5 没有**。所以分享页在 rc.5 上天然是公开 HTTP 路由，它的准入边界就是
+token 本身（24 字节 / 192 bit 随机、不可枚举、可撤销），不靠 Peer 凭据；旧版本写在本
+路由对象上的 `auth: 'anonymous'` 会被 rc.5 的 `register()` 静默忽略，已删除以免误导。
 
-反过来，**创建/撤销等有副作用的通道不能声明匿名**：`/dsh-session-enhance`、
-`/dsh-session-enhance-retry`、`/dsh-session-enhance-context` 三条都保持默认
-`required`（`test/routes.test.mjs` 把这两个方向都钉住了，避免以后被"顺手统一"改坏）。
-
-创建/查询/撤销这些**有副作用**的接口则走认证通道：`connection.admit(req)` 校验后才会
-执行，浏览器半用 `ctx.connection.rpc.call('/dsh-session-enhance', …)` 调用。
+反过来，创建/查询/撤销这些**有副作用**的接口走认证通道：`/dsh-session-enhance`、
+`/dsh-session-enhance-retry`、`/dsh-session-enhance-context` 三条路由的 handler 内都调
+`connection.admit(req)`——这才是 rc.5 上**唯一**的准入，`PeerAdmission` 只有 `{ peer }`
+或 `{ rejection: 401 | 403 }`（没有 503），拒绝时原样写状态码，通过后才执行业务。浏览器半用
+`ctx.connection.rpc.call('/dsh-session-enhance', …)` 调用。`test/routes.test.mjs` 把
+「注册对象无 auth 字段」与「admit 拒绝不进业务、放行才进业务」两个方向都钉住了，避免以后
+被"顺手统一"改坏。
 
 ### 存储
 

@@ -6,8 +6,9 @@
  * - `resume`：父会话里逐个冷恢复、子会话里经父级恢复自己、各种失败码；
  * - `diag`：三条软依赖是否在场。
  *
- * 同时覆盖两代服务形状：0.2.2-rc.1 的 `listChildren` / `agentTeams.listMembers`，
- * 以及 0.2.2-rc.2 的 `listDescendants`（`listChildren` 被移除、Team 只剩任务板）。
+ * 同时按 DSH 0.2.2-rc.5 的服务形状构造夹具：`subagents.listDescendants`
+ * （旧的 `listChildren` 已从服务移除、rc.5 不存在），`agentTeams` 只剩任务板
+ * （`listTasks`/`isEnabled`，没有 `listMembers`）。
  *
  * 不碰真实运行时：`agents` / `subagents` / `agentTeams` / `sessionQuery` 都是 mock。
  */
@@ -73,10 +74,11 @@ test('list：父会话里列出 teammate 与可继续 subagent child，并标记
       sendMessage: () => {}
     },
     subagents: {
-      listChildren: async () => [
-        { id: 'sub-live', mode: 'continuable', label: 'live child' },
-        { id: 'sub-dead', mode: 'continuable', label: 'dead child' },
-        { id: 'one-shot', mode: 'one-shot' }
+      listDescendants: async () => [
+        { kind: 'child', id: 'sub-live', depth: 1, mode: 'continuable', label: 'live child' },
+        { kind: 'child', id: 'sub-dead', depth: 1, mode: 'continuable', label: 'dead child' },
+        { kind: 'child', id: 'one-shot', depth: 1, mode: 'one-shot' },
+        { kind: 'child', id: 'grand-child', depth: 2, mode: 'continuable' }
       ],
       sendMessage: () => {}
     }
@@ -184,9 +186,9 @@ test('resume：父会话里恢复全部离线目标（team 用名字、subagent 
       }
     },
     subagents: {
-      listChildren: async () => [
-        { id: 'sub-live', mode: 'continuable' },
-        { id: 'sub-dead', mode: 'continuable' }
+      listDescendants: async () => [
+        { kind: 'child', id: 'sub-live', depth: 1, mode: 'continuable' },
+        { kind: 'child', id: 'sub-dead', depth: 1, mode: 'continuable' }
       ],
       sendMessage: async (sender, targetId, content) => {
         sent.push({ kind: 'subagent', sender: sender.id, target: targetId, text: content[0].text });
@@ -259,7 +261,7 @@ test('resume：子会话里通过父会话恢复自己；父不在线时返回 P
   const liveParent = makeCtx({
     agentGet: (id) => (id === 'parent-1' ? { id: 'parent-1' } : undefined),
     subagents: {
-      listChildren: async () => [],
+      listDescendants: async () => [],
       sendMessage: async (sender, targetId) => {
         sent.push({ sender: sender.id, targetId });
       }
@@ -285,7 +287,7 @@ test('resume：targets 可以按 id/名字过滤；未知目标不误发消息',
   const env = makeCtx({
     agentGet: (id) => (id === 'lead-1' ? lead : undefined),
     subagents: {
-      listChildren: async () => [{ id: 'sub-a', mode: 'continuable' }],
+      listDescendants: async () => [{ kind: 'child', id: 'sub-a', depth: 1, mode: 'continuable' }],
       sendMessage: async (_sender, targetId) => {
         sent.push(targetId);
       }
@@ -299,21 +301,22 @@ test('resume：targets 可以按 id/名字过滤；未知目标不误发消息',
   assert.deepEqual(sent, []);
 });
 
-test('diag：报告 subagents / agentTeams / sessionQuery 是否在场（rc.1 与 rc.2 两种形状）', async () => {
-  // 0.2.2-rc.1 形状：listChildren + listMembers。
-  const full = makeCtx({
+test('diag：报告 subagents / agentTeams / sessionQuery 是否在场（rc.5 形状；旧 listChildren 不再被识别）', async () => {
+  // 旧 0.2.2-rc.1 形状（只有 listChildren）在 rc.5 已不被识别：subagents.listChildren
+  // 已从服务移除，不再探测/回退 —— subagentListing 报 none（不猜测能力）。
+  const legacy = makeCtx({
     subagents: { listChildren: async () => [], sendMessage: async () => {} },
     agentTeams: { listMembers: () => [], sendMessage: async () => {} },
     sessionQuery: { traceSession: async () => ({}) }
   });
-  assert.deepEqual((await createSubagentHandler({ ctx: full.ctx })('diag', {})).value, {
-    hasSubagents: true,
+  assert.deepEqual((await createSubagentHandler({ ctx: legacy.ctx })('diag', {})).value, {
+    hasSubagents: false,
     hasAgentTeams: true,
     hasSessionQuery: true,
-    subagentListing: 'listChildren'
+    subagentListing: 'none'
   });
 
-  // 0.2.2-rc.2 形状：listChildren 移除，只剩 listDescendants；Team 只剩任务板。
+  // rc.5 形状（自 rc.2 起）：listChildren 移除，只剩 listDescendants；Team 只剩任务板。
   const rc2 = makeCtx({
     subagents: { listDescendants: async () => [], sendMessage: async () => {} },
     agentTeams: { isEnabled: () => false, listTasks: () => [] },
@@ -335,27 +338,36 @@ test('diag：报告 subagents / agentTeams / sessionQuery 是否在场（rc.1 �
   });
 });
 
-test('listDirectChildren：优先 rc.2 的 listDescendants，回退 rc.1 的 listChildren，都没有则空数组', async () => {
-  const rc2Rows = await listDirectChildren(
+test('listDirectChildren：只走 rc.5 的 listDescendants（kind=child & depth=1）；无该 API 时返回 []、不再探测 listChildren', async () => {
+  const rows = await listDirectChildren(
     {
       listDescendants: async () => [
         { kind: 'child', id: 'a', depth: 1, mode: 'continuable' },
         { kind: 'child', id: 'b', depth: 2, mode: 'continuable' },
         { kind: 'diagnostic', id: 'c', depth: 1, reason: 'corrupt' }
       ],
+      // rc.5 的服务没有该 API：万一代码回退到它，这里会抛错，测试立刻失败。
       listChildren: async () => {
-        throw new Error('rc.2 must not call listChildren');
+        throw new Error('rc.5 must not call listChildren');
       }
     },
     'parent'
   );
-  assert.deepEqual(rc2Rows.map((row) => row.id), ['a']);
+  assert.deepEqual(rows.map((row) => row.id), ['a']);
 
-  const rc1Rows = await listDirectChildren(
-    { listChildren: async () => [{ id: 'x', mode: 'continuable' }] },
+  // 只有旧 API 的服务：rc.5 上 listChildren 不存在，必须返回 []，且一次都不该调用它。
+  let legacyCalls = 0;
+  const legacyRows = await listDirectChildren(
+    {
+      listChildren: async () => {
+        legacyCalls += 1;
+        return [{ id: 'x', mode: 'continuable' }];
+      }
+    },
     'parent'
   );
-  assert.deepEqual(rc1Rows.map((row) => row.id), ['x']);
+  assert.deepEqual(legacyRows, []);
+  assert.equal(legacyCalls, 0, 'rc.5 不应再探测 subagents.listChildren');
 
   assert.deepEqual(await listDirectChildren(undefined, 'parent'), []);
   assert.deepEqual(await listDirectChildren({}, 'parent'), []);

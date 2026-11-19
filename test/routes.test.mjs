@@ -1,21 +1,29 @@
 /**
- * 四条 webServer 路由的**准入声明**回归。
+ * 四条 webServer 路由的注册与实际准入回归（目标运行时：DSH 0.2.2-rc.5）。
  *
- * ## 为什么单独一个文件
+ * ## rc.5 的事实（5.6.3 起按它改写；旧注释描述的是 master 基线）
  *
- * DSH 0.2.2-rc.3 起 `webServer.register()` 的 `auth` 字段默认是 `'required'`：
- * 没有已认证 Peer 的请求会在**进入 handler 之前**被拒（无人决策时 503，决策未通过
- * 401/403）。所以：
+ * rc.5 的 `WebRoute` 只有 `kind` / `path` / `handler` 三个字段
+ * （`packages/host/webserver/src/index.ts:52`），`register()` 只做 `table.set(path, route)`
+ * （同文件 :445）——**没有路由级 `auth` 字段，也不会在进入 handler 之前拒掉请求**。
+ * 路由级 `auth: 'anonymous' | 'required'`、`webserver/authorize` 事件与 `503` 只存在于
+ * master 基线，rc.3 / rc.5 都没有；旧版写在 route 对象上的 `auth` 键会被 rc.5 静默忽略
+ * （本次已删除）。
  *
- * - **免登录只读分享页** `GET /share/<token>` 必须显式 `auth: 'anonymous'`，
- *   否则分享链接在 rc.3 上直接打不开（rc.2 没有这个字段，行为是"完全不拦"）；
- * - 三条 RPC 通道（分享 / 中断重试 / 上下文）是**登录后**用的，必须保持默认
- *   `required`，绝不能顺手写成 anonymous —— 那等于把「创建分享」「驱动新一轮」
- *   暴露给未认证的请求。
+ * 四份注册各自的真实准入边界因此是：
+ * - 公开分享页 `GET|HEAD /share/<token>`：只看 URL 里的随机 token（24 字节，不可枚举、
+ *   可撤销、每次现读日志），不认 Peer 身份 —— 这正是"分享链接谁拿到谁能开"的语义；
+ * - 三条 RPC 通道（分享 / 中断重试 / 上下文）：唯一准入是 **handler 内的
+ *   `connection.admit(req)`**。`PeerAdmission = { peer } | { rejection: 401 | 403 }`
+ *   （`packages/client/connection/src/rpc.ts:119`，**没有 503**），拒绝时 handler 原样写
+ *   状态码并直接返回。
  *
- * 这两个方向都可能被"随手改成一致"以后破坏，所以各写一条断言钉住。
- * 真实的准入执行（WebServer + Connection 的 `webserver/authorize`）属于沙箱回归的
- * 范围，离线单测只看声明与 handler 自身行为。
+ * ⚠️ **不能因为 rc.5 没有路由级 auth 就删掉 admit**：那是这三条通道唯一的准入。
+ *
+ * 本文件钉住两件事（断言都必须能在"改坏"时真的失败）：
+ * 1. 四条路由注册出来都没有 `auth` 键（防止把 master-only 字段再写回来）；
+ * 2. 三条 RPC 的 handler 仍以 `connection.admit` 为准入：拒绝 → 写状态码且不进业务；
+ *    放行 → 才走到业务。
  *
  * @module dsh-session-enhance/test/routes
  */
@@ -28,19 +36,26 @@ import { mountShareRoutes } from '../lib/public.mjs';
 import { mountShareRpc } from '../lib/rpc.mjs';
 import { installRetryChannel } from '../lib/retry/rpc.mjs';
 
+const SHARE_TOKEN = 'token-aaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const SESSION_ID = 'session-route-ok';
+const SHARE_PAGE = '/share';
+const SHARE_RPC = '/dsh-session-enhance';
+const RETRY_RPC = '/dsh-session-enhance-retry';
+const CONTEXT_RPC = '/dsh-session-enhance-context';
+
 /**
- * 造一个只记录路由注册的 mock 上下文。
+ * 造一个 mock 插件上下文：`webServer.register` 只记录路由，`connection.admit` 可注入。
  *
- * @param {Record<string, any>} [services] - `ctx.get()` 能额外取到的服务。
+ * @param {{ admit?: (req?: any) => { peer?: any, rejection?: 401 | 403 } }} [options] - `connection.admit` 的返回值。
  * @returns {{ ctx: any, routes: any[] }} mock 环境与注册到的路由。
  */
-function makeCtx(services = {}) {
+function makeCtx(options = {}) {
+  const admit = options.admit ?? (() => ({ peer: {} }));
   const routes = [];
-  const table = {
-    ...services,
+  const services = {
     connection: {
-      // 分享读取路由不该调 admit；其它通道调它做双保险。
-      admit: () => ({ peer: {} }),
+      admit: (req) => admit(req),
+      // 旧版逃生口：webServer.register 可用时绝不该走到这里。
       rpc: {
         handle: () => {
           throw new Error('rpc.handle fallback must not be used when webServer.register works');
@@ -56,9 +71,9 @@ function makeCtx(services = {}) {
   };
   const ctx = {
     logger: { info: () => {}, debug: () => {}, warn: () => {} },
-    ...table,
+    ...services,
     get(name) {
-      return table[name];
+      return services[name];
     },
     inject(_names, callback) {
       callback(ctx);
@@ -73,18 +88,30 @@ function makeCtx(services = {}) {
 }
 
 /**
+ * 取回某条已注册路由；没注册就失败（别让"路由根本没挂上"混进后面的断言里）。
+ *
+ * @param {{ routes: any[] }} env - mock 环境。
+ * @param {string} path - 期望的路由前缀。
+ * @returns {any} 注册对象。
+ */
+function onlyRoute(env, path) {
+  const route = env.routes.find((item) => item.path === path);
+  assert.ok(route, `路由 ${path} 应注册成功`);
+  return route;
+}
+
+/**
  * 一个够用的假 `sessionQuery`（分享页渲染只需要 trace + 标题 + 表层）。
  *
- * @param {string} sessionId - 会话 id。
  * @returns {any} 假查询服务。
  */
-function fakeSessionQuery(sessionId) {
+function fakeSessionQuery() {
   return {
     async traceSession(id) {
-      if (id !== sessionId) throw new Error('not found');
+      if (id !== SESSION_ID) throw new Error('not found');
       return {
         target: {
-          header: { id: sessionId, createdAt: 1_700_000_000_000, isSeeded: false },
+          header: { id: SESSION_ID, createdAt: 1_700_000_000_000, isSeeded: false },
           live: false,
           persisted: true,
         },
@@ -99,7 +126,13 @@ function fakeSessionQuery(sessionId) {
         sessionId: id,
         value: {
           session: { id },
-          title: { title: '会话增强：路由准入', messageSeqs: [1], source: { kind: 'fallback' }, eventSeq: 1, updatedAt: 1_700_000_000_000 },
+          title: {
+            title: '会话增强：路由准入',
+            messageSeqs: [1],
+            source: { kind: 'fallback' },
+            eventSeq: 1,
+            updatedAt: 1_700_000_000_000,
+          },
         },
       }));
     },
@@ -115,7 +148,7 @@ function fakeSessionQuery(sessionId) {
 }
 
 /**
- * 一个假响应，记录状态码、响应头与响应体。
+ * 一个假响应：记录状态码、响应头与响应体。
  *
  * @returns {any} 假 `res`。
  */
@@ -136,79 +169,228 @@ function fakeResponse() {
   };
 }
 
-const SESSION_ID = 'session-route-ok';
+/**
+ * 一个假请求（Node 的 `req` 是 `AsyncIterable<Buffer>`，三条 RPC handler 都按流读 body）。
+ *
+ * @param {{ method?: string, url?: string, body?: string }} [options] - 请求形状。
+ * @returns {any} 假 `req`。
+ */
+function fakeRequest(options = {}) {
+  const method = options.method ?? 'POST';
+  const url = options.url ?? '/';
+  const body = options.body ?? '';
+  const chunks = body === '' ? [] : [Buffer.from(body, 'utf8')];
+  return {
+    method,
+    url,
+    async *[Symbol.asyncIterator]() {
+      for (const chunk of chunks) yield chunk;
+    },
+  };
+}
 
 /**
- * 挂上分享页的公开路由并取回它。
+ * 挂上公开分享页路由。
  *
- * @returns {any} 注册到的路由。
+ * @param {{ admit?: (req?: any) => any }} [options] - 注入的准入结果（分享页自己不调 admit）。
+ * @returns {{ env: any, route: any }} 环境与路由。
  */
-function shareRoute() {
-  const { ctx, routes } = makeCtx({ sessionQuery: fakeSessionQuery(SESSION_ID) });
-  mountShareRoutes(ctx, {
-    store: { get: (token) => (token === 'token-aaaaaaaaaaaaaaaaaaaaaaaaaaaa' ? { token, sessionId: SESSION_ID, createdAt: 1_700_000_000_000, includeDescendants: false } : undefined) },
-    sessionQuery: () => fakeSessionQuery(SESSION_ID),
+function mountSharePage(options = {}) {
+  const env = makeCtx(options);
+  mountShareRoutes(env.ctx, {
+    store: {
+      get: (token) =>
+        token === SHARE_TOKEN
+          ? { token, sessionId: SESSION_ID, createdAt: 1_700_000_000_000, includeDescendants: false }
+          : undefined,
+    },
+    sessionQuery: () => fakeSessionQuery(),
     sessions: () => undefined,
     logger: { warn: () => {} },
   });
-  assert.equal(routes.length, 1, '公开分享路由应只注册一条');
-  return routes[0];
+  return { env, route: onlyRoute(env, SHARE_PAGE) };
 }
 
-test('分享页路由显式声明 auth:anonymous（rc.3 起默认 required 会把它挡在 handler 之前）', () => {
-  const route = shareRoute();
-  assert.equal(route.kind, 'prefix');
-  assert.equal(route.path, '/share');
-  assert.equal(
-    route.auth,
-    'anonymous',
-    '免登录只读分享页必须匿名：漏了它，rc.3 上 /share/<token> 会在进 handler 前被拒（503）',
+/**
+ * 挂上「分享创建 / 查询 / 撤销」RPC 通道，并给业务路径装上计数器。
+ *
+ * @param {{ admit?: (req?: any) => any }} [options] - 注入的准入结果。
+ * @returns {{ env: any, route: any, business: { calls: number } }} 环境、路由与业务计数。
+ */
+function mountShareRpcEnv(options = {}) {
+  const env = makeCtx(options);
+  const business = { calls: 0 };
+  mountShareRpc(env.ctx, {
+    store: {
+      listForSession: () => {
+        business.calls += 1;
+        return [];
+      },
+      create: () => {
+        business.calls += 1;
+        return {};
+      },
+      revoke: () => {
+        business.calls += 1;
+        return false;
+      },
+    },
+    sessionQuery: () => ({ traceSession: async () => ({}) }),
+    sessions: () => undefined,
+    originOf: () => 'http://127.0.0.1:5173',
+  });
+  return { env, route: onlyRoute(env, SHARE_RPC), business };
+}
+
+/**
+ * 挂上「中断重试」RPC 通道，并给业务 handler 装上计数器。
+ *
+ * @param {{ admit?: (req?: any) => any }} [options] - 注入的准入结果。
+ * @returns {{ env: any, route: any, business: { calls: number } }} 环境、路由与业务计数。
+ */
+function mountRetryEnv(options = {}) {
+  const env = makeCtx(options);
+  const business = { calls: 0 };
+  installRetryChannel(env.ctx, async () => {
+    business.calls += 1;
+    return { ok: true, value: { pending: false } };
+  });
+  return { env, route: onlyRoute(env, RETRY_RPC), business };
+}
+
+/**
+ * 挂上「上下文用量 / 手动压缩」RPC 通道，并给业务 handler 装上计数器。
+ *
+ * @param {{ admit?: (req?: any) => any }} [options] - 注入的准入结果。
+ * @returns {{ env: any, route: any, business: { calls: number } }} 环境、路由与业务计数。
+ */
+function mountContextEnv(options = {}) {
+  const env = makeCtx(options);
+  const business = { calls: 0 };
+  installContextChannel(env.ctx, async () => {
+    business.calls += 1;
+    return { ok: true, value: { canCompact: false } };
+  });
+  return { env, route: onlyRoute(env, CONTEXT_RPC), business };
+}
+
+test('四条路由都注册成功，且注册对象里没有 rc.5 不存在的 auth 字段', () => {
+  const routes = [
+    mountSharePage().route,
+    mountShareRpcEnv().route,
+    mountRetryEnv().route,
+    mountContextEnv().route,
+  ];
+  assert.equal(routes.length, 4, '四条路由应全部注册成功');
+  assert.deepEqual(
+    routes.map((route) => route.path),
+    [SHARE_PAGE, SHARE_RPC, RETRY_RPC, CONTEXT_RPC],
   );
+  for (const route of routes) {
+    assert.equal(route.kind, 'prefix', `${route.path} 应是 prefix 路由`);
+    assert.equal(
+      Object.hasOwn(route, 'auth'),
+      false,
+      `${route.path} 不应带 auth：rc.5 的 WebRoute 只有 kind/path/handler，该字段是 master-only`,
+    );
+    assert.equal(route.auth, undefined, `${route.path} 的 route.auth 应为 undefined`);
+    // rc.5 的 WebRoute 就这三个字段；多出来的键（如旧版 auth）只会被 register() 静默忽略。
+    assert.deepEqual(Object.keys(route).sort(), ['handler', 'kind', 'path']);
+  }
 });
 
-test('分享页路由的 handler 自身仍只认 token：未知 token 404、非 GET/HEAD 405、合法 token 200', async () => {
-  const route = shareRoute();
+test('分享页 handler 自身仍只认 token：未知 token 404、非 GET/HEAD 405、合法 token 200', async () => {
+  const { route } = mountSharePage();
 
   const notFound = fakeResponse();
   await route.handler({ method: 'GET', url: '/share/token-bbbbbbbbbbbbbbbbbbbbbbbbbbbb' }, notFound);
   assert.equal(notFound.status, 404);
 
   const wrongMethod = fakeResponse();
-  await route.handler({ method: 'POST', url: '/share/token-aaaaaaaaaaaaaaaaaaaaaaaaaaaa' }, wrongMethod);
+  await route.handler({ method: 'POST', url: `/share/${SHARE_TOKEN}` }, wrongMethod);
   assert.equal(wrongMethod.status, 405);
 
   const ok = fakeResponse();
-  await route.handler({ method: 'GET', url: '/share/token-aaaaaaaaaaaaaaaaaaaaaaaaaaaa' }, ok);
+  await route.handler({ method: 'GET', url: `/share/${SHARE_TOKEN}` }, ok);
   assert.equal(ok.status, 200);
   assert.match(ok.body, /会话增强：路由准入/u);
   assert.equal(ok.headers['cache-control'], 'no-store');
 });
 
-test('三条登录后 RPC 通道保持默认 auth（required），不得声明 anonymous', () => {
-  const share = makeCtx();
-  mountShareRpc(share.ctx, {
-    store: { listForSession: () => [], create: () => ({}), revoke: () => false },
-    sessionQuery: () => undefined,
-    sessions: () => undefined,
-    originOf: () => 'http://127.0.0.1:1',
-  });
-  assert.equal(share.routes.length, 1);
-  assert.equal(share.routes[0].path, '/dsh-session-enhance');
-  assert.equal(
-    share.routes[0].auth,
-    undefined,
-    '分享创建/撤销通道必须要求认证：声明 anonymous 等于让未登录请求也能创建分享',
+test('三条 RPC 路由：connection.admit 拒绝时写回状态码，且不进入业务', async () => {
+  // rc.5 的 PeerAdmission 只有 401 / 403 两种拒绝（没有 503）。
+  for (const rejection of [401, 403]) {
+    const share = mountShareRpcEnv({ admit: () => ({ rejection }) });
+    const shareRes = fakeResponse();
+    await share.route.handler(
+      fakeRequest({
+        url: SHARE_RPC,
+        body: JSON.stringify({ type: 'client-request', rpcId: 'r1', method: 'share.status', payload: { sessionId: SESSION_ID } }),
+      }),
+      shareRes,
+    );
+    assert.equal(shareRes.status, rejection, '分享通道应原样写回 admit 的拒绝状态码');
+    assert.equal(share.business.calls, 0, '拒绝时不得进入分享业务（否则未认证请求能创建/读取分享）');
+
+    const retry = mountRetryEnv({ admit: () => ({ rejection }) });
+    const retryRes = fakeResponse();
+    await retry.route.handler(
+      fakeRequest({ url: `${RETRY_RPC}/pending`, body: JSON.stringify({ rpcId: 'r2', method: 'pending', payload: {} }) }),
+      retryRes,
+    );
+    assert.equal(retryRes.status, rejection, '中断重试通道应原样写回拒绝状态码');
+    assert.equal(retry.business.calls, 0, '拒绝时不得进入重试业务');
+
+    const context = mountContextEnv({ admit: () => ({ rejection }) });
+    const contextRes = fakeResponse();
+    await context.route.handler(
+      fakeRequest({ url: `${CONTEXT_RPC}/get`, body: JSON.stringify({ rpcId: 'r3', method: 'get', payload: {} }) }),
+      contextRes,
+    );
+    assert.equal(contextRes.status, rejection, '上下文通道应原样写回拒绝状态码');
+    assert.equal(context.business.calls, 0, '拒绝时不得进入压缩业务');
+  }
+});
+
+test('三条 RPC 路由：connection.admit 放行后才进入业务（用业务真的跑了做证据）', async () => {
+  const share = mountShareRpcEnv({ admit: () => ({ peer: {} }) });
+  const shareRes = fakeResponse();
+  await share.route.handler(
+    fakeRequest({
+      url: SHARE_RPC,
+      body: JSON.stringify({ type: 'client-request', rpcId: 'r1', method: 'share.status', payload: { sessionId: SESSION_ID } }),
+    }),
+    shareRes,
   );
+  assert.equal(shareRes.status, 200);
+  assert.equal(share.business.calls, 1, '放行后应执行 share.status 业务');
+  const shareBody = JSON.parse(shareRes.body);
+  assert.equal(shareBody.type, 'server-response');
+  assert.equal(shareBody.rpcId, 'r1');
+  assert.equal(shareBody.result.ok, true);
+  assert.deepEqual(shareBody.result.value.shares, []);
 
-  const retry = makeCtx();
-  installRetryChannel(retry.ctx, async () => ({ ok: true, value: {} }));
-  assert.equal(retry.routes.length, 1);
-  assert.equal(retry.routes[0].path, '/dsh-session-enhance-retry');
-  assert.equal(retry.routes[0].auth, undefined, '中断重试通道必须要求认证');
+  const retry = mountRetryEnv({ admit: () => ({ peer: {} }) });
+  const retryRes = fakeResponse();
+  await retry.route.handler(
+    fakeRequest({ url: `${RETRY_RPC}/pending`, body: JSON.stringify({ rpcId: 'r2', method: 'pending', payload: {} }) }),
+    retryRes,
+  );
+  assert.equal(retryRes.status, 200);
+  assert.equal(retry.business.calls, 1, '放行后应执行重试业务');
+  const retryBody = JSON.parse(retryRes.body);
+  assert.equal(retryBody.type, 'server-response');
+  assert.equal(retryBody.result.ok, true);
 
-  const context = makeCtx();
-  installContextChannel(context.ctx, async () => ({ ok: true, value: {} }));
-  assert.equal(context.routes.length, 1);
-  assert.equal(context.routes[0].path, '/dsh-session-enhance-context');
-  assert.equal(context.routes[0].auth, undefined, '手动压缩通道必须要求认证');
+  const context = mountContextEnv({ admit: () => ({ peer: {} }) });
+  const contextRes = fakeResponse();
+  await context.route.handler(
+    fakeRequest({ url: `${CONTEXT_RPC}/get`, body: JSON.stringify({ rpcId: 'r3', method: 'get', payload: {} }) }),
+    contextRes,
+  );
+  assert.equal(contextRes.status, 200);
+  assert.equal(context.business.calls, 1, '放行后应执行上下文业务');
+  const contextBody = JSON.parse(contextRes.body);
+  assert.equal(contextBody.type, 'server-response');
+  assert.equal(contextBody.result.ok, true);
 });

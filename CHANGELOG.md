@@ -3,6 +3,48 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 5.6.3 — 2026-11-19
+
+### 适配 DSH 0.2.2-rc.5：删除路由上的 master-only `auth` 键，准入由 handler 内 `connection.admit` 保证
+
+**背景**：上一轮适配按 master 基线（checkout `39163dd30f`）写了「DSH 0.2.2-rc.3 起
+`webServer.register()` 路由默认 `auth: 'required'`、未登录请求会在进入 handler 前被拒（503），
+所以分享页必须显式 `auth: 'anonymous'`」。该机制**只存在于 master**：rc.5 的 `WebRoute`
+只有 `kind` / `path` / `handler`（`packages/host/webserver/src/index.ts:52`），`register()`
+只做 `table.set(path, route)`（同文件 :445），没有路由级认证，也没有 `webserver/authorize`
+事件或 503。
+
+**改动**：
+
+- `lib/public.mjs`：删除分享页路由对象上的 `auth: 'anonymous'`；注释改写为 rc.5 事实
+  （rc.5 无路由级 auth 字段，本路由的准入边界是 URL 里的随机 token；旧版 `auth` 键在 rc.5
+  被静默忽略，本次删除以免误导）。
+- `test/routes.test.mjs`：重写为「四条路由注册对象都无 `auth` 字段」+「分享页 handler 行为
+  （未知 token 404 / 非 GET·HEAD 405 / 合法 token 200）」+「三条 RPC 路由仍以
+  `connection.admit` 为准入（拒绝 401/403 不进业务、放行才进业务）」。
+- `README.md`：分享路由一节改写为 rc.5 事实（路由级 `auth` 只在 master 存在，rc.5 没有
+  该字段；三条 RPC 的唯一准入是 handler 内 `connection.admit`）。
+- **保留**三处 handler 内的 `connection.admit(req)`：rc.5 上它是 RPC 通道的**唯一**准入，
+  且 `PeerAdmission` 只有 `{ peer }` / `{ rejection: 401 | 403 }`（没有 503）。
+- 并删除 `subagents.listChildren` / `agentTeams.listMembers` 两处旧版死 fallback：
+  `lib/subagent/host.mjs` 的 `listDirectChildren` 不再探测 `listChildren`（rc.5 只有
+  `listDescendants`，没有该 API 时返回 `[]`）、`childIdentityOf` 不再探测 `listMembers`
+  （rc.5 的 Team 只剩任务板），`diag` 的 `subagentListing` 也不再报 `listChildren`。
+
+**验证**：
+
+- 单测 `node --test`：**189/189** 通过（`test/routes.test.mjs` 由 3 例重写为 4 例；
+  `test/subagent.test.mjs` 的夹具与两处用例按 rc.5 语义改写，数量不变）。
+- 断言有效性做过变异验证：把 `auth` 键加回、把分享 RPC 的 `admit` 绕开、把
+  `listChildren` fallback 加回，三处改动分别让对应用例失败（不是恒真断言）。
+- `node --check` 改动文件全过。
+- 依据：`git -C E:\deepseek-harness show dsh-v0.2.2-rc.5:packages/host/webserver/src/index.ts`
+  → `export interface WebRoute { kind; path; handler }`（第 52 行）、
+  `register(route: WebRoute | WebResourceRoute)` 仅 `table.set`（第 445 行），全文件无
+  `503` / `authorize`；`packages/client/connection/src/rpc.ts:119` →
+  `PeerAdmission = { peer } | { rejection: 401 | 403 }`；`subagents` / `agentTeams`
+  服务方法表在 rc.5 没有 `listChildren` / `listMembers`。
+
 ## 5.6.2 — 2026-11-17
 
 ### 修复：工具名 `session_search` 与随附包撞名，导致官方「会话搜索」插件整行报异常

@@ -3,6 +3,53 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 5.6.4 — 2026-11-20
+
+### `repair-session-log.mjs` 新增病因 B：修 `turn/end.reason === null`（DSH 投影层崩溃）+ 并发写保护
+
+**背景**：用户报「历史加载失败：failed to project session `session-01916ad6` … Cannot read
+properties of null (reading 'kind')（gateway/internal）」。`session_lookup` / `readSession` 都正常，
+只有 GUI 打不开历史——说明坏在**投影层**而不是重放校验。
+
+**病因**（运行时源码 + 日志双向确证）：`dsh-commander-mode` ≤ 7.25.0 的退化看门狗调用
+`agent.cancel({ kind: 'degeneration' }, { keepInbox: true })`，而 `AgentCancelCause` 是**封闭 union**
+（`user | parent | hook | disposed`）。`agent-loop/src/agent.ts:94-109` 的 `abortedCancelCause()`
+用 exhaustive switch 归一化，未知成员走 `assertNever()` 抛错；异常发生在 `finally` 之前，
+`turnEnds` 仍是 `null`，`finally`（同文件 428 行）照样
+`append('turn/end', { turn, reason: turnEnds! })` → 持久化出
+`{"type":"turn/end","data":{"turn":N,"reason":null}}`。
+
+这条事件能过 `Session.fromRestore`（只校验信封 / seq / surface / header），但投影层必崩：
+`api/session-controller/src/continuation.ts:46` 读 `event.data.reason.kind` → TypeError
+（`history/controller.ts:172` 用 `projectionMode: 'all'` 调 `observeSession`）。服务端另有
+`subagent/src/projection.ts:93` 与 `lifecycle.ts:83`、`core/agent/src/consumed-work.ts:43` 读同一
+字段，客户端十余处也是同样写法。
+
+**改动**：
+
+- `scripts/repair-session-log.mjs`：
+  - 新增「病因 B」识别与修复：`turn/end.data.reason` 为 `null` / 缺失 / 非对象时，改写为合法值。
+    默认 `{"kind":"aborted","reason":{"kind":"legacy"}}`（DSH 给「原始记录没带 cause 的导入」
+    准备的成员；客户端只显示「已停止」，不会伪造「进程已退出」）；新增 `--cause <JSON>` 可写入
+    已知确切原因。
+  - 新增**门禁 3**：`turn/end.reason` 结构不变量（对象 + `kind` ∈ `TurnEndReasonMap` 已知成员 +
+    `aborted.cause.kind` ∈ `user|parent|hook|disposed|legacy` + `error` 必须有 `error.code`）。
+    这道门禁是专门挡病因 B 的——`fromRestore` **不校验**该字段。
+  - 新增**并发写保护**：读入后若文件 `size/mtime` 变化（会话仍活着、正在 append）就拒绝写回，
+    避免覆盖并发追加的事件。
+  - 主流程改为两类病因可并存：没有可修项才退出；有病因 A 时仍按原逻辑删事件 + 重编号 + 重映射。
+- `README.md`：该节改写为两类病因、五道门禁、`--cause` 用法与并发写保护。
+
+**验证**：
+
+- 单测 `node --test` 全绿。
+- 真实数据：全库 **798 份**会话日志扫描出 **17 个** `turn/end.reason === null` 的会话
+  （跨 3 个工作区；15 个紧跟在「退化输出看门狗」通知之后，2 个是 0.8.x Worker Session 时代
+  的旧代码）。17 份全部：dry-run 五道门禁通过 → `--apply` 写回（各自 `.bak-<时间戳>` 备份）→
+  复核「已无可修项」；再全库重扫 **0 个残留**。
+- 目标会话 `session-01916ad6`：1708 事件、`fromRestore` 通过（surface 576 节点）、
+  重打包回读一致。
+
 ## 5.6.3 — 2026-11-19
 
 ### 适配 DSH 0.2.2-rc.5：删除路由上的 master-only `auth` 键，准入由 handler 内 `connection.admit` 保证

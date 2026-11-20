@@ -3,6 +3,30 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 5.6.5 — 2026-11-20
+
+### 记录 5.6.4 的终局验证方法：用 asar 里的**官方投影定义**跑双向对照
+
+5.6.4 的门禁 4 是 `Session.fromRestore`，而它**不校验** `turn/end.reason`——挡病因 B 的是门禁 3。
+为了证明「修完之后用户真的能打开历史」，5.6.4 交付时又做了一次**投影层**验证，方法留档：
+
+1. 从 `app.asar` 抽出三个文件/包（`app.asar` 头部 12B 处读 header JSON 长度，文件内容在
+   `8 + headerSectionSize + offset`；本次 592 个 zod 文件 + `@deepseek-ai/dsh-brand` +
+   `@deepseek-ai/dsh-api-session-controller/src/continuation.ts`）。
+2. 把 `zod` 与 `dsh-brand` 放到 `node_modules/`，`continuation.ts` 直接 `import`——Node ≥22.18
+   默认剥离类型，`import type` 会被擦除，只需要 `brandNumber` 与 `z` 两个真实运行时依赖。
+3. 对整份日志逐事件 `def.apply(state, event)`，最后取 `def.wire.view(state)`。
+
+**结果（双向对照）**：
+
+- 修复后（含修复后新追加的事件，1732 条）：`ok: true`，`view: null`（可继续，无失败回合）。
+- 修复前的 `.bak-` 备份：**一字不差复现用户看到的错误**——
+  `TypeError: Cannot read properties of null (reading 'kind')` at `continuation.ts:46:42`。
+
+> ⚠️ 这条没有内置进脚本：它依赖 asar 内部路径（`src/continuation.ts`、`@deepseek-ai/dsh-brand`），
+> 跨 DSH 版本可能变。**门禁是否内置，判断标准是「路径变了会不会静默放过」**——会，所以先留手工步骤；
+> 将来若要内置，必须「抽不到就明确报错/要求 --allow-missing-projection」，不能静默跳过。
+
 ## 5.6.4 — 2026-11-20
 
 ### `repair-session-log.mjs` 新增病因 B：修 `turn/end.reason === null`（DSH 投影层崩溃）+ 并发写保护

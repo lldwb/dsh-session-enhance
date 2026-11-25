@@ -19,6 +19,7 @@ import * as copyEntry from '../index.js';
 import * as shareEntry from '../share/index.js';
 import * as retryEntry from '../retry/index.js';
 import * as offpeakEntry from '../offpeak/index.js';
+import * as sideaskEntry from '../sideask/index.js';
 
 /**
  * 造一个够用的 mock ctx。
@@ -65,17 +66,35 @@ test('四个入口都导出 name / inject / apply，且 name 与 Loader 行的 s
   assert.equal(shareEntry.name, 'dsh-session-enhance/share');
   assert.equal(retryEntry.name, 'dsh-session-enhance/retry');
   assert.equal(offpeakEntry.name, 'dsh-session-enhance/offpeak');
+  assert.equal(sideaskEntry.name, 'dsh-session-enhance/sideask');
 
-  for (const entry of [copyEntry, shareEntry, retryEntry, offpeakEntry]) {
+  for (const entry of [copyEntry, shareEntry, retryEntry, offpeakEntry, sideaskEntry]) {
     assert.equal(typeof entry.apply, 'function');
     assert.ok(Array.isArray(entry.inject), 'inject 必须是数组');
   }
 
-  // 前两个入口注册工具，都依赖 tools；中断重试与梁谷不注册工具，不声明这个硬依赖。
+  // 前两个入口注册工具，都依赖 tools；中断重试 / 梁谷 / 侧边提问不注册工具，不声明这个硬依赖。
   assert.deepEqual(copyEntry.inject, ['tools']);
   assert.deepEqual(shareEntry.inject, ['tools']);
   assert.deepEqual(retryEntry.inject, []);
   assert.deepEqual(offpeakEntry.inject, []);
+  assert.deepEqual(sideaskEntry.inject, []);
+});
+
+test('侧边提问行：不注册工具，按需注入创建/权限/工作区服务', () => {
+  const ctx = mockCtx();
+  sideaskEntry.apply(ctx);
+  assert.equal(ctx.collected.tools.length, 0);
+  assert.equal(ctx.collected.injections.length, 1);
+  assert.deepEqual(ctx.collected.injections[0].deps, [
+    'sessions',
+    'agents',
+    'commands',
+    'sessionController',
+    'permissionPresets',
+    'agentPresets',
+    'workspaceRegistry',
+  ]);
 });
 
 test('会话增强行注册 session_lookup / overview / grep / read 与 session_resume_subagents', () => {

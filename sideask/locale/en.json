@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Side ask",
+    "description": "Open a temporary read-only session in the right sidebar and answer questions by querying the referenced session through its id; selected text can be quoted, the tab archives when closed, and keeping it turns it into an ordinary session."
+  }
+}

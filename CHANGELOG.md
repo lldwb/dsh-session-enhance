@@ -3,6 +3,29 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 6.1.0 — 2026-11-25
+
+### 新组件「侧边提问」（`dsh-session-enhance/sideask`）
+
+从独立插件 `dsh-side-ask` 合并进来的第五个组件，并按需求重做了问答模型：
+
+- **不再 fork 原会话**：侧边会话用 `sessionController.create` 新开一个普通会话（沿用原会话的
+  工作区与 Agent 预设），把原会话 id 写进**询问提示词**，让模型用 `session_overview` /
+  `session_grep` / `session_read` / `session_lookup` 按 id 查询需要的内容。侧边会话不背原会话的
+  上下文预算，也不继承思考/工具轨迹。
+- **只读**：创建后立即切到 `read-only` 权限预设；**fail-closed**——只读切不上就归档刚建的会话
+  并报错。模型请求提权时走审批，默认拒绝。
+- **保留 = 普通会话**：点「保留」恢复原会话当时的权限预设（可写），关闭标签也不归档；
+  「改回临时」再切回只读。
+- **三个入口**：右侧栏引导页（guide）卡片、标题栏按钮、选中文字的合并弹层（「引用文本」+
+  「侧边提问」并排；接管官方 `quote` 表面，组件停用时自动撤销并恢复官方表面）。
+- Host 半提供 RPC `/dsh-session-enhance-sideask`（probe / create / setPreset / restore / forget），
+  浏览器半先渲染再探测，行停用即撤下全部界面。
+- 新增 `sideask/` 组件行、`lib/sideask/`（prompt / rpc / host）与测试：`test/sideask.test.mjs`
+  （提示词、RPC 信封、创建/只读 fail-closed/恢复）、`test/sideask-client.test.mjs`（注册形状、
+  探测撤下、记录表、引用格式化）；`test/entries.test.mjs` 增加第五个入口断言。
+- 独立插件 `dsh-side-ask` 已并入本包：本地目录与 profile 行移除，GitHub 仓库归档。
+
 ## 6.0.0 — 2026-11-25
 
 ### 破坏性修正：第四个组件更名「梁谷」，并按 DeepSeek 官方「空闲时段」口径重做时间判定

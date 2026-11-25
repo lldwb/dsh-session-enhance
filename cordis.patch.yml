@@ -10,10 +10,11 @@
 #
 # | 行 id                       | Loader name                   | 组件     | 内容 |
 # |-----------------------------|-------------------------------|----------|------|
-# | `dsh-session-enhance`       | `dsh-session-enhance`         | 会话增强 | 工具 `session_lookup`；**浏览器半（三块界面）都挂在这一行** |
+# | `dsh-session-enhance`       | `dsh-session-enhance`         | 会话增强 | 工具 `session_lookup`；**浏览器半（四块界面）都挂在这一行** |
 # | `dsh-session-enhance-share` | `dsh-session-enhance/share`   | 会话分享 | 工具 `session_share`、`GET /share/<token>`、RPC `/dsh-session-enhance` |
 # | `dsh-session-enhance-retry` | `dsh-session-enhance/retry`   | 中断重试 | `session/event` 判定 + RPC `/dsh-session-enhance-retry`（pending / retry / diag） |
 # | `dsh-session-enhance-offpeak` | `dsh-session-enhance/offpeak` | 梁谷 | Agent hold 控制器 + RPC `/dsh-session-enhance-offpeak`（status / setEnabled / diag） |
+# | `dsh-session-enhance-sideask` | `dsh-session-enhance/sideask` | 侧边提问 | 创建只读会话 + 询问提示词 + 权限恢复；RPC `/dsh-session-enhance-sideask`（probe / create / setPreset / restore / forget） |
 #
 # ## 为什么第一行必须是「精确包名」
 #
@@ -56,3 +57,5 @@
       name: 'dsh-session-enhance/retry'
     - id: dsh-session-enhance-offpeak
       name: 'dsh-session-enhance/offpeak'
+    - id: dsh-session-enhance-sideask
+      name: 'dsh-session-enhance/sideask'

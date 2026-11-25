@@ -1,6 +1,6 @@
 # 会话增强 · dsh-session-enhance
 
-**一个插件包，四个可单独启停的组件**：会话检视（按 ID 查会话与子代理 + 标题栏复制 ID）、会话分享、中断重试（用户主动停止的一轮可重试）、梁谷（右上角开关：高峰时段暂停会话、空闲时段自动恢复）；第一个组件还带**分级上下文压缩**（自动/手动，设置页可开关）。
+**一个插件包，五个可单独启停的组件**：会话检视（按 ID 查会话与子代理 + 标题栏复制 ID）、会话分享、中断重试（用户主动停止的一轮可重试）、侧边提问（右侧栏里的临时只读问答：新开会话，按会话 id 查询原会话来回答，关闭即归档、保留即转普通会话）、梁谷（右上角开关：高峰时段暂停会话、空闲时段自动恢复）；第一个组件还带**分级上下文压缩**（自动/手动，设置页可开关）。
 
 > 开源（MIT）。仓库地址：<https://github.com/lldwb/dsh-session-enhance>
 >
@@ -36,33 +36,97 @@
 
 ## 加载方式
 
-加载方式：常驻（理由：UI 类 + 诊断类——4 个界面组件常驻，5 个 `session_*` 诊断工具要求任意模式随时可用；约 6.5k 字符 schema 是"常驻里最贵但确实要随时可用"的一类）
+加载方式：常驻（理由：UI 类 + 诊断类——5 个界面组件常驻，5 个 `session_*` 诊断工具要求任意模式随时可用；约 6.5k 字符 schema 是"常驻里最贵但确实要随时可用"的一类）
 
 > 加载方式是 DSH 插件开发的**必答项**（工作区约定 §10.0）：按需的必须有 skill 入口与
 > `onDemand: false` 退路，常驻的必须写理由。这条标记行供人工审阅与将来做门禁。
 
-## 四个组件
+## 五个组件
 
 | 组件（界面显示名） | Loader 行 | 提供什么 |
 |---|---|---|
 | 会话增强 | `dsh-session-enhance` | 会话标题栏复制按钮 + 工具 `session_lookup`（按 id 查会话与全部子代理）+ 官方「上下文已用」面板里的**分级压缩**动作（4.5 起自动/手动）+ 工具 `session_resume_subagents`（恢复子智能体，5.1 起只有工具入口） |
 | 会话分享 | `dsh-session-enhance/share` | 标题栏分享按钮 + 工具 `session_share` + 免登录只读页 `/share/<token>` |
 | 中断重试 | `dsh-session-enhance/retry`（行 id `dsh-session-enhance-retry`） | 用户主动停止后 composer 右侧的「重试」按钮 + RPC `/dsh-session-enhance-retry`；只补官方「继续生成」不覆盖的中断场景（失败仍交给官方） |
+| 侧边提问 | `dsh-session-enhance/sideask`（行 id `dsh-session-enhance-sideask`） | 右侧栏标签（页面型 + guide 入口）、标题栏入口、选中文字的「引用文本 / 侧边提问」合并弹层 + RPC `/dsh-session-enhance-sideask`（probe / create / setPreset / restore / forget）；侧边会话是**新开的只读会话**，按会话 id 查询原会话来回答 |
 | 梁谷 | `dsh-session-enhance/offpeak`（行 id `dsh-session-enhance-offpeak`） | 标题栏右上角的「梁谷」开关 + Host 的 Agent hold 控制器 + RPC `/dsh-session-enhance-offpeak`（status / setEnabled / diag）；高峰时段暂停模型调用、输入留在队列，空闲时段自动恢复 |
 
-> **为什么第一个组件叫「会话增强」而不是「会话 ID / 会话检视」**：浏览器半（三块界面）只能挂在
+> **为什么第一个组件叫「会话增强」而不是「会话 ID / 会话检视」**：浏览器半（四块界面）只能挂在
 > **精确包名**那一行上——`@deepseek-ai/dsh-client-modules` 的 `locatePkgJson()` 只接受
 > 精确包名，子路径 specifier 直接返回 `undefined`，那一行就不会有 client 半。所以第一行
 > 必须是 `dsh-session-enhance`，它的组件标题只能等于包根 `locale/`（也就是卡片标题「会话增强」）。
-> 另三行是子路径，各自有 `share/locale/`、`retry/locale/`、`offpeak/locale/`，所以能叫
-> 「会话分享」「中断重试」「梁谷」。
+> 另四行是子路径，各自有 `share/locale/`、`retry/locale/`、`sideask/locale/`、`offpeak/locale/`，
+> 所以能叫「会话分享」「中断重试」「侧边提问」「梁谷」。
 
-四部分互相独立：只装 Host 半也能查会话，只装浏览器半也能复制 id / 分享 / 中断重试 / 切梁谷开关。
+五部分互相独立：只装 Host 半也能查会话，只装浏览器半也能复制 id / 分享 / 中断重试 / 侧边提问 / 切梁谷开关。
 
 > **别把「中断重试」和 5.0 移除的「失败重试」搞混**：5.0.0 删掉的是旧的失败重试组件
 > （`/dsh-turn-retry` 通道、`data-turn-retry` 选择器、失败后自动覆盖层），失败后请用官方
 > 「继续生成」；5.2.0 重新插入的 `dsh-session-enhance/retry` 行是**新组件「中断重试」**，
 > 只处理用户主动停止的那一轮。两者场景互斥（见下方「中断重试（5.2 起）」）。
+
+## 侧边提问（6.1.0 起）
+
+在右侧栏里问一个「顺带的问题」，不打断主会话，也不把主会话的上下文搬进新会话。
+
+**三个入口**：
+
+1. 右侧栏标签条「+」→ 引导页里的「侧边提问」卡片；
+2. 会话标题栏右侧的「侧边提问」按钮；
+3. 在会话里**选中一段文字** → 弹层里并排两个按钮：「引用文本」（等同官方引用，插进主会话
+   输入框）与「侧边提问」（把选中文字作为引用，到侧边会话里问）。
+
+**侧边会话不是分支，是「按会话 id 查询」**：它由 `sessionController.create` **新开**一个
+普通会话（沿用原会话的工作区与 Agent 预设），并把一段**询问提示词**预填进输入框：
+
+```text
+你是一个「侧边提问」临时助手，只读。
+
+参考会话：<原会话 id>（原会话标题）
+需要了解上文时，用这些工具按会话 id 查询它：session_overview / session_grep / session_read / session_lookup。
+不要假设自己已经读过这个会话。
+约束：只读——不要写文件，也不要执行会改动文件的命令；回答直接、简短。
+
+[如果带引用]
+用户选中的原文（来自该会话）：
+> …
+
+我的问题：
+```
+
+因此：侧边会话**不背**原会话的上下文预算，也不继承它的思考/工具轨迹；需要哪些上文由模型
+按问题自己检索。提示词是可见、可编辑的（预填不自动发送），用户在其后补上问题即可。
+
+**只读**：Host 侧创建会话后立刻 `permissionPresets.setPreset({ sessionId, preset: 'read-only' })`。
+**fail-closed**：只读切不上就把刚建的会话归档并报错，绝不留下一个可写的「临时」会话。只读模式下
+写文件 / 跑改文件的命令会被宿主沙箱拒绝；模型请求提权时会走审批，默认拒绝。
+
+**关闭即归档，保留即普通会话**：
+
+| 时机 | 侧边会话状态 |
+|---|---|
+| 标签打开期间 | 临时、只读；关闭标签默认归档（从会话列表消失） |
+| 点「保留」 | 切回原会话当时的权限预设（可写），成为普通会话，关闭标签也不归档 |
+| 点「改回临时」 | 再切回只读 |
+| 重启宿主 | 标签恢复时自动取消归档；没有标签页的遗留临时会话在启动清扫里归档 |
+
+**为什么接管官方「引用」弹层**：官方 `ctx.uiConversation.interactions` 是独占式的（第一个
+`open()` 的插件独占该手势的表面），官方 `message-quotes` 在 selection 上永远 `open()`。
+要让「引用文本」和「侧边提问」并排出现在**同一个**弹层里，只能接管它渲染的表面：
+`conversation.chat.text-interaction` 是 keyed 槽，同 key `quote` 用更低的 `priority`（-1）
+注册即可 shadow 官方实现（最低 priority 渲染）；「引用文本」按钮完整复刻官方行为
+（`inputActions.insertQuote`）。另用本组件自己的 key 注册同一组件兜底（官方缺席 / 右键手势）。
+组件行被停用时浏览器半会把这些注册全部撤销，官方表面自动恢复。
+
+**为什么标签正文要声明一个私有 session 子槽**：渲染**子会话**的原生会话需要框架注入的
+`SessionProvider`，而它只在「本注册声明了非 root 作用域子槽」时提供；随附 `ui-subagent`
+已全局声明了 `sidebar.chat.conversation`，第三方再声明会抛 `slot ... is already declared`。
+所以声明一个自己命名、只声明不渲染的 session 子槽来触发注入，再用它包住
+`renderFactorySlot('conversation.content', { variant: 'embedded', … })`。
+
+**RPC 通道**（`lib/sideask/rpc.mjs`，前缀 `/dsh-session-enhance-sideask`）：
+`probe`（可用性探测）、`create`（新开只读会话 + 生成提示词）、`setPreset`（只读 / 恢复）、
+`restore`（保留时恢复原预设）、`forget`（标签关闭后清理 Host 登记）。
 
 ## 4.0 改名
 
@@ -766,6 +830,7 @@ token 本身（24 字节 / 192 bit 随机、不可枚举、可撤销），不靠
 
 | 层 | 内容 | 结果 |
 |---|---|---|
+| 6.1.0 侧边提问组件 / DSH 0.2.2-rc.5 | 单测 **286/286**（新增 `test/sideask.test.mjs`：提示词（参考会话 id / 工具清单 / 只读约束 / 引用块 / 中英文案）、RPC 信封与参数校验、控制器「沿用工作区与 Agent 预设建新会话 + 立即切只读 + fail-closed（只读切不上归档新会话）」、保留时恢复**权限预设**（不是 Agent 预设）与 catalog 兜底、forget；`test/sideask-client.test.mjs`：bundle 形状、页面型标签 + guide 卡片、标签正文私有 session 子槽、标题栏入口、合并弹层（`quote` key priority -1 shadow + 兜底 key）、405 时撤销全部注册、记录表与引用格式化；`test/entries.test.mjs` 增加第五个入口）；`node --check` 全部改动文件；`check-plugin-locale.mjs` / `check-tool-names.mjs` ✓；devkit web/UI 沙箱（真实 Chrome + 真实 deepseek-flash）：标题栏「侧边提问」按钮 → 新建**只读**会话（权限控件「仅可查看」），输入框预填提示词（含参考会话 id 与 `session_overview / session_grep / session_read / session_lookup`，以「我的问题：」收尾）；在侧边会话提问「幸运数字是多少」→ 模型实调 `session_grep` / `session_overview`（参数为参考会话 id）并答出父会话里的「7391」；点「保留」→ 权限变「工作区内修改」、标签「已保留 · 普通会话」；点「改回临时」→ 回到「仅可查看」；选中文字 → 弹层并排「引用文本」「侧边提问」（同一行 x=403/480）；旧版崩溃点（`React is not defined`）已修（client 半补 `require('react')`）；控制台 0 错误 | 通过 |
 | 6.0.0 梁谷 / 官方空闲时段 / DSH 0.2.2-rc.5 | 单测 **268/268**（`offpeak-window` 15 例：工作日 09:00–12:00/14:00–18:00 峰时与边界、午休/夜间空闲、周末全天空闲、2026 法定节假日工作日空闲（01-01 周四、02-23 周一）、节后恢复、周五 18:00 后下一 pause=下周一 09:00、连续节假日跳过、跨时区 DST、非法配置回退；controller/rpc/entries/client 同步新契约）；**独立离线复核 64/64 PASS**（固定时间戳 `isPeakAt` 表、`DEFAULT_HOLIDAYS` 与国务院 2026 通知逐段核对 33 天、`nextBoundary` 跨周末/当日边界）；`node --check`；headless 沙箱 compose **4 行**、任务 exit 0/stderr 空；**真实 UI 沙箱（lead，真实 Chrome + 真实 deepseek-flash）**：`peakWindows 09:00-18:22` 下 18:19 开启 → `paused`「梁谷 暂停 2m51s」+ title「将在 18:22 自动恢复」「队列中 1 条消息」；18:19:04 发消息后日志 **2m56s 只有一条 inbox splice、零 turn/start、零 assistant/message**，18:22:00.012（边界后 12ms）才 `turn/start`、18:22:05 回复 `LIANGGU-QUEUED-OK`，chip 变 `idle`「梁谷 空闲」、下一次 pause 显示次日 09:00；独立 verifier 验插件页「共 4 个 · 4 运行中」第 4 行中文「梁谷」；`check-plugin-locale.mjs` / `check-tool-names.mjs` ✓ | 通过 |
 | 5.7.0「谷峰会话」（后被 6.0.0 修正，仅历史） | 单测 **262/262**（新增 `offpeak-window/-store/-controller/-rpc` 与 `offpeak-client` 用例：窗口边界/跨午夜/非法配置、原子写/容量/损坏容忍、创建窗口 arm、首个 prompt 在 arm 前被 cancel、running→cancel keepInbox、队列消息不被误 cancel、释放续跑、子代理覆盖正/负、禁用/dispose、RPC 入参校验、浏览器半注册/词典/状态机/轮询清理）；`node --check` 全部改动文件；devkit headless 沙箱 compose 输出 **4 行**（含 `dsh-session-enhance-offpeak`）、任务 exit 0/stderr 空；**lead 真实 UI 沙箱（真实 Chrome + 真实 `deepseek-flash`）**：15:41 点开关进 `paused`+倒计时并发消息 → 15:41:45.47 inbox splice 之后到 15:53:00.02 之间日志 **0 条 `turn/start` / 0 条 `assistant/message`**，15:53:00.02（窗口起点后 20ms）自动 `turn/start`、15:53:06 回复 `VALLEY-QUEUED-OK`、chip 变 `active`、队列清空；暂停中刷新后 chip 仍 paused、队列条仍在；关开关后发消息立即开始并在 25 秒内完成；**独立 verifier（另一沙箱/会话）**：A–F 全绿，另验「回合运行中切暂停」= `turn/end aborted/hook/offpeak-pause`（该轮无 assistant）→ 边界后 2ms 自动 `turn/start` → 17 秒完成并显示「已请求继续生成」，以及插件页「包含的组件 **共 4 个 · 4 运行中**」第 4 行为中文「谷峰会话」、停用该行后 chip 隐藏且 `POST /dsh-session-enhance-offpeak/status` = **405**、重新启用后 chip 恢复；`offpeak.json` 落盘内容核对；`check-plugin-locale.mjs` / `check-tool-names.mjs` 均 ✓。**注意：该版本的窗口语义（00:30–08:30）是错的，6.0.0 已按官方口径重做并更名「梁谷」** | 通过（机制）；口径已作废 |
 | 5.4.0 会话 id 三种写法 / DSH 0.2.2-rc.2 运行时 | 单测 **162/162**（新增 11 例：`sessionUuidOf` 三种写法 + 大小写 + 无 UUID、裸 UUID 归一化、导出文件名（整条路径）、id 粘正文、子代理裸 UUID、精确命中不多列语料库、无 UUID 不回查、同 UUID 不唯一、回查失败带原因、取消原样抛出、分享记录落在真实 id）；`node --check` 改动文件；devkit headless 沙箱（真实 Loader + 真实 `sessionQuery.listSessions()` + 从本机拷入的真实会话日志 `session-31874d86…` / `session-559eb381…`）：裸 UUID → 归一化 + 摘要提示、完整 id → 无提示且其余一致、`C:\…\dsh-session-session-<uuid>.zip` → 归一化、裸 UUID + `includeMessages=true` → 真读到 seq 1327/1329/1341、事故会话裸 UUID → 成功、全零 UUID → 「找不到会话」+ 三种写法提示，全部输出通过运行时 schema 校验（无 `tool returned invalid output`） | 通过 |

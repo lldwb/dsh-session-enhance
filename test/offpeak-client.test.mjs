@@ -114,6 +114,15 @@ const requiredSpecifiers = [];
  */
 function fakeRequire(specifier) {
   requiredSpecifiers.push(specifier);
+  if (specifier === 'react') {
+    return {
+      createElement: jsx,
+      useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
+      useEffect: () => {},
+      useMemo: (factory) => factory(),
+      useRef: (value) => ({ current: value })
+    };
+  }
   if (specifier === 'react/jsx-runtime') return { jsx, jsxs };
   if (specifier === '@deepseek-ai/dsh-client-ui-primitives') return primitives;
   throw new Error(`client-modules: require("${specifier}") missed the module table`);
@@ -398,6 +407,7 @@ test('bundle 用 window.__ModuleLoader__.load 注册，工厂只 require 平台�
   const module = loadModule();
   assert.deepEqual([...new Set(requiredSpecifiers)].sort(), [
     '@deepseek-ai/dsh-client-ui-primitives',
+    'react',
     'react/jsx-runtime'
   ]);
   assert.equal(typeof module.apply, 'function');

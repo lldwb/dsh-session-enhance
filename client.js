@@ -97,6 +97,9 @@ window.__ModuleLoader__.load({
     // `client-modules: require("…") missed the module table`，而且只在浏览器里报，
     // 离线单测与 `node --check` 都发现不了。
     const { jsx, jsxs } = require('react/jsx-runtime');
+    // 侧边提问组件的标签正文用 React hooks（useState / useEffect）；`react` 也在 shell 的
+    // 平台模块表里，与 jsx runtime 同源，不会引入第二份 React。
+    const React = require('react');
     const P = require('@deepseek-ai/dsh-client-ui-primitives');
 
     // #region 词典
@@ -207,7 +210,26 @@ window.__ModuleLoader__.load({
       'settings.unavailable': 'This plugin is not loaded, so it cannot be configured.',
       'settings.save': 'Save',
       'settings.saving': 'Saving…',
-      'settings.saveFailed': 'This deployment rejected the values; they are kept for editing.'
+      'settings.saveFailed': 'This deployment rejected the values; they are kept for editing.',
+
+      // 侧边提问（组件 dsh-session-enhance/sideask）
+      'sideAsk.tab.title': 'Side ask',
+      'sideAsk.tab.temporary': 'Temporary · read-only · archived when this tab closes',
+      'sideAsk.tab.kept': 'Kept · ordinary session · stays in the session list after closing',
+      'sideAsk.tab.keep': 'Keep',
+      'sideAsk.tab.unkeep': 'Make temporary',
+      'sideAsk.tab.keepHint': 'Keep as an ordinary session: restores the referenced session permissions (file writes allowed) and stays in the session list after closing.',
+      'sideAsk.tab.creating': 'Creating the side session…',
+      'sideAsk.tab.unavailable': 'This deployment has no sidebar conversation slot (sidebar.chat.conversation is unavailable).',
+      'sideAsk.guide.title': 'Side ask',
+      'sideAsk.guide.description': 'Create a temporary read-only session that answers by querying the referenced session through its id; the tab archives when closed.',
+      'sideAsk.header.open': 'Side ask',
+      'sideAsk.header.hint': 'Open a temporary read-only side session that can query this conversation by its id.',
+      'sideAsk.selection.quote': 'Quote text',
+      'sideAsk.selection.ask': 'Side ask',
+      'sideAsk.selection.askHint': 'Ask in a read-only side session that can query this conversation by its id.',
+      'sideAsk.prompt.question': 'My question:',
+      'sideAsk.error.unavailable': 'Side ask is unavailable in this deployment.'
     };
 
     /** 简体中文文案。 */
@@ -314,7 +336,26 @@ window.__ModuleLoader__.load({
       'settings.unavailable': '该插件当前未加载，暂时无法配置。',
       'settings.save': '保存',
       'settings.saving': '保存中…',
-      'settings.saveFailed': '本部署没有接受这些值，已保留供你修改。'
+      'settings.saveFailed': '本部署没有接受这些值，已保留供你修改。',
+
+      // 侧边提问（组件 dsh-session-enhance/sideask）
+      'sideAsk.tab.title': '侧边提问',
+      'sideAsk.tab.temporary': '临时 · 只读 · 关闭标签后归档',
+      'sideAsk.tab.kept': '已保留 · 普通会话 · 关闭标签后仍在会话列表',
+      'sideAsk.tab.keep': '保留',
+      'sideAsk.tab.unkeep': '改回临时',
+      'sideAsk.tab.keepHint': '保留为普通会话：恢复参考会话的权限（可写文件），关闭标签后仍留在会话列表。',
+      'sideAsk.tab.creating': '正在创建侧边会话…',
+      'sideAsk.tab.unavailable': '当前部署没有可用的侧栏会话组件（sidebar.chat.conversation 席位不可用）。',
+      'sideAsk.guide.title': '侧边提问',
+      'sideAsk.guide.description': '开一个临时只读会话，通过会话 id 查询参考会话来回答提问；关闭标签后默认归档。',
+      'sideAsk.header.open': '侧边提问',
+      'sideAsk.header.hint': '在右侧栏开一个临时只读会话，可按会话 id 查询当前会话。',
+      'sideAsk.selection.quote': '引用文本',
+      'sideAsk.selection.ask': '侧边提问',
+      'sideAsk.selection.askHint': '在只读侧边会话里提问，可让模型按会话 id 查询当前会话。',
+      'sideAsk.prompt.question': '我的问题：',
+      'sideAsk.error.unavailable': '当前部署不支持侧边提问。'
     };
     // #endregion
 
@@ -2756,6 +2797,769 @@ window.__ModuleLoader__.load({
     }
     // #endregion
 
+    // #region 侧边提问（组件 dsh-session-enhance/sideask）
+    //
+    // 侧边会话**不是**原会话的分支：Host 半创建一个新的只读会话，并把「询问提示词」
+    // 预填进它的输入框——提示词里写明参考会话 id，让模型用会话查询工具按 id 去查。
+    // 浏览器半只负责界面：右侧栏标签（页面型 + guide 入口）、标题栏入口、选中文字的
+    // 合并弹层（「引用文本」+「侧边提问」并排），以及「保留 / 归档」的状态管理。
+
+    /** 侧边提问的标签类型（页面型）。 */
+    const SIDEASK_KIND = 'sideask';
+    /** 本实现的标签类型 id：内容与 guide 卡片都注册在它下面。 */
+    const SIDEASK_TAB_ID = 'dsh-session-enhance/side-ask';
+    /** guide 卡片 id。 */
+    const SIDEASK_GUIDE_ID = 'side-ask';
+    /** Host 半的 RPC 通道（`lib/sideask/rpc.mjs`）。 */
+    const SIDEASK_RPC_CHANNEL = '/dsh-session-enhance-sideask';
+    /** 浏览器存储键：侧边会话的「保留 / 已归档」状态与「原会话 → 子会话」绑定。 */
+    const SIDEASK_STORAGE_KEY = 'dsh-session-enhance.side-ask.v1';
+    /**
+     * 私有占位子槽：只声明、不渲染。
+     *
+     * 框架只在「注册声明了非 root 作用域子槽」时给组件注入 `SessionProvider`
+     * （`ui-renderer` 的 `standardProps` 分支），而随附 `ui-subagent` 已经全局声明了
+     * `sidebar.chat.conversation`，第三方再声明会抛 `slot ... is already declared`。
+     * 所以这里声明一个自己命名的 session 子槽来触发 Provider 注入。
+     */
+    const SIDEASK_SESSION_SEAT = 'dsh-session-enhance.side-ask.session';
+    /** 启动清扫延迟（等布局恢复与标签挂载先跑完）。 */
+    const SIDEASK_SWEEP_MS = 5000;
+    /** 临时侧边会话的只读权限预设（DSH base bundle 内置）。 */
+    const SIDEASK_READ_ONLY_PRESET = 'read-only';
+
+    /**
+     * 规范化侧边会话记录表；坏记录直接丢弃。
+     *
+     * @param {unknown} raw - 解析后的 JSON。
+     * @returns {{ version: 1, records: Record<string, object> }} 安全状态。
+     */
+    function normalizeSideAskStore(raw) {
+      const empty = { version: 1, records: {} };
+      if (raw === null || typeof raw !== 'object') return empty;
+      const source = raw.records;
+      if (source === null || typeof source !== 'object') return empty;
+      const records = {};
+      for (const [key, value] of Object.entries(source)) {
+        if (value === null || typeof value !== 'object') continue;
+        const childSessionId = typeof value.childSessionId === 'string' ? value.childSessionId : key;
+        const parentSessionId = typeof value.parentSessionId === 'string' ? value.parentSessionId : '';
+        if (childSessionId === '' || parentSessionId === '') continue;
+        records[childSessionId] = {
+          childSessionId,
+          parentSessionId,
+          kept: value.kept === true,
+          archived: value.archived === true,
+          createdAt: typeof value.createdAt === 'number' ? value.createdAt : 0
+        };
+      }
+      return { version: 1, records };
+    }
+
+    /**
+     * 建侧边会话的浏览器存储。
+     *
+     * @param {{ getItem(key: string): string | null, setItem(key: string, value: string): void } | undefined} storage - localStorage。
+     * @returns {object} 存储操作。
+     */
+    function createSideAskStore(storage) {
+      /** @returns {{ version: 1, records: Record<string, object> }} */
+      function read() {
+        if (storage === undefined || storage === null) return normalizeSideAskStore(undefined);
+        try {
+          const raw = storage.getItem(SIDEASK_STORAGE_KEY);
+          if (raw === null || raw === '') return normalizeSideAskStore(undefined);
+          return normalizeSideAskStore(JSON.parse(raw));
+        } catch {
+          return normalizeSideAskStore(undefined);
+        }
+      }
+      /** @param {{ version: 1, records: Record<string, object> }} state */
+      function write(state) {
+        if (storage === undefined || storage === null) return;
+        try {
+          storage.setItem(SIDEASK_STORAGE_KEY, JSON.stringify(state));
+        } catch { /* 忽略：状态非关键 */ }
+      }
+      return {
+        list() { return Object.values(read().records); },
+        get(childSessionId) { return read().records[String(childSessionId)]; },
+        /**
+         * 原会话当前绑定的、未归档的侧边会话（有多个时取最新）。
+         *
+         * @param {string} parentSessionId - 原会话 id。
+         * @returns {object | undefined} 记录。
+         */
+        childOf(parentSessionId) {
+          const rows = Object.values(read().records)
+            .filter(record => record.parentSessionId === String(parentSessionId) && record.archived !== true)
+            .sort((a, b) => b.createdAt - a.createdAt);
+          return rows[0];
+        },
+        upsert(childSessionId, parentSessionId) {
+          const state = read();
+          const existing = state.records[childSessionId];
+          state.records[childSessionId] = {
+            childSessionId,
+            parentSessionId,
+            kept: existing === undefined ? false : existing.kept,
+            archived: false,
+            createdAt: existing === undefined ? Date.now() : existing.createdAt
+          };
+          write(state);
+          return state.records[childSessionId];
+        },
+        setKept(childSessionId, kept) {
+          const state = read();
+          const record = state.records[childSessionId];
+          if (record === undefined) return;
+          record.kept = kept === true;
+          write(state);
+        },
+        markArchived(childSessionId) {
+          const state = read();
+          const record = state.records[childSessionId];
+          if (record === undefined) return;
+          record.archived = true;
+          write(state);
+        },
+        markActive(childSessionId) {
+          const state = read();
+          const record = state.records[childSessionId];
+          if (record === undefined) return;
+          record.archived = false;
+          write(state);
+        },
+        isChild(sessionId) { return read().records[String(sessionId)] !== undefined; }
+      };
+    }
+
+    /**
+     * 把选中文字转成 Markdown 引用块（用于「复用已打开的侧边会话」时追加引用）。
+     *
+     * @param {unknown} text - 选中文字。
+     * @returns {string} 引用块；空白输入返回空串。
+     */
+    function formatSideAskQuoteText(text) {
+      const normalized = String(text ?? '').replace(/\r\n?/gu, '\n').trim();
+      if (normalized === '') return '';
+      return normalized
+        .split('\n')
+        .map(line => (line === '' ? '>' : '> ' + line))
+        .join('\n');
+    }
+
+    /**
+     * 侧边提问的小图标：对话框 + 右侧栏。
+     *
+     * @returns {object} React 元素。
+     */
+    function sideAskIcon() {
+      return jsxs('svg', {
+        viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': true,
+        style: { display: 'block', flex: '0 0 auto' },
+        children: [
+          jsx('path', {
+            d: 'M2.5 3.2h7.2a1 1 0 0 1 1 1v5.1a1 1 0 0 1-1 1H6.1L3.6 12v-1.7h-.1a1 1 0 0 1-1-1V4.2a1 1 0 0 1 1-1Z',
+            fill: 'none', stroke: 'currentColor', strokeWidth: 1.2, strokeLinejoin: 'round'
+          }),
+          jsx('path', {
+            d: 'M12.4 5.4h1.1a1 1 0 0 1 1 1v6.1a1 1 0 0 1-1 1h-2.2l-1.6 1.2v-1.2h-.2',
+            fill: 'none', stroke: 'currentColor', strokeWidth: 1.2, strokeLinejoin: 'round', opacity: 0.55
+          })
+        ]
+      });
+    }
+
+    /** 合并操作条：分组容器。 */
+    const SIDEASK_ACTION_GROUP_STYLE = {
+      display: 'inline-flex',
+      alignItems: 'center',
+      background: 'var(--dsw-alias-bg-overlay, #ffffff)',
+      border: '1px solid var(--dsw-alias-border-l1, rgba(127, 127, 127, 0.18))',
+      borderRadius: 8,
+      boxShadow: '0 6px 20px rgba(0, 0, 0, 0.16)',
+      overflow: 'hidden'
+    };
+
+    /** 合并操作条：单个按钮。 */
+    const SIDEASK_ACTION_BUTTON_STYLE = {
+      display: 'inline-flex',
+      alignItems: 'center',
+      gap: 6,
+      height: 30,
+      padding: '0 12px',
+      border: 'none',
+      background: 'transparent',
+      color: 'var(--dsw-alias-label-primary, currentColor)',
+      font: 'inherit',
+      fontSize: 13,
+      lineHeight: '30px',
+      cursor: 'pointer',
+      whiteSpace: 'nowrap'
+    };
+
+    /** 合并操作条：按钮之间的分隔线。 */
+    const SIDEASK_ACTION_SEPARATOR_STYLE = {
+      width: 1,
+      height: 16,
+      flex: '0 0 auto',
+      background: 'var(--dsw-alias-border-l1, rgba(127, 127, 127, 0.18))'
+    };
+
+    /**
+     * 侧边提问标签页正文：一行状态栏 + 原生会话。
+     *
+     * @param {object} props - 槽位运行时 props 与本组件注入面。
+     * @returns {object} React 元素。
+     */
+    function SideAskTab(props) {
+      const { sessionId, SessionProvider, renderFactorySlot, t, sideAsk } = props;
+      const initialChild = sideAsk.childOf(sessionId);
+      const [childSessionId, setChildSessionId] = React.useState(initialChild);
+      const [reference, setReference] = React.useState(null);
+      const [kept, setKept] = React.useState(() => (
+        initialChild === undefined ? false : sideAsk.isKept(initialChild)
+      ));
+      // 从 guide 入口打开时标签里还没有子会话：挂载时为本会话创建一个（有绑定则复用）。
+      // 创建动作会由 Host 生成询问提示词并预填进它的输入框。
+      React.useEffect(() => {
+        let cancelled = false;
+        const existing = sideAsk.childOf(sessionId);
+        if (existing !== undefined) {
+          setChildSessionId(existing);
+          setKept(sideAsk.isKept(existing));
+          return () => { cancelled = true; };
+        }
+        Promise.resolve(sideAsk.ensureChild(sessionId)).then((childId) => {
+          if (cancelled || typeof childId !== 'string') return;
+          setChildSessionId(childId);
+          setKept(sideAsk.isKept(childId));
+        }).catch((error) => {
+          console.warn('dsh-session-enhance: could not create the side session', error);
+        });
+        return () => { cancelled = true; };
+      }, [sessionId]);
+      // 为子会话持有一个引用（Provider 与输入框都靠它）；卸载时释放。
+      React.useEffect(() => {
+        if (childSessionId === undefined) { setReference(null); return; }
+        let next = null;
+        try { next = sideAsk.retain(childSessionId); } catch (error) {
+          console.warn('dsh-session-enhance: could not retain the side session', error);
+        }
+        setReference(next);
+        sideAsk.onTabOpen(childSessionId);
+        return () => { if (next !== null) sideAsk.release(next); };
+      }, [childSessionId]);
+      const toggle = () => {
+        if (childSessionId === undefined) return;
+        const next = !kept;
+        sideAsk.setKept(childSessionId, next);
+        setKept(next);
+      };
+      // 原生会话内容：`conversation.content` 工厂（与主会话同一套渲染）。不传 `slots`
+      // 时默认 views 就是 `renderSlot('conversation.session')`。
+      const content = renderFactorySlot('conversation.content', {
+        variant: 'embedded',
+        phase: 'active',
+        hero: false,
+        onWorkspaceSelected: (workspaceId, adopt) => sideAsk.openWorkspace(workspaceId, adopt)
+      });
+      let body;
+      if (reference === null) {
+        body = jsx('div', {
+          style: { padding: '14px 16px', color: 'var(--dsw-alias-label-secondary, #7a7f87)', fontSize: 13 },
+          children: t('sideAsk.tab.creating')
+        });
+      } else if (typeof SessionProvider !== 'function') {
+        body = jsx('div', {
+          style: { padding: '14px 16px', color: 'var(--dsw-alias-label-secondary, #7a7f87)', fontSize: 13 },
+          children: t('sideAsk.tab.unavailable')
+        });
+      } else {
+        body = jsx(SessionProvider, { session: reference, children: content });
+      }
+      return jsxs('div', {
+        style: {
+          display: 'flex', flexDirection: 'column', width: '100%', height: '100%',
+          minWidth: 0, minHeight: 0
+        },
+        children: [
+          jsxs('div', {
+            style: {
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
+              padding: '5px 10px', flex: '0 0 auto', fontSize: 12,
+              color: 'var(--dsw-alias-label-secondary, #7a7f87)',
+              borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(127, 127, 127, 0.18))',
+              background: 'var(--dsw-specific-sidebar-fill, rgba(127, 127, 127, 0.06))'
+            },
+            children: [
+              jsx('span', {
+                style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                title: kept ? t('sideAsk.tab.kept') : t('sideAsk.tab.temporary'),
+                children: kept ? t('sideAsk.tab.kept') : t('sideAsk.tab.temporary')
+              }),
+              childSessionId === undefined
+                ? null
+                : jsx(P.Button, {
+                  size: 'sm',
+                  onClick: toggle,
+                  title: t('sideAsk.tab.keepHint'),
+                  'aria-pressed': kept,
+                  children: kept ? t('sideAsk.tab.unkeep') : t('sideAsk.tab.keep')
+                })
+            ]
+          }),
+          jsx('div', {
+            style: {
+              display: 'flex', flexDirection: 'column', flex: '1 1 auto',
+              minHeight: 0, minWidth: 0
+            },
+            children: body
+          })
+        ]
+      });
+    }
+
+    /**
+     * 侧边提问的标题栏入口。
+     *
+     * @param {object} props - `onOpen` / `hidden` / `t`。
+     * @returns {object | null} React 元素或 null。
+     */
+    function SideAskHeaderButton(props) {
+      const { onOpen, hidden, t } = props;
+      if (hidden === true) return null;
+      return jsx(P.Button, {
+        size: 'sm',
+        title: t('sideAsk.header.hint'),
+        'aria-label': t('sideAsk.header.open'),
+        onClick: onOpen,
+        children: jsxs('span', {
+          style: { display: 'inline-flex', alignItems: 'center', gap: 5 },
+          children: [sideAskIcon(), jsx('span', { children: t('sideAsk.header.open') })]
+        })
+      });
+    }
+
+    /**
+     * 选中文字的合并操作条：「引用文本」与「侧边提问」并排。
+     *
+     * 通过 shadow 官方 `quote` 表面（更低 priority）接管官方「引用」弹层，因此「引用文本」
+     * 必须完整复刻官方行为：`inputActions.insertQuote(text)` + 清选区 + 关弹层。
+     * 侧边会话里只显示「引用文本」（不再递归开侧边会话）。
+     *
+     * @param {object} props - 槽位运行时 props 与本组件注入面。
+     * @returns {object | null} React 元素或 null。
+     */
+    function SideAskTextActions(props) {
+      const {
+        readText, clearSelection, dismiss, inputActions, useSession, sessionId, onAsk, isChild, t
+      } = props;
+      const enabled = useSession(state => state !== undefined && !state.removed
+        && (state.subagent === null || state.subagent.address.mode === 'continuable'));
+      React.useEffect(() => {
+        if (!enabled) dismiss();
+      }, [enabled, dismiss]);
+      if (!enabled) return null;
+      const canQuote = inputActions !== undefined && typeof inputActions.insertQuote === 'function';
+      const canAsk = isChild(sessionId) !== true;
+      const runQuote = () => {
+        const text = readText();
+        if (text === null) { dismiss(); return; }
+        if (!inputActions.insertQuote(text)) return;
+        clearSelection();
+        dismiss();
+      };
+      const runAsk = () => {
+        const text = readText();
+        if (text === null) { dismiss(); return; }
+        clearSelection();
+        dismiss();
+        onAsk(sessionId, text);
+      };
+      const children = [];
+      if (canQuote) {
+        children.push(jsx('button', {
+          key: 'quote',
+          type: 'button',
+          style: SIDEASK_ACTION_BUTTON_STYLE,
+          onPointerDown: (event) => { event.preventDefault(); },
+          onClick: runQuote,
+          children: t('sideAsk.selection.quote')
+        }));
+      }
+      if (canQuote && canAsk) children.push(jsx('span', { key: 'sep', style: SIDEASK_ACTION_SEPARATOR_STYLE }));
+      if (canAsk) {
+        children.push(jsx('button', {
+          key: 'ask',
+          type: 'button',
+          style: SIDEASK_ACTION_BUTTON_STYLE,
+          title: t('sideAsk.selection.askHint'),
+          onPointerDown: (event) => { event.preventDefault(); },
+          onClick: runAsk,
+          children: [sideAskIcon(), jsx('span', { key: 'label', children: t('sideAsk.selection.ask') })]
+        }));
+      }
+      return jsx('span', { style: SIDEASK_ACTION_GROUP_STYLE, children });
+    }
+
+    /**
+     * 安装「侧边提问」组件的浏览器半。
+     *
+     * 先注册界面、再探测 Host 组件行：探测到该行被停用（405）时把界面全部撤掉，
+     * 官方「引用」表面随之恢复原样。
+     *
+     * @param {any} ctx - 浏览器插件上下文。
+     * @param {(key: string) => string} t - 本包词典的翻译函数。
+     * @returns {void}
+     */
+    function installSideAsk(ctx, t) {
+      let storage;
+      try { storage = window.localStorage; } catch { storage = undefined; }
+      const store = createSideAskStore(storage);
+      /** childSessionId → SessionReference：预填提示词用的持有，标签关闭时释放。 */
+      const holds = new Map();
+      /** parentSessionId → 创建中的 Promise，避免重复建会话。 */
+      const creating = new Map();
+      const localeId = (() => {
+        try {
+          const snapshot = ctx.locale.getSnapshot();
+          if (typeof snapshot?.active === 'string') return snapshot.active;
+          if (typeof snapshot?.id === 'string') return snapshot.id;
+          return 'zh';
+        } catch { return 'zh'; }
+      })();
+
+      /** 释放一个预填持有。 */
+      function releaseHold(childSessionId) {
+        const reference = holds.get(childSessionId);
+        if (reference === undefined) return;
+        holds.delete(childSessionId);
+        try { reference.release(); } catch { /* 忽略 */ }
+      }
+
+      /** 持有一个侧边会话引用（已有则复用）。 */
+      function holdChild(childSessionId) {
+        const existing = holds.get(childSessionId);
+        if (existing !== undefined) return existing;
+        try {
+          const reference = ctx.sessions.retain(childSessionId, {
+            source: 'sideAsk',
+            facets: { conversation: true }
+          });
+          holds.set(childSessionId, reference);
+          return reference;
+        } catch (error) {
+          console.warn('dsh-session-enhance: could not retain the side session', error);
+          return null;
+        }
+      }
+
+      /** 调 Host 半的侧边提问 RPC。 */
+      async function callSideAskRpc(method, payload) {
+        const connection = ctx.connection;
+        const rpc = connection === undefined || connection === null ? undefined : connection.rpc;
+        if (rpc === undefined || rpc === null || typeof rpc.call !== 'function') {
+          throw new Error(t('sideAsk.error.unavailable'));
+        }
+        const result = await rpc.call(SIDEASK_RPC_CHANNEL, method, payload);
+        if (result !== null && typeof result === 'object' && result.ok === true) return result.value;
+        const error = result !== null && typeof result === 'object' ? result.error : undefined;
+        const message = error !== null && typeof error === 'object' && typeof error.message === 'string'
+          ? error.message
+          : '';
+        const code = error !== null && typeof error === 'object' && typeof error.code === 'string' ? error.code : '';
+        throw new Error(message !== '' ? (code !== '' ? message + '（' + code + '）' : message) : (code !== '' ? code : t('sideAsk.error.unavailable')));
+      }
+
+      /** 把提示词预填进侧边会话输入框（不自动发送）。 */
+      function prefillPrompt(binding, text) {
+        if (typeof text !== 'string' || text.trim() === '') return;
+        try {
+          ctx.conversation.input.requestDraftInitialization(binding, {
+            prompt: text,
+            whenDraftExists: 'append'
+          });
+        } catch (error) {
+          console.warn('dsh-session-enhance: could not prefill the side-ask prompt', error);
+        }
+      }
+
+      /**
+       * 确保原会话有一个可用的侧边会话：有绑定复用，否则请 Host 建一个新的只读会话。
+       * 新会话的询问提示词由 Host 生成并在这里预填。
+       *
+       * @param {string} parentSessionId - 原会话。
+       * @param {string} [quote] - 用户选中的原文。
+       * @returns {Promise<string>} 侧边会话 id。
+       */
+      function ensureChild(parentSessionId, quote) {
+        const existing = store.childOf(parentSessionId);
+        if (existing !== undefined) {
+          if (typeof quote === 'string' && quote.trim() !== '') {
+            const reference = holdChild(existing.childSessionId);
+            const quoted = formatSideAskQuoteText(quote);
+            if (reference !== null && quoted !== '') {
+              prefillPrompt(reference.binding, quoted + '\n\n' + t('sideAsk.prompt.question'));
+            }
+          }
+          return Promise.resolve(existing.childSessionId);
+        }
+        const running = creating.get(parentSessionId);
+        if (running !== undefined) return running;
+        const task = (async () => {
+          const value = await callSideAskRpc('create', {
+            parentSessionId,
+            ...(typeof quote === 'string' && quote.trim() !== '' ? { quote } : {}),
+            locale: localeId
+          });
+          const childSessionId = value !== null && typeof value === 'object' ? value.sessionId : undefined;
+          if (typeof childSessionId !== 'string' || childSessionId === '') {
+            throw new Error('side ask create returned no session id');
+          }
+          store.upsert(childSessionId, parentSessionId);
+          const reference = holdChild(childSessionId);
+          if (reference !== null && typeof value.prompt === 'string') prefillPrompt(reference.binding, value.prompt);
+          void ctx.sessions.refresh().catch(() => {});
+          return childSessionId;
+        })().finally(() => { creating.delete(parentSessionId); });
+        creating.set(parentSessionId, task);
+        return task;
+      }
+
+      /**
+       * 打开（或聚焦）侧边提问标签。
+       *
+       * @param {string} parentSessionId - 发起提问的原会话。
+       * @param {string} [quote] - 选中并要引用的文字。
+       * @returns {Promise<void>}
+       */
+      async function openSideAsk(parentSessionId, quote) {
+        if (typeof parentSessionId !== 'string' || parentSessionId === '') return;
+        try {
+          await ensureChild(parentSessionId, quote);
+          ctx.sidebarRight.openTab(SIDEASK_KIND);
+        } catch (error) {
+          console.warn('dsh-session-enhance: side ask unavailable', error);
+        }
+      }
+
+      /**
+       * 按「保留 / 临时」切换侧边会话的权限：保留 = 恢复原会话预设，临时 = 只读。
+       *
+       * @param {string} childSessionId - 侧边会话 id。
+       * @param {boolean} kept - 是否保留为持久会话。
+       * @returns {Promise<void>}
+       */
+      async function applySideAskMode(childSessionId, kept) {
+        try {
+          if (kept) await callSideAskRpc('restore', { sessionId: childSessionId });
+          else await callSideAskRpc('setPreset', { sessionId: childSessionId, preset: SIDEASK_READ_ONLY_PRESET });
+        } catch (error) {
+          console.warn('dsh-session-enhance: could not switch the side-ask permission', error);
+        }
+      }
+
+      /** Host 侧的临时登记清理（标签关闭后）。 */
+      function forgetSideAsk(childSessionId) {
+        void callSideAskRpc('forget', { sessionId: childSessionId }).catch(() => {});
+      }
+
+      /** 归档一个侧边会话（尽力而为）。 */
+      function archiveSideAsk(childSessionId) {
+        try {
+          ctx.uiWorkspace.archiveSession(childSessionId, { stopActivity: true }).catch((error) => {
+            console.warn('dsh-session-enhance: could not archive the side session', error);
+          });
+        } catch (error) {
+          console.warn('dsh-session-enhance: could not archive the side session', error);
+        }
+      }
+
+      /** 是否还有别的分栏在显示本组件的标签。 */
+      function hasOtherSideAskTab(sessionId, tabId) {
+        try {
+          return ctx.sidebarRight.tabsIn(sessionId)
+            .some(candidate => candidate.kind === SIDEASK_KIND && candidate.id !== tabId);
+        } catch { return false; }
+      }
+
+      /** 启动清扫：上次运行遗留、未保留、也没有标签页的侧边会话归档掉。 */
+      function sweep() {
+        try {
+          for (const record of store.list()) {
+            if (record.kept === true || record.archived === true) continue;
+            let open = false;
+            try {
+              open = ctx.sidebarRight.tabsIn(record.parentSessionId)
+                .some(candidate => candidate.kind === SIDEASK_KIND);
+            } catch { open = false; }
+            if (open) continue;
+            store.markArchived(record.childSessionId);
+            archiveSideAsk(record.childSessionId);
+          }
+        } catch (error) {
+          console.warn('dsh-session-enhance: side-ask startup sweep failed', error);
+        }
+      }
+
+      /** 注册侧边提问的全部界面席位；返回撤销函数。 */
+      function registerUi() {
+        const disposers = [];
+        const add = (disposer) => {
+          if (typeof disposer === 'function') disposers.push(disposer);
+        };
+
+        add(ctx.sidebarRightTabs.register({
+          id: SIDEASK_TAB_ID,
+          kind: SIDEASK_KIND,
+          priority: 'extension',
+          title: () => t('sideAsk.tab.title'),
+          guide: [{
+            id: SIDEASK_GUIDE_ID,
+            order: 30,
+            title: () => t('sideAsk.guide.title'),
+            description: () => t('sideAsk.guide.description'),
+            icon: sideAskIcon
+          }]
+        }));
+
+        add(ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+          name: 'sidebar.right.pane.tab',
+          key: SIDEASK_TAB_ID,
+          locale: NS,
+          inject: () => ({
+            sideAsk: {
+              childOf: parentSessionId => {
+                const record = store.childOf(parentSessionId);
+                return record === undefined ? undefined : record.childSessionId;
+              },
+              ensureChild: parentSessionId => ensureChild(parentSessionId),
+              isKept: childSessionId => {
+                const record = store.get(childSessionId);
+                return record !== undefined && record.kept === true;
+              },
+              setKept: (childSessionId, kept) => {
+                store.setKept(childSessionId, kept);
+                void applySideAskMode(childSessionId, kept);
+              },
+              retain: childSessionId => ctx.sessions.retain(childSessionId, {
+                source: 'sideAsk',
+                facets: { conversation: true }
+              }),
+              release: reference => reference.release(),
+              onTabOpen: (childSessionId) => {
+                const record = store.get(childSessionId);
+                if (record !== undefined && record.archived === true) {
+                  store.markActive(childSessionId);
+                  try {
+                    ctx.uiWorkspace.unarchiveSession(childSessionId).catch((error) => {
+                      console.warn('dsh-session-enhance: could not restore the side session', error);
+                    });
+                  } catch (error) {
+                    console.warn('dsh-session-enhance: could not restore the side session', error);
+                  }
+                }
+              },
+              openWorkspace: (workspaceId, adopt) => ctx.uiWorkspace.openWorkspace(workspaceId, adopt)
+            }
+          }),
+          children: {
+            [SIDEASK_SESSION_SEAT]: { kind: 'single', scope: 'session' }
+          }
+        }, SideAskTab)));
+
+        add(ctx.sidebarRight.registerCloseHandler(SIDEASK_KIND, (sessionId, tab) => {
+          const record = store.childOf(sessionId);
+          if (record === undefined) return;
+          const childSessionId = record.childSessionId;
+          const other = hasOtherSideAskTab(sessionId, tab.id);
+          if (!other) releaseHold(childSessionId);
+          const current = store.get(childSessionId);
+          if (current !== undefined && current.kept === true) { forgetSideAsk(childSessionId); return; }
+          if (other) return;
+          if (current !== undefined && current.archived === true) { forgetSideAsk(childSessionId); return; }
+          store.markArchived(childSessionId);
+          archiveSideAsk(childSessionId);
+          forgetSideAsk(childSessionId);
+        }));
+
+        add(ctx.slots.inject('conversation.session.header.utilities', () => ctx.slots.register({
+          name: 'conversation.session.header.utilities',
+          id: 'side-ask',
+          order: -20,
+          locale: NS,
+          inject: sessionId => ({
+            onOpen: () => { void openSideAsk(sessionId); },
+            hidden: store.isChild(sessionId)
+          })
+        }, SideAskHeaderButton)));
+
+        const textActionsInjected = () => ({
+          onAsk: (sessionId, text) => { void openSideAsk(sessionId, text); },
+          isChild: sessionId => store.isChild(sessionId)
+        });
+        // 接管官方「引用」表面：同 key 'quote' 用更低 priority 注册即可 shadow。
+        add(ctx.slots.inject('conversation.chat.text-interaction', () => ctx.slots.register({
+          name: 'conversation.chat.text-interaction',
+          key: 'quote',
+          priority: -1,
+          locale: NS,
+          inject: textActionsInjected
+        }, SideAskTextActions)));
+        // 兜底表面：官方 message-quotes 不在、或右键手势时使用本组件自己的 key。
+        add(ctx.slots.inject('conversation.chat.text-interaction', () => ctx.slots.register({
+          name: 'conversation.chat.text-interaction',
+          key: SIDEASK_KIND,
+          locale: NS,
+          inject: textActionsInjected
+        }, SideAskTextActions)));
+        // 手势准入：selection 上官方先注册（先 open 者赢），这里只在官方缺席时兜底；
+        // contextmenu 官方明确不处理，由这里打开同一个合并操作条。
+        add(ctx.uiConversation.interactions.register({
+          id: SIDEASK_KIND,
+          onInteraction(request) {
+            const text = request.readText();
+            if (text === null || text.trim() === '') return;
+            const binding = ctx.sessions.binding(request.sessionId);
+            if (binding === undefined) return;
+            const session = binding.session.getSnapshot();
+            if (session.removed) return;
+            if (session.subagent !== null && session.subagent.address.mode !== 'continuable') return;
+            request.open();
+          }
+        }));
+
+        const timer = window.setTimeout(sweep, SIDEASK_SWEEP_MS);
+        disposers.push(() => window.clearTimeout(timer));
+
+        return () => {
+          for (const disposer of disposers.reverse()) {
+            try { disposer(); } catch { /* 忽略 */ }
+          }
+        };
+      }
+
+      let disposeUi = null;
+      try {
+        disposeUi = registerUi();
+      } catch (error) {
+        console.warn('dsh-session-enhance: side-ask UI registration failed', error);
+        return;
+      }
+      // Host 组件行被停用时（界面已按「在」渲染），把界面全部撤掉。
+      void probeComponent(SIDEASK_RPC_CHANNEL, 'probe').then((available) => {
+        if (available) return;
+        console.info('dsh-session-enhance: side-ask component is disabled; sidebar UI removed');
+        if (disposeUi !== null) {
+          try { disposeUi(); } catch { /* 忽略 */ }
+          disposeUi = null;
+        }
+      });
+    }
+    // #endregion
+
     // #region 插件入口
     /**
      * 浏览器半用到的服务：槽位（挂按钮）、词典、以及到 Host 的 RPC 通道。
@@ -2771,7 +3575,10 @@ window.__ModuleLoader__.load({
      * 分享按钮会一直停在「操作失败」，所以这里是硬依赖。
      * `configForms` 用于「设置 → 插件 → 会话增强」里的自动压缩开关（官方设置页服务）。
      */
-    const inject = ['slots', 'locale', 'connection', 'sessions', 'configForms'];
+    const inject = [
+      'slots', 'locale', 'connection', 'sessions', 'configForms',
+      'conversation', 'uiConversation', 'sidebarRightTabs', 'sidebarRight', 'uiWorkspace'
+    ];
 
     /**
      * 挂载标题栏的「梁谷会话」「分享」「复制」三个控件与 composer 右侧的中断重试按钮，
@@ -3136,6 +3943,10 @@ window.__ModuleLoader__.load({
           void error;
         }
       }
+
+      // 侧边提问组件（Loader 行 dsh-session-enhance/sideask）：右侧栏标签、标题栏入口、
+      // 选中文字的合并弹层。Host 行被停用时它会自己把界面撤掉。
+      installSideAsk(ctx, t);
     }
     // #endregion
 
@@ -3155,6 +3966,12 @@ window.__ModuleLoader__.load({
     exports.AutoCompactCard = AutoCompactCard;
     exports.AutoCompactToggleRow = AutoCompactToggleRow;
     exports.settingsBooleanField = settingsBooleanField;
+    // 侧边提问组件的纯函数与组件（离线冒烟用；不影响运行时）。
+    exports.createSideAskStore = createSideAskStore;
+    exports.formatSideAskQuoteText = formatSideAskQuoteText;
+    exports.SideAskTab = SideAskTab;
+    exports.SideAskHeaderButton = SideAskHeaderButton;
+    exports.SideAskTextActions = SideAskTextActions;
     return module.exports;
   }
 });

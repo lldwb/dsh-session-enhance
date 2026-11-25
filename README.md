@@ -1,6 +1,6 @@
 # 会话增强 · dsh-session-enhance
 
-**一个插件包，三个可单独启停的组件**：会话检视（按 ID 查会话与子代理 + 标题栏复制 ID）、会话分享、中断重试（用户主动停止的一轮可重试）；第一个组件还带**分级上下文压缩**（自动/手动，设置页可开关）。
+**一个插件包，四个可单独启停的组件**：会话检视（按 ID 查会话与子代理 + 标题栏复制 ID）、会话分享、中断重试（用户主动停止的一轮可重试）、谷峰会话（右上角开关：峰时暂停会话、谷时自动恢复）；第一个组件还带**分级上下文压缩**（自动/手动，设置页可开关）。
 
 > 开源（MIT）。仓库地址：<https://github.com/lldwb/dsh-session-enhance>
 >
@@ -9,6 +9,10 @@
 > [5.0 迁移](#50-移除失败重试组件破坏性)。**5.2.0 起新增的「中断重试」组件只处理用户主动
 > 停止**（官方不覆盖的 `aborted` 场景），与已移除的失败重试不是同一个东西，见下方
 > 「中断重试（5.2 起）」。
+>
+> **5.7.0 起新增第四个组件「谷峰会话」**：会话标题栏右上角的开关；打开后在峰时暂停该会话
+> 的模型调用、把输入留在队列里，谷时自动恢复（默认谷时 00:30–08:30，窗口可配），
+> 见下方 [谷峰会话（5.7 起）](#谷峰会话57-起)。
 >
 > **4.0.0 起包名/仓库名由 `dsh-session-inspect` 改为 `dsh-session-enhance`，显示名回到「会话增强」**。
 > 4.0.0 时这个包是「一包三组件」的会话能力合集（检视 / 分享 / 失败重试）；5.0.0 移除失败重试后
@@ -20,7 +24,7 @@
 > **2.0.0 起拆成三个 Loader 行**：「设置 → 插件 → 会话增强 → 包含的组件」里会看到 3 个
 > 组件，每个都有独立开关。1.x 只有一行（三件事捆在一起，只能整体开关）。
 > **5.0.0 一度只剩 2 个组件（会话增强 / 会话分享）；5.2.0 起又回到 3 个
-> （会话增强 / 会话分享 / 中断重试）。**
+> （会话增强 / 会话分享 / 中断重试）；5.7.0 起是 4 个（新增「谷峰会话」）。**
 >
 > **原「失败重试」插件（`dsh-turn-retry`）已于 1.0.0 并入本插件**：它的目录、profile 行与
 > GitHub 仓库都已删除。升级时请先卸载旧的 `dsh-turn-retry`，否则会出现两个重试按钮。
@@ -30,26 +34,28 @@
 
 ## 加载方式
 
-加载方式：常驻（理由：UI 类 + 诊断类——3 个界面组件常驻，5 个 `session_*` 诊断工具要求任意模式随时可用；约 6.5k 字符 schema 是"常驻里最贵但确实要随时可用"的一类）
+加载方式：常驻（理由：UI 类 + 诊断类——4 个界面组件常驻，5 个 `session_*` 诊断工具要求任意模式随时可用；约 6.5k 字符 schema 是"常驻里最贵但确实要随时可用"的一类）
 
 > 加载方式是 DSH 插件开发的**必答项**（工作区约定 §10.0）：按需的必须有 skill 入口与
 > `onDemand: false` 退路，常驻的必须写理由。这条标记行供人工审阅与将来做门禁。
 
-## 三个组件
+## 四个组件
 
 | 组件（界面显示名） | Loader 行 | 提供什么 |
 |---|---|---|
 | 会话增强 | `dsh-session-enhance` | 会话标题栏复制按钮 + 工具 `session_lookup`（按 id 查会话与全部子代理）+ 官方「上下文已用」面板里的**分级压缩**动作（4.5 起自动/手动）+ 工具 `session_resume_subagents`（恢复子智能体，5.1 起只有工具入口） |
 | 会话分享 | `dsh-session-enhance/share` | 标题栏分享按钮 + 工具 `session_share` + 免登录只读页 `/share/<token>` |
 | 中断重试 | `dsh-session-enhance/retry`（行 id `dsh-session-enhance-retry`） | 用户主动停止后 composer 右侧的「重试」按钮 + RPC `/dsh-session-enhance-retry`；只补官方「继续生成」不覆盖的中断场景（失败仍交给官方） |
+| 谷峰会话 | `dsh-session-enhance/offpeak`（行 id `dsh-session-enhance-offpeak`） | 标题栏右上角的「谷峰」开关 + Host 的 Agent hold 控制器 + RPC `/dsh-session-enhance-offpeak`（status / setEnabled / diag）；峰时暂停模型调用、输入留在队列，谷时自动恢复 |
 
 > **为什么第一个组件叫「会话增强」而不是「会话 ID / 会话检视」**：浏览器半（三块界面）只能挂在
 > **精确包名**那一行上——`@deepseek-ai/dsh-client-modules` 的 `locatePkgJson()` 只接受
 > 精确包名，子路径 specifier 直接返回 `undefined`，那一行就不会有 client 半。所以第一行
 > 必须是 `dsh-session-enhance`，它的组件标题只能等于包根 `locale/`（也就是卡片标题「会话增强」）。
-> 另两行是子路径，各自有 `share/locale/`、`retry/locale/`，所以能叫「会话分享」「中断重试」。
+> 另三行是子路径，各自有 `share/locale/`、`retry/locale/`、`offpeak/locale/`，所以能叫
+> 「会话分享」「中断重试」「谷峰会话」。
 
-三部分互相独立：只装 Host 半也能查会话，只装浏览器半也能复制 id / 分享 / 中断重试。
+四部分互相独立：只装 Host 半也能查会话，只装浏览器半也能复制 id / 分享 / 中断重试 / 切谷峰开关。
 
 > **别把「中断重试」和 5.0 移除的「失败重试」搞混**：5.0.0 删掉的是旧的失败重试组件
 > （`/dsh-turn-retry` 通道、`data-turn-retry` 选择器、失败后自动覆盖层），失败后请用官方
@@ -153,12 +159,13 @@ DSH 0.2.2-rc.2 已内置失败恢复。
 ## 停用某个组件之后
 
 浏览器半只有一份（`dsh.client` 是包级声明，不能按行拆），它会跟着第一行一起加载。为了
-不让被停用的组件留下"点了没反应"的按钮，浏览器半启动时会在两个子组件的通道上各发一次
-**能力探测**请求（分享 `/dsh-session-enhance`、中断重试 `/dsh-session-enhance-retry`）：
+不让被停用的组件留下"点了没反应"的按钮，浏览器半启动时会在三个子组件的通道上各发一次
+**能力探测**请求（分享 `/dsh-session-enhance`、中断重试 `/dsh-session-enhance-retry`、
+谷峰会话 `/dsh-session-enhance-offpeak`）：
 
 - Host 的 RPC 前缀路由只在对应行启用时才注册；
-- 组件在 → `POST /dsh-session-enhance`（或 `/dsh-session-enhance-retry`）返回 **200**
-  （缺参数的业务信封也是 200）；
+- 组件在 → `POST /dsh-session-enhance`（或 `/dsh-session-enhance-retry` /
+  `/dsh-session-enhance-offpeak`）返回 **200**（缺参数的业务信封也是 200）；
 - 组件停用 → 请求落到 SPA fallback，返回 **405**。
 
 探测不阻塞 UI 注册、最多退避重试 3 次；判定不了的（网络异常、非 200/405）一律乐观保留，
@@ -167,7 +174,10 @@ DSH 0.2.2-rc.2 已内置失败恢复。
 - 停用**会话分享** → 标题栏分享按钮换成隐藏占位（`data-session-share="disabled"`）；
 - 停用**中断重试** → composer 右侧的重试按钮换成隐藏占位（`data-interrupted-retry="hidden"`），
   按钮不渲染；
-- 停用**会话增强**（第一行）→ 三块界面随 client 半一起消失，`session_lookup` 也不可用；
+- 停用**谷峰会话** → 标题栏右上角的谷峰开关换成隐藏占位（`data-offpeak-hidden="disabled"`，
+  不渲染 `data-dsh-offpeak-button`），Host 释放该会话的 hold，会话立即恢复正常运行；
+- 停用**会话增强**（第一行）→ 四块界面（分享 / 复制 / 中断重试 / 谷峰开关）随 client 半一起消失，
+  `session_lookup` 也不可用；
 - 重新启用后刷新页面，按钮自动回来（探测只做一次，不写任何持久缓存）。
 
 ## 安装
@@ -182,7 +192,14 @@ dsh plugin add .
 也可以直接把本地目录交给 `dsh plugin add <插件目录>`。
 
 运行时只依赖 `@deepseek-ai/schemastery`（声明配置 schema 用，随 DSH 提供）；默认零配置，
-设置页里只有一个「自动压缩」开关（默认关）。装好后刷新页面即可看到按钮；新会话里即可调用工具。
+设置页里只有一个「自动压缩」开关（默认关）。**谷峰会话默认关闭**；它的窗口 / 时区 /
+「新会话默认启用」在「设置 → 插件 → 会话增强 → 包含的组件 → 谷峰会话」的配置页里可改
+（默认谷时 00:30–08:30、`Asia/Shanghai`，保存后热更新）。装好后刷新页面即可看到按钮；
+新会话里即可调用工具。
+
+> **新增 Loader 行（5.7.0 的谷峰会话）需要重启 DSH 才会进入 Loader 树**：Loader 树在进程
+> 启动时按 profile + 各 bundle 的 patch 合成，运行期只允许「已有行」热更新；刷新页面只能更新
+> 已加载行对应的 client 半。重启后「包含的组件」是 4 个、右上角出现「谷峰」开关。
 
 ## 用法
 
@@ -371,6 +388,43 @@ TIMEOUT / TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并有已准入的用户�
 （`aborted` 且是用户主动停止）。两者**互斥**，不会对同一轮同时出现；失败永远交给官方。
 
 > 无需改配置，升级后**重启 DSH** 生效（client 清单是服务器启动时的快照，刷新页面不够）。
+
+### 谷峰会话（5.7 起）
+
+「谷峰会话」把会话**只在 DeepSeek 谷时跑**：谷时窗口之外（默认峰时 = 00:30–08:30 以外的
+时间）暂停这个会话的模型调用，此时发出的消息留在**官方队列**里，谷时一到自动释放并续跑。
+开关在**会话标题栏右上角**，每个会话一份。
+
+- **开关长什么样**（`conversation.session.header.utilities` 槽位，order `-12`，落在分享 / 复制
+  按钮左侧）：
+  - 关：灰字「谷峰」，title 显示谷时窗口与「点击开启」；
+  - 开 + 峰时：琥珀色「谷峰 暂停 3h05m」（倒计时到谷时开始），title 写明「将在 HH:MM 自动恢复」
+    与队列条数；
+  - 开 + 谷时：绿色「谷峰 谷时」，title 写明「将在 HH:MM 自动暂停」；
+  - 切换中：置灰「…」；失败时 chip 旁弹 Toast（带错误码），状态回退到切换前的值。
+- **峰时发消息会怎样**：消息被 Host 接收并进入**官方 durable 队列**（暂停中先显示为「待发送」
+  气泡；刷新页面后出现在 composer 上方的队列条——和平时「会话忙时排队」是同一个 UI，可编辑/
+  删除），但**不会开始任何模型调用**；谷时开始后按队列顺序逐条执行。
+- **峰时开始的那一刻正在跑的一轮**：会被中断（`agent.cancel({kind:'hook'})`，保留队列），
+  所以不会继续在峰时烧 token；这一轮在谷时会自动续跑——聊天里会出现一条紧凑的
+  「已请求继续生成」标记（官方 continuation 触发的空 `source.kind: 'retry'` 消息）。
+- **子代理也算「该会话」**：沿 `session.header.parentSession` 向上，任一祖先会话启用了谷峰，
+  子树里的 live Agent 一并被 hold/cancel；禁用父会话时子树一起释放。
+- **开关是即时的**：峰时打开 → 立刻暂停（必要时中断当前轮）；谷时打开 → 不暂停；关闭 →
+  立刻释放，队列里压着的消息马上开始跑。
+- **时间窗可配**（设置 → 插件 → 会话增强 → 包含的组件 → 谷峰会话）：
+  `offPeakStart` / `offPeakEnd`（`HH:MM`，起点含、终点不含，**支持跨午夜**，如 22:00–06:00）、
+  `timeZone`（默认 `Asia/Shanghai`）、`defaultEnabled`（新会话默认是否启用，默认关）。
+  非法值逐字段回退默认并只 warn 一次；四个字段都是 volatile，保存后下一次 reconcile 立即生效。
+- **持久化**：每个会话的开关状态写 `<DSH_HOME>/dsh-session-enhance/offpeak.json`（原子写、
+  容量 500、损坏时备份后从空表继续，写盘失败只让界面提示「重启后可能回落」而不阻止开关）。
+  Host 重启后偏好还在；重开会话时按偏好自动 hold。
+- **边界（它不管什么）**：它拦的是「Agent 轮次」这条链路（用户提示、继续/目标轮、调度任务、
+  子代理、压缩/摘要等经 Agent 的模型请求）。**不经过 Agent 的辅助模型调用**（例如手动点
+  「翻译推理」这类直接调 `llm` 的按钮）不在暂停范围内；被中断的那一轮已经执行完的工具调用
+  不会回退。没有 `agents` 服务的部署（如 headless）里组件会干净激活但无事可做。
+- **可单独启停**：停用 `dsh-session-enhance-offpeak` 行后，浏览器半的能力探测拿到 405，
+  开关换成隐藏占位（`data-offpeak-hidden="disabled"`）。停用后该会话立即恢复（不再 hold）。
 
 ### 手动压缩：注入官方「上下文已用」面板（4.2 起；4.3 起走官方 `/compact` 命令）
 
@@ -570,6 +624,7 @@ AutoCompact → Reactive Compact）。本插件按 DSH 的压缩 seam 做了对�
 
 | 组件 | 槽位 | order |
 |---|---|---|
+| 谷峰会话 | `conversation.session.header.utilities`（标题栏右上角） | -12 |
 | 分享 | `conversation.session.header.utilities`（标题栏右侧小按钮） | -11 |
 | 复制 ID | 同上 | -10 |
 | 中断重试 | `conversation.input.right`（composer 右侧，主按钮之前） | 0 |
@@ -579,10 +634,41 @@ AutoCompact → Reactive Compact）。本插件按 DSH 的压缩 seam 做了对�
 上下文压缩动作在官方 `ContextMeter` 的 portal 面板里，不走 slot（见上一节「为什么用 DOM 注入」）。
 
 标题栏槽位由 `@deepseek-ai/dsh-client-ui-conversation` 声明，`list` 槽位按 `order` 升序
-渲染，所以分享/复制稳定落在「⋯」左边。
+渲染，所以谷峰 / 分享 / 复制稳定落在「⋯」左边。
 
 槽位注册都包在 `ctx.slots.inject(...)` 里：槽位名属于另一个客户端包，浏览器插件加载顺序
 不保证；等槽位声明出来再注册，避免静默不显示。
+
+### 谷峰会话：为什么用 maintenance hold，而不是拒绝 pre-step
+
+把会话「按住」不让它跑模型，表面上最直接的做法是在 `agent/pre-step` 里返回
+`{ kind: 'reject' }`。**这条路本插件没有用**，因为按运行时文档与源码，被 reject 的那一步里
+`inbox.claim()` 取走的提示**既不会落 `user/message`、也不会退回 inbox**——用户的消息会凭空
+消失（历史里只留下一个 `blocked` 的空轮），要恢复只能靠我们自己另存一份再重放，而且每来
+一条消息就多一个空轮。所以采用 `agent.runMaintenance()` 的「维护期挂起」：
+
+1. **hold 层（主）**：对 idle Agent 调 `runMaintenance(async signal => 等释放信号)`。维护期
+   `agent.status` 仍是 `idle`（UI 不显示"运行中"），但驱动不会开始新轮；此间 `agent.followup()`
+   把消息写进 durable inbox，并给维护相位置 `wakeRequested`。维护期一结束，运行时**自动唤醒**
+   排队的输入——这就是"谷时自动恢复"。
+2. **安全网（次）**：`agent/status: running` 的监听里同步
+   `agent.cancel({ kind: 'hook', reason: 'offpeak-pause' }, { keepInbox: true })`。这发生在
+   `wakeDriver` 同步派发状态、而 `kick()` 还没 append `turn/start` 的窗口里，所以拐点上的那一轮
+   被 abort 在模型调用之前，消息仍留在 inbox（实测：会话日志没有 `turn/start`、没有
+   `assistant/*`，只有 inbox splice）。
+3. **补齐**：`agent/created` 本身是在创建流程自己的 `runMaintenance` 里派发的，此时再
+   `runMaintenance` 会抛 `"already has active work"`；所以创建后只排一次延后 reconcile，由
+   `agent/status: idle` 与 1 秒 reconcile 兜底 arm。
+4. **续跑**：若峰时打断的是**已开始**的轮（`agents.turnBoundaryOf(session).openTurnStartSeq`
+   非 null），释放时补一条官方 continuation 形状的空消息（`content: []` +
+   `source.kind: 'retry'` + `rpcId`），聊天里渲染成紧凑的「已请求继续生成」；若只是队列里压着
+   消息且维护期没置 `wakeRequested`（消息在 arm 前就被 cancel 掉了），同样用这条消息把 inbox
+   唤醒。队列消息在维护期写入时 `wakeRequested` 已置位，释放即自动唤醒，不需要额外消息。
+5. **配置热更新**：窗口 / 时区 / `defaultEnabled` 是 volatile；监听 `app-boot/config-reload` 与
+   `settings/document-updated`（不存在则静默降级），每次 reconcile 重读配置并只在边界改变时
+   重建边界定时器。
+6. **持久化**：开关状态落在 `offpeak.json`（与 `shares.json` 同目录、同原子写风格）；hold /
+   interrupted 是进程内状态，重启后按「峰时该暂停」重新推导。
 
 ### 会话 id 从哪来
 
@@ -638,10 +724,17 @@ token 本身（24 字节 / 192 bit 随机、不可枚举、可撤销），不靠
 分享记录清空）；读取时容忍 UTF-8 BOM（Windows 编辑器常见）。2.x 的
 `<DSH_HOME>/dsh-session-id/shares.json` 仅作只读回退。
 
+`<DSH_HOME>/dsh-session-enhance/offpeak.json`（5.7 起）：只存每会话的
+`{ enabled, updatedAt }`，容量上限 500（按 `updatedAt` 淘汰最旧），原子写。与 `shares.json`
+相反，它**损坏时容忍**（备份成 `.corrupt-<时间戳>.bak` 后从空表继续）：这里只是开关偏好，
+让用户继续用比锁死更合适；写盘失败只让 RPC 返回 `persisted: false`（界面提示「重启后可能回落」），
+不阻止开关在当前进程内生效。
+
 ## 验证记录
 
 | 层 | 内容 | 结果 |
 |---|---|---|
+| 5.7.0 谷峰会话 / DSH 0.2.2-rc.5 | 单测 **262/262**（新增 `offpeak-window/-store/-controller/-rpc` 与 `offpeak-client` 用例：窗口边界/跨午夜/非法配置、原子写/容量/损坏容忍、创建窗口 arm、首个 prompt 在 arm 前被 cancel、running→cancel keepInbox、队列消息不被误 cancel、释放续跑、子代理覆盖正/负、禁用/dispose、RPC 入参校验、浏览器半注册/词典/状态机/轮询清理）；`node --check` 全部改动文件；devkit headless 沙箱 compose 输出 **4 行**（含 `dsh-session-enhance-offpeak`）、任务 exit 0/stderr 空；**lead 真实 UI 沙箱（真实 Chrome + 真实 `deepseek-flash`）**：15:41 点开关进 `paused`+倒计时并发消息 → 15:41:45.47 inbox splice 之后到 15:53:00.02 之间日志 **0 条 `turn/start` / 0 条 `assistant/message`**，15:53:00.02（窗口起点后 20ms）自动 `turn/start`、15:53:06 回复 `VALLEY-QUEUED-OK`、chip 变 `active`、队列清空；暂停中刷新后 chip 仍 paused、队列条仍在；关开关后发消息立即开始并在 25 秒内完成；**独立 verifier（另一沙箱/会话）**：A–F 全绿，另验「回合运行中切暂停」= `turn/end aborted/hook/offpeak-pause`（该轮无 assistant）→ 边界后 2ms 自动 `turn/start` → 17 秒完成并显示「已请求继续生成」，以及插件页「包含的组件 **共 4 个 · 4 运行中**」第 4 行为中文「谷峰会话」、停用该行后 chip 隐藏且 `POST /dsh-session-enhance-offpeak/status` = **405**、重新启用后 chip 恢复；`offpeak.json` 落盘内容核对；`check-plugin-locale.mjs` / `check-tool-names.mjs` 均 ✓ | 通过 |
 | 5.4.0 会话 id 三种写法 / DSH 0.2.2-rc.2 运行时 | 单测 **162/162**（新增 11 例：`sessionUuidOf` 三种写法 + 大小写 + 无 UUID、裸 UUID 归一化、导出文件名（整条路径）、id 粘正文、子代理裸 UUID、精确命中不多列语料库、无 UUID 不回查、同 UUID 不唯一、回查失败带原因、取消原样抛出、分享记录落在真实 id）；`node --check` 改动文件；devkit headless 沙箱（真实 Loader + 真实 `sessionQuery.listSessions()` + 从本机拷入的真实会话日志 `session-31874d86…` / `session-559eb381…`）：裸 UUID → 归一化 + 摘要提示、完整 id → 无提示且其余一致、`C:\…\dsh-session-session-<uuid>.zip` → 归一化、裸 UUID + `includeMessages=true` → 真读到 seq 1327/1329/1341、事故会话裸 UUID → 成功、全零 UUID → 「找不到会话」+ 三种写法提示，全部输出通过运行时 schema 校验（无 `tool returned invalid output`） | 通过 |
 | 5.3.2 适配 DSH 0.2.2-rc.3 / DSH 0.2.2-rc.3（checkout `39163dd30f`） | 单测 **150/150**（新增 `test/routes.test.mjs` 3 例：分享页路由 `auth === 'anonymous'`、分享 handler 自身仍只认 token（404/405/200）、三条 RPC 通道保持默认 `required`）；`node --check` 改动文件；核对结果：`webServer.register` 新增 `auth`（默认 `required`，`packages/host/webserver/src/index.ts:123-124,780-788`）→ 分享页显式匿名；`connection.admit` 与 `PeerAdmission` 形状未变（`packages/client/connection/src/rpc.ts:121-123,225`）；`ctx.on` 的 `prepend` 仍在（`vendor/cordis/src/events.ts:111-118`）；`settings.configure` / `tools.register` / `sessionQuery.*` / `subagents.listDescendants` / `agents.turnBoundaryOf` / `compaction.compactNow|compactIfNeeded` / `toolResultPruner.pruneSession` / `tokenMeter.contextPressure` / `session.append` 等均未变；client 半 6 个 ui-primitives 导出与 4 个槽位名、`configForms.get|whileServed`、`SettingsFormModel.bind` 全部仍在；rc.2 向后兼容已核对安装版 `app.asar` 的 `dsh-host-webserver/src/index.ts:445-452`（`register()` 不读 `auth`） | 离线通过；真实 Loader 待 Lead 在目标版本运行时验证 |
 | 5.2.0 新增「中断重试」组件 / DSH 0.2.2-rc.2 | 单测 **130/130**（新增 `test/retry/*` 21 例 + entries 三入口 1 例）；`node --check client.js`；devkit headless 沙箱真实 Loader：合成树 3 行（`dsh-session-enhance` / `-share` / `-retry`），任务正常完成（logger 不落 stderr，行激活证据由 UI 沙箱提供）；devkit web/UI 沙箱：`dsh-session-enhance@5.2.0 is loaded`、控制台 0 错误、`[data-interrupted-retry]` 隐藏占位存在（槽位注册成功）、详情页「包含的组件 共 3 个 · 3 运行中」（会话增强 / 会话分享 / 中断重试）、当前版本 5.2.0；页面内 `POST /dsh-session-enhance-retry/pending` 返回 200 业务信封 `{pending:false,recoverable:null}` | 通过 |
@@ -714,10 +807,12 @@ node scripts/repair-session-log.mjs "<同上>" --apply --cause '{"kind":"aborted
 index.js            组件①「会话增强」Host 半：注册 session_lookup（同时是包根导出）
 share/index.js      组件②「会话分享」Host 半：session_share + /share 路由 + 分享 RPC
 retry/index.js      组件③入口：name/inject/apply，apply 时装配 lib/retry（中断监听 + RPC 通道）
+offpeak/index.js    组件④入口：装配 lib/offpeak（hold 控制器 + RPC 通道）；Config 四 volatile 字段
 locale/             包根词典：卡片标题与组件①的标题/描述（两者共用这一份）
 share/locale/       组件②的标题/描述（子路径 specifier 不读包根 package.json）
 retry/locale/       组件③的标题/描述
-lib/build.mjs       三个组件共用的构建戳
+offpeak/locale/     组件④的标题/描述
+lib/build.mjs       四个组件共用的构建戳
 scripts/repair-session-log.mjs  存量损坏日志的修复工具（两类病因、五道门禁、默认 dry-run）
 lib/service.mjs     会话视图折叠（血缘 / 标题 / 消息 / 失败同一形状），可离线单测
 lib/tools.mjs       聚合门面（buildTools 兼容 1.x）+ re-export 两个构建器
@@ -736,9 +831,13 @@ lib/public.mjs      免登录的 /share/<token> 只读路由
 lib/retry/host.mjs  组件③ Host 侧：session/event 监听（turn/end 中断判定）、followup 驱动、装配 RPC 通道
 lib/retry/recovery.mjs 中断后「可重试」记录（RecoveryStore，TTL 30 分钟，仅内存）
 lib/retry/rpc.mjs   组件③的 RPC 通道（/dsh-session-enhance-retry，pending / retry / diag）
-client.js           浏览器半：三块界面 + 对话框 + toast + i18n + 设置页卡片
-cordis.patch.yml    根作用域 insert 三行（不按 preset 挂载）
-test/               分享/会话视图/三入口测试；test/retry/ 是组件③的测试
+lib/offpeak/window.mjs  谷时窗口纯函数：HH:MM / 时区 / 跨午夜 / 下一次边界 / 配置归一化
+lib/offpeak/store.mjs   组件④的开关存储（offpeak.json，原子写、容量淘汰、损坏容忍）
+lib/offpeak/controller.mjs 组件④核心：coveredOf 覆盖判定、hold/cancel/reconcile、边界定时器、续跑
+lib/offpeak/rpc.mjs     组件④的 RPC 通道（/dsh-session-enhance-offpeak，status / setEnabled / diag）
+client.js           浏览器半：四块界面 + 对话框 + toast + i18n + 设置页卡片
+cordis.patch.yml    根作用域 insert 四行（不按 preset 挂载）
+test/               分享/会话视图/四入口测试；test/retry/ 是组件③的测试；offpeak-*.test.mjs 是组件④
 ```
 
 - **严格 schema 是最大的坑**：第三方插件不能 `import defineTool`，参数与返回值都要手写

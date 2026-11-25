@@ -3,6 +3,102 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 5.7.0 — 2026-11-25
+
+### 新能力：第四个组件「谷峰会话」——峰时暂停、谷时自动恢复
+
+**它是什么**：会话标题栏右上角新增「谷峰」开关。打开后，在 DeepSeek 峰时（默认 = 谷时窗口
+00:30–08:30 以外的所有时间）暂停该会话的模型调用：用户发出的提示留在**官方 durable 队列**
+（composer 上方的 Queue dock），不会开始任何模型请求；谷时一到自动释放队列并按顺序续跑。
+峰时开始的那一刻正在跑的回合会被中断（保留队列），谷时自动补一条官方 continuation 形状的空
+消息（聊天里显示「已请求继续生成」）续跑。窗口 / 时区 / 新会话默认启用都可在设置页改；
+子代理会话（沿 `session.header.parentSession` 的祖先链）一并覆盖。
+
+**为什么这样做（机制取舍）**：第一直觉是用 `agent/pre-step` 返回 `{kind:'reject'}` 拦住模型
+调用。但按运行时文档与源码，被 reject 的那一步里 `inbox.claim()` 取走的提示**既不会落
+`user/message`、也不会退回 inbox**——用户消息会凭空消失，历史里只留一个 blocked 空轮。
+最终采用三层：
+
+1. **hold（主）**：对 idle Agent 调 `runMaintenance()` 挂起维护相位。`agent.status` 仍是
+   `idle`（UI 不显示"运行中"），此间 `agent.followup()` 的消息写进 durable inbox 并置维护相位的
+   `wakeRequested`；维护期一结束，运行时**自动唤醒**排队的输入——这就是"谷时自动恢复"。
+2. **安全网（次）**：`agent/status: running` 的监听里同步
+   `agent.cancel({ kind:'hook', reason:'offpeak-pause' }, { keepInbox: true })`。这发生在
+   `wakeDriver` 同步派发状态、`kick()` 还没 append `turn/start` 的窗口里，所以拐点上的回合
+   被 abort 在模型调用之前、消息仍留在 inbox（实测会话日志：无 `turn/start`、无 `assistant/*`，
+   只有 inbox splice）。
+3. **补齐**：`agent/created` 本身在创建流程自己的 `runMaintenance` 里派发，此时再
+   `runMaintenance` 会抛 `"already has active work"`；所以创建后只排一次延后 reconcile，由
+   `agent/status: idle` 与 1 秒 reconcile 兜底 arm。
+
+**新增**：
+
+- Loader 行 `dsh-session-enhance-offpeak`（`offpeak/index.js`，组件标题「谷峰会话」）；
+- `lib/offpeak/window.mjs`：HH:MM / IANA 时区 / 跨午夜窗口 / 下一次边界，纯函数；非法配置逐字段
+  回退默认并只 warn 一次；
+- `lib/offpeak/store.mjs`：`<DSH_HOME>/dsh-session-enhance/offpeak.json` 每会话开关（原子写、
+  容量 500 按 updatedAt 淘汰、损坏时备份成 `.corrupt-<ts>.bak` 后从空表继续、写盘失败只让 RPC
+  返回 `persisted:false` 而不阻止开关生效）；
+- `lib/offpeak/controller.mjs`：`coveredOf`（本会话或任一 live 祖先会话启用即覆盖）、
+  hold / cancel / reconcile、1 秒 tick（只在峰时且有覆盖会话时开）、边界精确 `setTimeout`
+  （只在边界变化时重建）、释放后按「队列有消息但没 wakeRequested」或「interrupted」补续跑消息；
+- `lib/offpeak/rpc.mjs`：`/dsh-session-enhance-offpeak`（status / setEnabled / diag；admit 认证 +
+  prefix 路由，沿用分享 / 中断重试已验证的配方）；
+- 浏览器半：标题栏 `conversation.session.header.utilities` 槽位 order `-12` 的「谷峰」chip
+  （off / paused+倒计时 / active / busy 四态、失败 Toast、15 秒轮询 + 1 秒倒计时、能力探测
+  405 时换隐藏占位）；en/zh 各 18 个 `offpeak.*` 词条；`data-dsh-offpeak-button` /
+  `data-offpeak-state` / `data-offpeak-enabled` 测试钩子；
+- Config 四个 volatile 字段：`offPeakStart`（默认 00:30）、`offPeakEnd`（默认 08:30）、
+  `timeZone`（默认 Asia/Shanghai）、`defaultEnabled`（默认 false）；
+- `package.json` 的 exports/files/keywords、`cordis.patch.yml` 第四行、
+  `offpeak/locale/{en,zh}.json`。
+
+**行为与边界**：
+
+- `status.paused = enabled && 峰时`（本会话），`diag.paused` = 全局峰时；
+- 开关即时生效：峰时打开立即暂停（必要时中断当前轮）；关闭立即释放，队列里的消息马上开始跑；
+- 子代理覆盖：沿 live 祖先链判断，禁用父会话时子树 hold 一并释放；
+- 不经过 Agent 的辅助模型调用（例如手动「翻译推理」这类直接调 `llm` 的按钮）不在暂停范围内；
+  被中断轮次里**已经执行完**的工具调用不会回退；
+- 没有 `agents` 服务的部署（headless 等）里组件干净激活但无事可做；Host 重启后开关偏好仍在
+  （`offpeak.json`），hold / interrupted 是进程内状态、重启后按「峰时该暂停」重新推导；
+- 停用 `dsh-session-enhance-offpeak` 行 → RPC 落 SPA fallback（405）→ chip 换成隐藏占位，
+  该会话立即不再暂停。
+
+**验证**：
+
+- 离线：单测 **262/262**（新增 `offpeak-window/-store/-controller/-rpc` 与 `offpeak-client`
+  用例：窗口边界/跨午夜/非法配置、原子写/容量/损坏容忍、创建窗口 arm、首个 prompt 在 arm 前被
+  cancel、running→cancel keepInbox、队列消息不被误 cancel、释放续跑、子代理覆盖正/负、
+  禁用/dispose、RPC 端点与入参校验、浏览器半注册/词典/状态机/轮询清理）；`node --check` 全部
+  改动文件；
+- 真实 Loader 合成（headless 沙箱）：`devkit_sandbox_compose` 输出 **4 行**（含
+  `id: dsh-session-enhance-offpeak` / `name: dsh-session-enhance/offpeak`），headless 跑任务
+  exit 0、stderr 空（无 `did not activate`）；
+- **真实 UI 沙箱端到端（主链路，lead 复核）**：web 沙箱、真实 Chrome、真实 `deepseek-flash`；
+  profile patch 把谷时窗口设为 15:53 开始，15:41 点开关（`paused` + 倒计时 11m24s）并发
+  「只回复 VALLEY-QUEUED-OK」：
+  - 会话日志 seq34 `agent/inbox/spliced` time=`1795592505.47`（15:41:45.47）之后 **8m48s 内
+    只有这一条 inbox splice，没有任何 `turn/start` / `user/message` / `assistant/message`**
+    ——暂停期 0 次模型调用；
+  - seq35 `turn/start` time=`1795593180.02`（**15:53:00.02，窗口起点后 20ms**）→ seq42
+    `assistant/message` 15:53:06.66；UI 回复 `VALLEY-QUEUED-OK`、chip 变 `active`、队列清空；
+  - 暂停中刷新页面：chip 仍 `paused`、队列条仍显示那条消息（状态来自 Host，不是前端内存）；
+  - 关开关后发「只回复 DIRECT-OK」→ 立即进入「深度求索中」并 25 秒完成（对照组成立）。
+- **独立验证（verifier，另一沙箱 + 另一模型会话）**：A–F 全绿，另加「回合运行中切暂停」e2e：
+  seq39 `turn/start` 15:51:58.698 → 点暂停 → seq47 `turn/end`
+  `reason:{kind:"aborted",reason:{kind:"hook",reason:"offpeak-pause"}}` 15:51:59.756（该轮
+  **无** `assistant/message`）→ seq49 `turn/start` 15:54:00.002（窗口起点后 2ms）→ seq54
+  `assistant/message` 15:54:17.017；UI 依次显示「已停止」「已请求继续生成」「已完成」。
+  同一验证里确认：暂停期 15:27:11.773（inbox splice）→ 15:36:00.008（`turn/start`）之间
+  **零** `turn/start` / `assistant/message`；`offpeak.json` 落盘为
+  `{"version":1,"sessions":{"<id>":{"enabled":true,...}}}`；插件页「包含的组件 **共 4 个 ·
+  4 运行中**」第 4 行是中文「谷峰会话」（不是包名/子路径）；停用该行后 chip 换成
+  `data-offpeak-hidden="disabled"`、`POST /dsh-session-enhance-offpeak/status` 返回 **405**，
+  重新启用后 chip 恢复；
+- 界面文案门禁：`check-plugin-locale.mjs` ✓（卡片标题/描述中文化）；工具名门禁：
+  `check-tool-names.mjs` ✓（本组件不注册工具）。
+
 ## 5.6.6 — 2026-11-25
 
 ### 文档：README 补「加载方式」标记（devkit 约定 §10.0）

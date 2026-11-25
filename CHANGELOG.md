@@ -3,6 +3,48 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 6.2.1 — 2026-11-25
+
+### 修复：「新建梁谷会话」按钮在真实桌面环境点了没反应（创建成孤儿空白会话）
+
+**现象**：桌面 profile 里点按钮看起来完全没反应；实际上每次点击都建出了一个空白会话，
+但它**没有挂到任何工作区**，侧边栏看不到、界面也无法导航过去。真实环境的
+`offpeak.json` 里留下了连续 7 个 `enabled:true` 的会话 id，`workspace.json` 的
+`sessionIds` 里一个都没有——正是“创建成功但没有归属/没有跳转”。
+
+**根因**：6.2.0 的实现只从 `agents.get(sourceSessionId)?.session.header` 取 cwd/工作区。
+新建会话页（hero）上的空白会话**通常还没有 live Agent**（Agent 在第一轮提示时才创建），
+于是 Host 拿不到 cwd → 调用 `sessionController.create()` 时不带 workspaceId/cwd
+→ 用默认目录建会话且**不 attach 到工作区**。客户端随后 `openSession(newId)` 找不到可
+导航的会话（列表里没有它），异常被兜底吞掉——用户看到的就是“按钮没用”。
+
+**修复**（`lib/offpeak/create.mjs`，从 `offpeak/index.js` 抽出的可单测模块）：
+
+1. 源会话头：live Agent 优先，其次从持久化读
+   `sessionQuery.traceSession(sourceSessionId).target.header`——冷会话/空白会话同样能拿到
+   `cwd` 与 `agentPreset`；
+2. 工作区：优先按「源会话是否为该工作区成员」（`workspace.sessionIds`）判断，其次按 cwd
+   调 `workspaceRegistry.resolveByPath`；找到就带 `workspaceId` 创建，Host 会把新会话
+   attach 进工作区；万一走了 cwd 分支再显式 `workspace.attachSession()` 兜底；
+3. 客户端（`client.js`）：创建成功后先 `ctx.sessions.refresh()`（存在时）再
+   `uiWorkspace.openSession(newId)`；没有 refresh 接口时补一次 300ms 延迟重试，避免列表
+   尚未更新导致的导航竞态。
+
+**验证**：
+
+- 单测 **302/302**（新增 `test/offpeak-create.test.mjs` 7 例：冷会话经持久化 header
+  取 cwd + 成员关系带 workspaceId、resolveByPath 分支、无工作区回退 cwd、live/header
+  preset 两条路径、显式 attach 兜底、UNAVAILABLE/CREATE_FAILED/无 id 失败且不写开关）。
+- **真实 UI 沙箱复现+验证**（同时装 `dsh-ungrouped` 让页面显示「未分组」，与桌面环境一致）：
+  重启后点按钮 → 行从旧空白会话切到新的 `session-c888e7a6…`；`workspace.json` 的
+  「未分组」`sessionIds` 里出现该 id；`offpeak.json` 写入 `enabled:true`；在新会话里发
+  「按钮验证：只回复 FIX-OK」→ 日志确认该消息与 assistant 回复都落在 `session-c888e7a6…`
+  （旧空白会话保持 0 条消息）——创建、归属、导航三件事都成立。
+- `node --check` 全部改动文件；界面文案门禁 ✓、工具名门禁 ✓。
+
+> 旧版本留下的 7 个孤儿空白会话没有删除（属于用户数据，且都是空会话），可在侧边栏
+> 「未分组」派生分组里看到并自行删除。
+
 ## 6.2.0 — 2026-11-25
 
 ### 新能力：「新建梁谷会话」按钮；高峰倒计时改成小时-分钟 / 分钟-秒；子代理覆盖补全

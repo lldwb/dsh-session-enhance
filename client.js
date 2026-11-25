@@ -175,6 +175,7 @@ window.__ModuleLoader__.load({
       'lianggu.newBusy': 'Creating a Lianggu session…',
       'lianggu.newFailed': 'Could not create a Lianggu session ({code})',
       'lianggu.newNoConnection': 'Not connected to the host; the Lianggu session was not created',
+      'lianggu.created': 'Lianggu session created; opening it…',
 
       // 上下文用量 + 手动压缩
       'context.label': 'Context',
@@ -308,6 +309,7 @@ window.__ModuleLoader__.load({
       'lianggu.newBusy': '正在新建梁谷会话…',
       'lianggu.newFailed': '新建梁谷会话失败（{code}）',
       'lianggu.newNoConnection': '未连接到 Host，无法新建梁谷会话',
+      'lianggu.created': '已创建梁谷会话，正在打开…',
 
       // 上下文用量 + 手动压缩
       'context.label': '上下文',
@@ -2138,25 +2140,31 @@ window.__ModuleLoader__.load({
     const LIANGGU_NEW_INITIAL = Object.freeze({ busy: false, notice: null });
 
     /**
-     * 新建按钮的图标：复用官方右上角那个方形「面板」图标（`IconPanelLeftOutlineRegular`，
-     * 官方侧栏/右侧栏/打开方式三处都在用）；运行时不认识这个导出时退回同款内联方形 SVG。
+     * 新建按钮的图标：复用官方右上角那个方形「面板」图标（`IconPanelLeftOutlineRegular`）。
+     *
+     * 官方右上角按钮是**左侧栏图标镜像**（`ExpandButton.module.css` 里 `scaleX(-1)`，
+     * 分隔线在右）；这里做同样的镜像，保证和右上角那个方形按钮看起来一模一样。
+     * 运行时不认识这个导出时退回同款内联方形 SVG（也一起镜像）。
      *
      * @returns {any} 图标元素。
      */
     function liangguNewIcon() {
       const Icon = P.IconPanelLeftOutlineRegular;
-      if (typeof Icon === 'function') return jsx(Icon, { size: 15 });
-      return jsxs('svg', {
-        width: 15,
-        height: 15,
-        viewBox: '0 0 16 16',
-        fill: 'none',
-        'aria-hidden': 'true',
-        children: [
-          jsx('rect', { x: 2, y: 3, width: 12, height: 10, rx: 2, stroke: 'currentColor', strokeWidth: 1.2 }),
-          jsx('line', { x1: 9.5, y1: 3, x2: 9.5, y2: 13, stroke: 'currentColor', strokeWidth: 1.2 })
-        ]
-      });
+      const glyph =
+        typeof Icon === 'function'
+          ? jsx(Icon, { size: 15 })
+          : jsxs('svg', {
+              width: 15,
+              height: 15,
+              viewBox: '0 0 16 16',
+              fill: 'none',
+              'aria-hidden': 'true',
+              children: [
+                jsx('rect', { x: 2, y: 3, width: 12, height: 10, rx: 2, stroke: 'currentColor', strokeWidth: 1.2 }),
+                jsx('line', { x1: 9.5, y1: 3, x2: 9.5, y2: 13, stroke: 'currentColor', strokeWidth: 1.2 })
+              ]
+            });
+      return jsx('span', { style: { display: 'inline-flex', transform: 'scaleX(-1)' }, children: glyph });
     }
 
     /**
@@ -2214,6 +2222,14 @@ window.__ModuleLoader__.load({
             notifyFailure(code);
             return;
           }
+          // 新会话是**空白会话**，页面外观和当前新建页几乎一样；先给一条可见的成功提示，
+          // 再导航，避免用户以为“没反应”。
+          base.update((current) => ({
+            ...current,
+            notice: { text: t('lianggu.created'), tone: 'success', sequence: sequence++ }
+          }));
+          await new Promise((resolve) => setTimeout(resolve, 600));
+
           // Host 已经创建好并把该会话的梁谷开关写为启用；这里只负责导航到它。
           // 新建会话要等客户端列表刷新后才能被 openSession 找到；先刷新一次会话列表，
           // 再按几个间隔重试导航（openSession 对同一目标幂等，列表晚到时也能补上）。

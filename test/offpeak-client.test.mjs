@@ -772,10 +772,15 @@ test('渲染：新建按钮有 data 钩子/标题，busy 禁用，能力停用�
   assert.equal(normal.button.props.disabled, false);
   assert.equal(normal.button.props.title, '新建梁谷会话（自动开启梁谷）');
   assert.equal(normal.button.props['aria-label'], '新建梁谷会话（自动开启梁谷）');
-  // 图标：优先用 primitives 的官方图标（测试替身里是函数），否则内联 svg。
+  // 图标：优先用 primitives 的官方图标（测试替身里是函数），否则内联 svg；
+  // 并且必须与官方右上角按钮一致地做水平镜像（scaleX(-1)）。
   assert.ok(
     collectNodes(normal.tree, (node) => node.type === 'svg' || typeof node.type === 'function').length >= 1,
     '新建按钮必须渲染图标（primitives 图标或内联 svg）'
+  );
+  assert.ok(
+    collectNodes(normal.tree, (node) => String(node.props?.style?.transform ?? '') === 'scaleX(-1)').length >= 1,
+    '新建按钮图标必须镜像（与右上角按钮一致）'
   );
 
   const busy = renderNewButton(env.module, env.t, { busy: true });
@@ -819,6 +824,9 @@ test('新建梁谷会话：busy 同步、RPC payload 正确、成功后 openSess
   assert.deepEqual(created.map((call) => call.payload), [{ sessionId: 'session-src' }]);
   assert.ok(created.every((call) => call.channel === '/dsh-session-enhance-offpeak'));
   assert.deepEqual(opened, ['session-created']);
+  // 成功提示必须先出现（新空白会话页面外观与当前页相同，没有提示会被当成没反应）。
+  assert.ok(control.getSnapshot().notice !== null);
+  assert.ok(control.getSnapshot().notice.text.includes('已创建梁谷会话'));
 });
 
 test('新建梁谷会话失败：业务错误码进 Toast，且不打开新会话；无连接单独收口', async (t) => {

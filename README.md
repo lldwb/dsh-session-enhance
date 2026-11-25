@@ -49,7 +49,7 @@
 | 会话分享 | `dsh-session-enhance/share` | 标题栏分享按钮 + 工具 `session_share` + 免登录只读页 `/share/<token>` |
 | 中断重试 | `dsh-session-enhance/retry`（行 id `dsh-session-enhance-retry`） | 用户主动停止后 composer 右侧的「重试」按钮 + RPC `/dsh-session-enhance-retry`；只补官方「继续生成」不覆盖的中断场景（失败仍交给官方） |
 | 侧边提问 | `dsh-session-enhance/sideask`（行 id `dsh-session-enhance-sideask`） | 右侧栏标签（页面型 + guide 入口）、标题栏入口、选中文字的「引用文本 / 侧边提问」合并弹层 + RPC `/dsh-session-enhance-sideask`（probe / create / setPreset / restore / forget）；侧边会话是**新开的只读会话**，按会话 id 查询原会话来回答 |
-| 梁谷 | `dsh-session-enhance/offpeak`（行 id `dsh-session-enhance-offpeak`） | 标题栏右上角的「梁谷」开关 + Host 的 Agent hold 控制器 + RPC `/dsh-session-enhance-offpeak`（status / setEnabled / diag）；高峰时段暂停模型调用、输入留在队列，空闲时段自动恢复 |
+| 梁谷 | `dsh-session-enhance/offpeak`（行 id `dsh-session-enhance-offpeak`） | 标题栏右上角的「梁谷」开关 + 新建会话行「新建梁谷会话」按钮 + Host 的 Agent hold 控制器 + RPC `/dsh-session-enhance-offpeak`（status / setEnabled / createLiangguSession / diag）；高峰时段暂停模型调用、输入留在队列，空闲时段自动恢复 |
 
 > **为什么第一个组件叫「会话增强」而不是「会话 ID / 会话检视」**：浏览器半（四块界面）只能挂在
 > **精确包名**那一行上——`@deepseek-ai/dsh-client-modules` 的 `locatePkgJson()` 只接受
@@ -481,10 +481,16 @@ TIMEOUT / TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并有已准入的用户�
 - **开关长什么样**（`conversation.session.header.utilities` 槽位，order `-12`，落在分享 / 复制
   按钮左侧）：
   - 关：灰字「梁谷」，title 显示高峰时段规则与「点击开启」；
-  - 开 + 高峰：琥珀色「梁谷 暂停 2h13m」（倒计时到空闲时段开始），title 写明「将在 HH:MM
+  - 开 + 高峰：琥珀色「梁谷 暂停 2h13m」（倒计时到空闲时段开始；**剩余 > 1 小时显示
+    `3h05m`，≤ 1 小时显示 `12m34s`，不足 1 分钟显示 `0m42s`**），title 写明「将在 HH:MM
     自动恢复」与队列条数；
   - 开 + 空闲：绿色「梁谷 空闲」，title 写明「将在 HH:MM 自动暂停」；
   - 切换中：置灰「…」；失败时 chip 旁弹 Toast（带错误码），状态回退到切换前的值。
+- **一键新建梁谷会话**（6.2.0 起）：新建会话页「未分组 / 标准模式」那一行、**预设下拉框右侧**
+  有一个方形图标按钮（图标与页面右上角那个方形按钮相同，右上角原按钮保留）。点击 = 在**当前
+  会话所在工作区**新建一个空白会话，并**立刻把该会话的梁谷开关写为启用**，然后打开这个新会话：
+  高峰时段它会直接以「暂停」状态出现、空闲时段则正常。创建失败（没有 `sessionController`、
+  工作区解析失败等）会在按钮旁弹 Toast，不会留下半创建的会话。
 - **高峰发消息会怎样**：消息被 Host 接收并进入**官方 durable 队列**（暂停中先显示为「待发送」
   气泡；刷新页面后出现在 composer 上方的队列条——和平时「会话忙时排队」是同一个 UI，可编辑/
   删除），但**不会开始任何模型调用**；空闲时段开始后按队列顺序逐条执行。
@@ -492,7 +498,8 @@ TIMEOUT / TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并有已准入的用户�
   所以不会继续在高峰烧 token；这一轮在空闲时段会**自动续跑**——聊天里会出现一条紧凑的
   「已请求继续生成」标记（官方 continuation 触发的空 `source.kind: 'retry'` 消息）。
 - **子代理也算「该会话」**：沿 `session.header.parentSession` 向上，任一祖先会话启用了梁谷，
-  子树里的 live Agent 一并被 hold/cancel；禁用父会话时子树一起释放。
+  子树里的 live Agent 一并被 hold/cancel；**祖先会话即使已经关闭（没有 live Agent），只要它的
+  开关记录仍是启用，子代理也照样被覆盖**（6.2.0 起）；禁用父会话时子树一起释放。
 - **开关是即时的**：高峰打开 → 立刻暂停（必要时中断当前轮）；空闲打开 → 不暂停；关闭 →
   立刻释放，队列里压着的消息马上开始跑。
 - **配置**（设置 → 插件 → 会话增强 → 包含的组件 → 梁谷，四个字段都是 volatile，保存后热更新）：
@@ -716,7 +723,8 @@ AutoCompact → Reactive Compact）。本插件按 DSH 的压缩 seam 做了对�
 
 | 组件 | 槽位 | order |
 |---|---|---|
-| 梁谷 | `conversation.session.header.utilities`（标题栏右上角） | -12 |
+| 梁谷（新建按钮） | `conversation.hero.options`（新建会话行，预设右侧；用注入的 `:has()` 拉回行首方向） | 0 |
+| 梁谷（标题栏开关） | `conversation.session.header.utilities`（标题栏右上角） | -12 |
 | 分享 | `conversation.session.header.utilities`（标题栏右侧小按钮） | -11 |
 | 复制 ID | 同上 | -10 |
 | 中断重试 | `conversation.input.right`（composer 右侧，主按钮之前） | 0 |
@@ -830,6 +838,7 @@ token 本身（24 字节 / 192 bit 随机、不可枚举、可撤销），不靠
 
 | 层 | 内容 | 结果 |
 |---|---|---|
+| 6.2.0 新建梁谷会话按钮 + 倒计时格式 + 子代理范围 / DSH 0.2.2-rc.5 | 单测 **296/296**（倒计时边界：>1h=`3h05m`、59m59s、1h整点=`60m00s`、`0m42s`、非法=`0m00s`；新建按钮渲染/点击流/失败与无连接/隐藏占位；hero slot 注册；Host `coveredOf` 父会话离线但启用 → 子代理仍 hold、离线且无记录 → 不 hold；`createLiangguSession` 端点 6 例）；`node --check`；真实 UI 沙箱（真实 Chrome + 真实 `deepseek-flash`）：新建会话页「标准模式」右侧方形按钮（预设 rect 546–652、按钮 654–682，**间距 2px**，图标与右上角「打开右侧边栏」同款、原按钮保留）；点击 → 新会话 `session-30b463a5…` 创建且 `offpeak.json` 写入 `enabled:true`；首条消息后 chip=`paused`「梁谷 暂停 **1h17m**」（>1h 格式）+ title 含「将在 21:33 自动恢复」「队列中 1 条消息」；会话日志仅 1 条 `agent/inbox/spliced`（20:15:10.097Z），**无 turn/start、无 assistant/message**；≤1h 格式由单测钉住（沙箱未另配 <1h 窗口）；`check-plugin-locale.mjs` / `check-tool-names.mjs` ✓ | 通过 |
 | 6.1.0 侧边提问组件 / DSH 0.2.2-rc.5 | 单测 **286/286**（新增 `test/sideask.test.mjs`：提示词（参考会话 id / 工具清单 / 只读约束 / 引用块 / 中英文案）、RPC 信封与参数校验、控制器「沿用工作区与 Agent 预设建新会话 + 立即切只读 + fail-closed（只读切不上归档新会话）」、保留时恢复**权限预设**（不是 Agent 预设）与 catalog 兜底、forget；`test/sideask-client.test.mjs`：bundle 形状、页面型标签 + guide 卡片、标签正文私有 session 子槽、标题栏入口、合并弹层（`quote` key priority -1 shadow + 兜底 key）、405 时撤销全部注册、记录表与引用格式化；`test/entries.test.mjs` 增加第五个入口）；`node --check` 全部改动文件；`check-plugin-locale.mjs` / `check-tool-names.mjs` ✓；devkit web/UI 沙箱（真实 Chrome + 真实 deepseek-flash）：标题栏「侧边提问」按钮 → 新建**只读**会话（权限控件「仅可查看」），输入框预填提示词（含参考会话 id 与 `session_overview / session_grep / session_read / session_lookup`，以「我的问题：」收尾）；在侧边会话提问「幸运数字是多少」→ 模型实调 `session_grep` / `session_overview`（参数为参考会话 id）并答出父会话里的「7391」；点「保留」→ 权限变「工作区内修改」、标签「已保留 · 普通会话」；点「改回临时」→ 回到「仅可查看」；选中文字 → 弹层并排「引用文本」「侧边提问」（同一行 x=403/480）；旧版崩溃点（`React is not defined`）已修（client 半补 `require('react')`）；控制台 0 错误 | 通过 |
 | 6.0.0 梁谷 / 官方空闲时段 / DSH 0.2.2-rc.5 | 单测 **268/268**（`offpeak-window` 15 例：工作日 09:00–12:00/14:00–18:00 峰时与边界、午休/夜间空闲、周末全天空闲、2026 法定节假日工作日空闲（01-01 周四、02-23 周一）、节后恢复、周五 18:00 后下一 pause=下周一 09:00、连续节假日跳过、跨时区 DST、非法配置回退；controller/rpc/entries/client 同步新契约）；**独立离线复核 64/64 PASS**（固定时间戳 `isPeakAt` 表、`DEFAULT_HOLIDAYS` 与国务院 2026 通知逐段核对 33 天、`nextBoundary` 跨周末/当日边界）；`node --check`；headless 沙箱 compose **4 行**、任务 exit 0/stderr 空；**真实 UI 沙箱（lead，真实 Chrome + 真实 deepseek-flash）**：`peakWindows 09:00-18:22` 下 18:19 开启 → `paused`「梁谷 暂停 2m51s」+ title「将在 18:22 自动恢复」「队列中 1 条消息」；18:19:04 发消息后日志 **2m56s 只有一条 inbox splice、零 turn/start、零 assistant/message**，18:22:00.012（边界后 12ms）才 `turn/start`、18:22:05 回复 `LIANGGU-QUEUED-OK`，chip 变 `idle`「梁谷 空闲」、下一次 pause 显示次日 09:00；独立 verifier 验插件页「共 4 个 · 4 运行中」第 4 行中文「梁谷」；`check-plugin-locale.mjs` / `check-tool-names.mjs` ✓ | 通过 |
 | 5.7.0「谷峰会话」（后被 6.0.0 修正，仅历史） | 单测 **262/262**（新增 `offpeak-window/-store/-controller/-rpc` 与 `offpeak-client` 用例：窗口边界/跨午夜/非法配置、原子写/容量/损坏容忍、创建窗口 arm、首个 prompt 在 arm 前被 cancel、running→cancel keepInbox、队列消息不被误 cancel、释放续跑、子代理覆盖正/负、禁用/dispose、RPC 入参校验、浏览器半注册/词典/状态机/轮询清理）；`node --check` 全部改动文件；devkit headless 沙箱 compose 输出 **4 行**（含 `dsh-session-enhance-offpeak`）、任务 exit 0/stderr 空；**lead 真实 UI 沙箱（真实 Chrome + 真实 `deepseek-flash`）**：15:41 点开关进 `paused`+倒计时并发消息 → 15:41:45.47 inbox splice 之后到 15:53:00.02 之间日志 **0 条 `turn/start` / 0 条 `assistant/message`**，15:53:00.02（窗口起点后 20ms）自动 `turn/start`、15:53:06 回复 `VALLEY-QUEUED-OK`、chip 变 `active`、队列清空；暂停中刷新后 chip 仍 paused、队列条仍在；关开关后发消息立即开始并在 25 秒内完成；**独立 verifier（另一沙箱/会话）**：A–F 全绿，另验「回合运行中切暂停」= `turn/end aborted/hook/offpeak-pause`（该轮无 assistant）→ 边界后 2ms 自动 `turn/start` → 17 秒完成并显示「已请求继续生成」，以及插件页「包含的组件 **共 4 个 · 4 运行中**」第 4 行为中文「谷峰会话」、停用该行后 chip 隐藏且 `POST /dsh-session-enhance-offpeak/status` = **405**、重新启用后 chip 恢复；`offpeak.json` 落盘内容核对；`check-plugin-locale.mjs` / `check-tool-names.mjs` 均 ✓。**注意：该版本的窗口语义（00:30–08:30）是错的，6.0.0 已按官方口径重做并更名「梁谷」** | 通过（机制）；口径已作废 |

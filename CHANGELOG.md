@@ -3,6 +3,55 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 6.2.0 — 2026-11-25
+
+### 新能力：「新建梁谷会话」按钮；高峰倒计时改成小时-分钟 / 分钟-秒；子代理覆盖补全
+
+> 本版基于 6.1.0（新增「侧边提问」组件）之上，只改梁谷组件。
+
+**新增按钮**：新建会话页（「未分组 / 标准模式」那一行）在**预设下拉框右侧**新增一个方形图标
+按钮，图标复用页面右上角那个方形按钮（`IconPanelLeftOutlineRegular`，右上角原按钮保留）。
+点击 = 创建一个新的**梁谷会话**：Host 在源会话所在工作区新建空白会话并把该会话的梁谷开关
+写为启用，然后浏览器打开新会话；高峰时段会立刻按暂停处理，空闲时段则正常。
+
+- 客户端注册在真实 slot `conversation.hero.options`（list / session scope），并用注入的
+  `:has()` 样式把该行的 `heroOptions` 容器从行尾拉回预设右侧；按钮带 `data-dsh-lianggu-new`。
+- Host 新增 RPC 端点 `createLiangguSession`（payload `{sessionId}`）：`sessionController.create`
+  同一工作区建空白会话（`workspaceRegistry.resolveByPath` 解析工作区、`agentPresets.presetForSession`
+  沿用 preset），成功后 `controller.setEnabled(newId, true)`；失败返回 `UNAVAILABLE` /
+  `CREATE_FAILED`，界面用 Toast 报错。
+- 没有 `sessionController` 的部署里该端点返回 `UNAVAILABLE`（status/setEnabled/diag 不受影响）。
+
+**倒计时格式**（用户要求）：高峰暂停时 chip 上的剩余时间——
+- 剩余 **> 1 小时**：`3h05m`（小时 + 两位分钟）；
+- 剩余 **≤ 1 小时**：`12m34s`（分钟 + 两位秒；不足 1 分钟显示 `0m42s`）。
+
+**子代理覆盖补全（用户要求「整个会话，含它的子智能体们」）**：`coveredOf` 改为**先检查祖先
+会话的启用记录，再看它有没有 live Agent**——父会话已关闭（没有 live Agent）但开关仍写着启用时，
+它的子代理也必须被梁谷覆盖；父会话既不在线也没记录时仍不覆盖。新增单测覆盖这两种情况。
+
+**验证**：
+
+- 单测 **296/296**：新增 `formatOffpeakCountdown` 边界（>1h=`3h05m`、59m59s、1h整点=`60m00s`、
+  不足1分钟=`0m42s`、非法/负数=`0m00s`）、`LiangguNewSessionButton` 渲染（data 钩子/标题/busy
+  禁用/能力停用与无 session 隐藏占位/失败 Toast）、点击流（busy 同步、RPC method+payload、
+  成功后 `uiWorkspace.openSession(新id)`、失败码与无连接文案、不误开新会话）、hero slot 注册
+  （`conversation.hero.options` / id / order / locale）与词典键集；Host 侧新增
+  「父会话离线但启用 → 子代理仍被 hold/cancel」「父会话离线且无记录 → 不 hold」以及
+  `createLiangguSession` 端点 6 例。
+- **真实 UI 沙箱（真实 Chrome + 真实 `deepseek-flash`，6.2.0）**：
+  - 新建会话页「标准模式」右侧出现方形按钮（实测预设 rect `546–652`、按钮 `654–682`，间距
+    **2px**），图标与右上角「打开右侧边栏」按钮同款，**右上角原按钮保留**；
+  - 点击 → Host 创建新会话 `session-30b463a5…`，`offpeak.json` 写入
+    `{"enabled":true}`；新会话第一条消息后 chip=`paused`、文本 **「梁谷 暂停 1h17m」**
+    （>1 小时 → 小时+分钟），title 含高峰时段、「将在 21:33 自动恢复」「队列中 1 条消息」；
+  - 新会话日志只有一条 `agent/inbox/spliced`（20:15:10.097Z），**无 `turn/start`、无
+    `assistant/message`**（按钮建出来的会话确实处于暂停）；
+  - 按钮失败/无连接路径由离线单测覆盖（沙箱未构造失败注入）。
+- ≤1 小时倒计时格式（`12m34s` / `0m42s` / `60m00s`）由单测钉死；真实沙箱只跑了 >1h 分支
+  （时间窗覆盖不足 1 小时的场景没另配一套沙箱）。
+- 界面文案门禁 ✓、工具名门禁 ✓。
+
 ## 6.1.0 — 2026-11-25
 
 ### 新组件「侧边提问」（`dsh-session-enhance/sideask`）

@@ -71,7 +71,7 @@ test('四个入口都导出 name / inject / apply，且 name 与 Loader 行的 s
     assert.ok(Array.isArray(entry.inject), 'inject 必须是数组');
   }
 
-  // 前两个入口注册工具，都依赖 tools；中断重试与谷峰会话不注册工具，不声明这个硬依赖。
+  // 前两个入口注册工具，都依赖 tools；中断重试与梁谷不注册工具，不声明这个硬依赖。
   assert.deepEqual(copyEntry.inject, ['tools']);
   assert.deepEqual(shareEntry.inject, ['tools']);
   assert.deepEqual(retryEntry.inject, []);
@@ -216,7 +216,7 @@ test('中断重试行不注册工具，只挂 session/event 与 RPC 通道', () 
   assert.ok(deps.includes('connection,webServer'), '应声明中断重试 RPC 通道');
 });
 
-test('谷峰会话行不注册工具，挂 agent 生命周期事件、配置热更新事件与 RPC 通道', () => {
+test('梁谷行不注册工具，挂 agent 生命周期事件、配置热更新事件与 RPC 通道', () => {
   const previousHome = process.env.DSH_HOME;
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-session-enhance-offpeak-entries-'));
   process.env.DSH_HOME = home;
@@ -224,7 +224,7 @@ test('谷峰会话行不注册工具，挂 agent 生命周期事件、配置热�
     const ctx = mockCtx();
     offpeakEntry.apply(ctx);
 
-    assert.deepEqual(ctx.collected.tools, [], '谷峰会话组件不该注册模型工具');
+    assert.deepEqual(ctx.collected.tools, [], '梁谷组件不该注册模型工具');
 
     const events = ctx.collected.events.map((entry) => entry.event);
     for (const required of ['agent/created', 'agent/status', 'agent/disposed']) {
@@ -235,7 +235,7 @@ test('谷峰会话行不注册工具，挂 agent 生命周期事件、配置热�
     assert.ok(events.includes('settings/document-updated'), '应监听设置页保存');
 
     const deps = ctx.collected.injections.map((entry) => entry.deps.join(','));
-    assert.ok(deps.includes('connection,webServer'), '应声明谷峰会话 RPC 通道');
+    assert.ok(deps.includes('connection,webServer'), '应声明梁谷 RPC 通道');
 
     // 控制器挂载点交给 ctx.effect：组件停用即释放全部 hold。
     assert.ok(ctx.collected.effects.length >= 1, '应通过 ctx.effect 注册 dispose');
@@ -248,11 +248,10 @@ test('谷峰会话行不注册工具，挂 agent 生命周期事件、配置热�
   }
 });
 
-test('谷峰会话配置：四个字段都 volatile、默认值正确（设置页可热更新）', () => {
+test('梁谷配置：四个字段都 volatile、默认值正确（设置页可热更新）', () => {
   const parsed = new offpeakEntry.Config({});
   for (const [key, expected] of [
-    ['offPeakStart', '00:30'],
-    ['offPeakEnd', '08:30'],
+    ['peakWindows', '09:00-12:00,14:00-18:00'],
     ['timeZone', 'Asia/Shanghai'],
   ]) {
     const field = offpeakEntry.Config.dict[key];
@@ -261,25 +260,43 @@ test('谷峰会话配置：四个字段都 volatile、默认值正确（设置�
     assert.equal(field.meta.default, expected, key);
     assert.equal(parsed[key].get(), expected, key);
   }
+
+  // 节假日默认值 = 2026 国务院通知的日期串（33 天），空串表示不豁免。
+  const holidaysField = offpeakEntry.Config.dict.holidays;
+  assert.equal(holidaysField.type, 'string');
+  assert.equal(holidaysField.meta.volatile, true);
+  const holidaysText = parsed.holidays.get();
+  assert.equal(holidaysText.split(',').length, 33);
+  assert.ok(holidaysText.startsWith('2026-01-01'));
+  assert.ok(holidaysText.includes('2026-10-07'));
+
   const defaultField = offpeakEntry.Config.dict.defaultEnabled;
   assert.equal(defaultField.type, 'boolean');
   assert.equal(defaultField.meta.volatile, true);
   assert.equal(defaultField.meta.default, false, '新会话默认不启用');
   assert.equal(parsed.defaultEnabled.get(), false);
+
+  // 旧字段（单窗口模型）必须已经删掉。
+  assert.equal(offpeakEntry.Config.dict.offPeakStart, undefined);
+  assert.equal(offpeakEntry.Config.dict.offPeakEnd, undefined);
 });
 
-test('谷峰会话：非法窗口/时区回退默认值且只 warn 一次，不影响激活', () => {
+test('梁谷：非法高峰时段/时区/节假日回退默认值且只 warn 一次，不影响激活', () => {
   const warnings = [];
   const ctx = mockCtx();
   ctx.logger = { info() {}, debug() {}, warn: (message) => warnings.push(message) };
 
-  // 两个字段都非法：窗口回退 00:30–08:30、时区回退 Asia/Shanghai。
-  const config = new offpeakEntry.Config({ offPeakStart: '99:99', offPeakEnd: '25:00', timeZone: 'Mars/Olympus' });
+  // 三个字段都非法：时段回退 09:00-12:00,14:00-18:00、时区回退 Asia/Shanghai、坏日期被忽略。
+  const config = new offpeakEntry.Config({
+    peakWindows: '99:99-00:00',
+    timeZone: 'Mars/Olympus',
+    holidays: '2026-01-01,2026-02-30',
+  });
   assert.doesNotThrow(() => offpeakEntry.apply(ctx, config));
 
   assert.equal(warnings.length, 1, '只 warn 一次');
   assert.match(warnings[0], /配置有非法值/u);
-  assert.match(warnings[0], /00:30/u);
+  assert.match(warnings[0], /09:00-12:00,14:00-18:00/u);
   assert.match(warnings[0], /Asia\/Shanghai/u);
 
   // 反复触发配置重载也只 warn 一次（缓存 + 只提示一次的标志）。

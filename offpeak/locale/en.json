@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Off-peak Sessions",
-    "description": "Run sessions only during DeepSeek off-peak hours: outside the off-peak window (00:30–08:30 by default) an enabled session's agent is held, prompts you send meanwhile stay queued, and work resumes automatically once off-peak begins. Toggle it per session; the window, time zone and the default for new sessions are hot-reloadable on the settings page."
+    "title": "Liang Gu",
+    "description": "Run sessions only during DeepSeek's idle hours: peak hours are Beijing time Monday to Friday 09:00–12:00 and 14:00–18:00 (Chinese statutory holidays excluded); everything else — lunch break, nights, weekends, and entire holidays — is idle time. During peak hours an enabled session's agent is held, prompts you send meanwhile stay queued, and work resumes automatically once idle time begins. Toggle it per session; peak windows, time zone, the holiday list and the default for new sessions are hot-reloadable on the settings page."
   }
 }

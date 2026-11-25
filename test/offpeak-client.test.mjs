@@ -1,14 +1,14 @@
 /**
- * `dsh-session-enhance` 浏览器半里「谷峰会话」chip 的离线冒烟测试。
+ * `dsh-session-enhance` 浏览器半里「梁谷」chip 的离线冒烟测试。
  *
  * 覆盖四件事（都不需要浏览器、不联网、不调模型）：
  *
  * 1. **bundle 形状**：`client.js` 通过 `window.__ModuleLoader__.load({ id, factory })`
  *    注册，工厂只 require 平台模块表里的两个说明符，并导出 `apply` / `inject` /
- *    `OffpeakButton` 与三个纯函数；
+ *    `OffpeakButton` 与四个纯函数；
  * 2. **槽位注册**：`apply(mockCtx)` 在 `conversation.session.header.utilities` 上注册
  *    `session-offpeak` 贡献（order -12），且原有三个组件仍在（防回归）；
- * 3. **词典**：`offpeak.*` 词条在 en / zh 两份词典里键集一致，中文是「谷峰 / 谷时 /
+ * 3. **词典**：`offpeak.*` 词条在 en / zh 两份词典里键集一致，中文是「梁谷 / 空闲时段 /
  *    暂停」这类自然文案；
  * 4. **行为**：纯函数（倒计时格式、状态判定、时区换算）＋ 组件渲染出的 `data-*`
  *    钩子与 title 文案 ＋ 控制器 RPC/定时器语义（busy → 服务端返回 → 失败回退并
@@ -213,7 +213,7 @@ async function flushAsync() {
 /**
  * 起一个「已 apply 的模块」：装好 fetch 替身（能力探测用）、执行 apply、等探测落地。
  *
- * @param {{ connection?: any, offpeakStatus?: number }} [options] - RPC 连接与谷峰通道的探测状态码。
+ * @param {{ connection?: any, offpeakStatus?: number }} [options] - RPC 连接与梁谷通道的探测状态码。
  * @returns {Promise<any>} 环境句柄（含 restore）。
  */
 async function setup(options = {}) {
@@ -248,7 +248,7 @@ async function setup(options = {}) {
 }
 
 /**
- * 取谷峰贡献项。
+ * 取梁谷贡献项。
  * @param {any} state - mock ctx 的记录。
  * @returns {any} `{ entry, component }`。
  */
@@ -353,11 +353,15 @@ const NEXT_CHANGE_AT = Date.UTC(2026, 0, 2, 0, 30);
 /** 3h05m 的毫秒数（chip 倒计时的展示样本）。 */
 const COUNTDOWN_MS = (3 * 60 * 60 + 5 * 60) * 1000;
 
-/** 谷时窗口（与 Host 默认配置一致）。 */
-const WINDOW = { start: '00:30', end: '08:30', timeZone: 'Asia/Shanghai' };
+/** 官方高峰时段（Host 默认配置，也是 title 里的展示样本）。 */
+const SCHEDULE = Object.freeze({
+  peakWindows: ['09:00-12:00', '14:00-18:00'],
+  timeZone: 'Asia/Shanghai',
+  holidaysCount: 0
+});
 
 /**
- * 造一个 Host 状态。
+ * 造一个 Host 状态（新契约：只有 `schedule`，不再有 `window` / `offPeak`）。
  * @param {Record<string, any>} overrides - 覆盖字段。
  * @returns {any} 状态对象。
  */
@@ -366,8 +370,8 @@ function statusOf(overrides = {}) {
     enabled: true,
     enabledSource: 'session',
     paused: false,
-    offPeak: true,
-    window: { ...WINDOW },
+    idle: true,
+    schedule: { ...SCHEDULE, peakWindows: [...SCHEDULE.peakWindows] },
     serverNow: NEXT_CHANGE_AT - COUNTDOWN_MS,
     nextChangeAt: NEXT_CHANGE_AT,
     nextChangeKind: 'pause',
@@ -403,12 +407,13 @@ test('bundle 用 window.__ModuleLoader__.load 注册，工厂只 require 平台�
   }
 });
 
-test('导出面：apply / inject / OffpeakButton 与三个纯函数', () => {
+test('导出面：apply / inject / OffpeakButton 与四个纯函数', () => {
   const module = loadModule();
   assert.equal(typeof module.OffpeakButton, 'function');
   assert.equal(typeof module.offpeakViewState, 'function');
   assert.equal(typeof module.formatOffpeakCountdown, 'function');
   assert.equal(typeof module.formatOffpeakClock, 'function');
+  assert.equal(typeof module.formatPeakWindowList, 'function');
   // 原有组件不能被这次改动弄丢（回归保护）。
   assert.equal(typeof module.InterruptedRetryButton, 'function');
   assert.equal(typeof module.ContextSessionTracker, 'function');
@@ -433,14 +438,14 @@ test('apply 在标题栏 utils 槽位注册 session-offpeak（order -12、locale
   for (const id of ['session-id-copy', 'session-share', 'session-interrupted-retry', 'session-context']) {
     assert.ok(ids.includes(id), `原有贡献 ${id} 不能丢`);
   }
-  // 顺序：谷峰 -12 < 分享 -11 < 复制 -10。
+  // 顺序：梁谷 -12 < 分享 -11 < 复制 -10。
   const orderOf = (id) => env.state.registrations.find((item) => item.entry.id === id).entry.order;
   assert.ok(orderOf('session-offpeak') < orderOf('session-share'));
   assert.ok(orderOf('session-share') < orderOf('session-id-copy'));
   assert.ok(env.state.injections.includes(HEADER_SLOT));
 });
 
-test('能力探测：谷峰通道 200 → capability.offpeak=true；405 → false', async (t) => {
+test('能力探测：梁谷通道 200 → capability.offpeak=true；405 → false', async (t) => {
   const okEnv = await setup({ offpeakStatus: 200 });
   t.after(okEnv.restore);
   const okStore = offpeakContributionOf(okEnv.state).entry.inject('session-alpha');
@@ -449,7 +454,7 @@ test('能力探测：谷峰通道 200 → capability.offpeak=true；405 → fals
     okEnv.fetchCalls.some(
       (call) => call.url === '/dsh-session-enhance-offpeak' && call.init.method === 'POST'
     ),
-    '能力探测必须 POST 谷峰通道（method=status、空 payload）'
+    '能力探测必须 POST 梁谷通道（method=status、空 payload）'
   );
   const probeBody = JSON.parse(okEnv.fetchCalls.find((call) => call.url === '/dsh-session-enhance-offpeak').init.body);
   assert.equal(probeBody.method, 'status');
@@ -463,7 +468,7 @@ test('能力探测：谷峰通道 200 → capability.offpeak=true；405 → fals
   assert.equal(missingStore.hooks.capability.getSnapshot().retry, true);
 });
 
-test('词典：offpeak.* 在 en/zh 键集一致，中文文案自然（谷峰/谷时/暂停）', async (t) => {
+test('词典：offpeak.* 在 en/zh 键集一致，中文文案是「梁谷/空闲时段/高峰时段」', async (t) => {
   const env = await setup();
   t.after(env.restore);
 
@@ -472,15 +477,25 @@ test('词典：offpeak.* 在 en/zh 键集一致，中文文案自然（谷峰/�
   assert.ok(zhKeys.length >= 10, `offpeak 词条太少：${zhKeys.length}`);
   assert.deepEqual(zhKeys.slice().sort(), enKeys.slice().sort(), 'en/zh 的 offpeak 键必须一一对应');
 
-  assert.equal(env.zh['offpeak.chip.off'], '谷峰');
-  assert.ok(env.zh['offpeak.chip.paused'].includes('暂停'));
-  assert.ok(env.zh['offpeak.chip.paused'].includes('{countdown}'));
-  assert.ok(env.zh['offpeak.chip.active'].includes('谷时'));
+  // 命名纠正的硬门禁：旧名「谷峰」「谷时」一个残留都不能有。
+  for (const key of zhKeys) {
+    assert.ok(!env.zh[key].includes('谷峰'), `词条 ${key} 仍含旧名谷峰：${env.zh[key]}`);
+    assert.ok(!env.zh[key].includes('谷时'), `词条 ${key} 仍含旧名谷时：${env.zh[key]}`);
+  }
+
+  assert.equal(env.zh['offpeak.chip.off'], '梁谷');
+  assert.equal(env.zh['offpeak.chip.paused'], '梁谷 暂停 {countdown}');
+  assert.equal(env.zh['offpeak.chip.idle'], '梁谷 空闲');
   assert.equal(env.zh['offpeak.chip.busy'], '…');
-  assert.ok(env.zh['offpeak.title.paused'].includes('不会发起任何 AI 调用'));
+  assert.equal(env.zh['offpeak.title.paused'], '梁谷：已暂停');
+  assert.ok(env.zh['offpeak.title.pausedBody'].includes('不会发起任何 AI 调用'));
+  assert.ok(env.zh['offpeak.peakHours'].includes('高峰时段'));
+  assert.ok(env.zh['offpeak.peakHours'].includes('周一至周五'));
+  assert.ok(env.zh['offpeak.peakHours'].includes('法定节假日'));
   assert.ok(env.zh['offpeak.resumeAt'].includes('自动恢复'));
   assert.ok(env.zh['offpeak.pauseAt'].includes('自动暂停'));
   assert.ok(env.zh['offpeak.queued'].includes('{n}'));
+  assert.equal(env.zh['offpeak.windowJoiner'], '、');
   for (const key of zhKeys) {
     assert.ok(env.en[key].length > 0, `en 词条 ${key} 不能为空`);
   }
@@ -502,16 +517,29 @@ test('formatOffpeakCountdown：3h05m / 12m34s / 42s，负数与非法值按 0', 
   assert.equal(formatOffpeakCountdown(undefined), '0s');
 });
 
-test('offpeakViewState：off / paused / active / busy 四个状态', () => {
+test('offpeakViewState：off / paused / idle / busy 四个状态', () => {
   const { offpeakViewState } = loadModule();
   assert.equal(offpeakViewState(null), 'off');
   assert.equal(offpeakViewState({}), 'off');
   assert.equal(offpeakViewState(snapshotOf()), 'off');
   assert.equal(offpeakViewState(snapshotOf({ status: statusOf({ enabled: false }) })), 'off');
-  assert.equal(offpeakViewState(snapshotOf({ status: statusOf({ enabled: true, paused: false }) })), 'active');
+  assert.equal(offpeakViewState(snapshotOf({ status: statusOf({ enabled: true, paused: false }) })), 'idle');
   assert.equal(offpeakViewState(snapshotOf({ status: statusOf({ enabled: true, paused: true }) })), 'paused');
   // busy 优先于 enabled/paused：切换中先显示「…」。
   assert.equal(offpeakViewState(snapshotOf({ busy: true, status: statusOf({ paused: true }) })), 'busy');
+});
+
+test('formatPeakWindowList：schedule.peakWindows → 「09:00–12:00、14:00–18:00」，空值退回官方默认', () => {
+  const { formatPeakWindowList } = loadModule();
+  assert.equal(formatPeakWindowList(['09:00-12:00', '14:00-18:00'], '、'), '09:00–12:00、14:00–18:00');
+  // 英文连接符与不补零的写法都要处理。
+  assert.equal(formatPeakWindowList(['9:00-12:00', '14:00~18:00'], ', '), '09:00–12:00, 14:00–18:00');
+  // 空数组 / 非数组 / 全是空串 → 官方默认时段。
+  assert.equal(formatPeakWindowList([], '、'), '09:00–12:00、14:00–18:00');
+  assert.equal(formatPeakWindowList(undefined, '、'), '09:00–12:00、14:00–18:00');
+  assert.equal(formatPeakWindowList(['', '  '], '、'), '09:00–12:00、14:00–18:00');
+  // 认不出的条目原样保留（Host 配置里出现别的写法时不要吞掉它）。
+  assert.equal(formatPeakWindowList(['09:00-12:00', '整日'], '、'), '09:00–12:00、整日');
 });
 
 test('formatOffpeakClock：按配置时区（含午夜 h23 口径）换算，非法输入返回空串', () => {
@@ -528,64 +556,98 @@ test('formatOffpeakClock：按配置时区（含午夜 h23 口径）换算，非
 // #endregion
 
 // #region 组件渲染
-test('渲染：关闭态是 muted「谷峰」，title 写明窗口与点击开启', async (t) => {
+test('渲染：关闭态是 muted「梁谷」，title 写明高峰时段与点击开启', async (t) => {
   const env = await setup();
   t.after(env.restore);
 
-  const off = renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: false, paused: false, offPeak: false }) }));
+  const off = renderChip(
+    env.module,
+    env.t,
+    snapshotOf({ status: statusOf({ enabled: false, paused: false, idle: true }) })
+  );
   assert.notEqual(off.button, undefined);
   assert.equal(off.button.props['data-dsh-offpeak-button'], '');
   assert.equal(off.button.props['data-offpeak-state'], 'off');
   assert.equal(off.button.props['data-offpeak-enabled'], 'false');
   assert.equal(off.button.props.disabled, false);
-  assert.equal(chipTextOf(off.button), '谷峰');
-  assert.ok(off.button.props.title.includes('谷峰会话：关闭'));
-  assert.ok(off.button.props.title.includes('00:30–08:30（Asia/Shanghai）'));
-  assert.ok(off.button.props.title.includes('点击开启'));
-  // 还没读到状态时也要能渲染（title 用不带窗口的那条）。
+  assert.equal(chipTextOf(off.button), '梁谷');
+  const offTitle = off.button.props.title;
+  // 逐字钉住任务书的文案：off 必须包含标题 / 一句机制 / 由 schedule.peakWindows 拼的
+  // 高峰时段清单（含时区与节假日说明）/ 点击提示，四行、顺序固定。
+  assert.equal(
+    offTitle,
+    [
+      '梁谷：关闭',
+      '开启后，在高峰时段暂停本会话，空闲时段自动恢复运行。',
+      '高峰时段：周一至周五 09:00–12:00、14:00–18:00（Asia/Shanghai，法定节假日与周末除外）',
+      '点击开启。'
+    ].join('\n'),
+    `关闭态 title 不符合约定：${offTitle}`
+  );
+  // 还没读到状态时也要能渲染（title 用不带时段的那条）。
   const unknown = renderChip(env.module, env.t, snapshotOf());
   assert.equal(unknown.button.props['data-offpeak-state'], 'off');
-  assert.ok(unknown.button.props.title.includes('谷峰会话：关闭'));
+  assert.ok(unknown.button.props.title.includes('梁谷：关闭'));
 });
 
-test('渲染：暂停态是 amber「谷峰 暂停 3h05m」，title 写明自动恢复与排队条数', async (t) => {
+test('渲染：暂停态是 amber「梁谷 暂停 3h05m」，title 写明自动恢复与排队条数', async (t) => {
   const env = await setup();
   t.after(env.restore);
 
   const pausedStatus = statusOf({
     paused: true,
-    offPeak: false,
+    idle: false,
     nextChangeKind: 'resume',
     cover: { agent: true, running: false, held: true, interrupted: false, queued: 2 }
   });
   const paused = renderChip(env.module, env.t, snapshotOf({ status: pausedStatus, countdownMs: COUNTDOWN_MS }));
   assert.equal(paused.button.props['data-offpeak-state'], 'paused');
   assert.equal(paused.button.props['data-offpeak-enabled'], 'true');
-  assert.equal(chipTextOf(paused.button), '谷峰 暂停 3h05m');
+  assert.equal(chipTextOf(paused.button), '梁谷 暂停 3h05m');
   const title = paused.button.props.title;
-  assert.ok(title.includes('谷峰会话：已暂停'));
-  assert.ok(title.includes('谷时窗口 00:30–08:30（Asia/Shanghai）'));
-  assert.ok(title.includes('将在 08:30 自动恢复'));
-  assert.ok(title.includes('队列中 2 条消息'));
+  assert.equal(
+    title,
+    [
+      '梁谷：已暂停',
+      '当前是高峰时段，不会发起任何 AI 调用。',
+      '高峰时段：周一至周五 09:00–12:00、14:00–18:00（Asia/Shanghai，法定节假日与周末除外）',
+      '将在 08:30 自动恢复',
+      '队列中 2 条消息，空闲时段开始后自动处理'
+    ].join('\n'),
+    `暂停态 title 不符合约定：${title}`
+  );
   // 颜色走主题 token（暂停 = warn），并带 fallback。
   assert.ok(String(paused.button.props.style.color).includes('--dsw-alias-state-warn'));
 });
 
-test('渲染：谷时是 green「谷峰 谷时」，title 写明自动暂停；busy 是「…」且禁用', async (t) => {
+test('渲染：空闲时段是 green「梁谷 空闲」，title 写明自动暂停；busy 是「…」且禁用', async (t) => {
   const env = await setup();
   t.after(env.restore);
 
-  const active = renderChip(env.module, env.t, snapshotOf({ status: statusOf({ paused: false }), countdownMs: COUNTDOWN_MS }));
-  assert.equal(active.button.props['data-offpeak-state'], 'active');
-  assert.equal(chipTextOf(active.button), '谷峰 谷时');
-  assert.ok(active.button.props.title.includes('谷时运行中'));
-  assert.ok(active.button.props.title.includes('将在 08:30 自动暂停'));
-  assert.ok(String(active.button.props.style.color).includes('--dsw-alias-state-success'));
+  const idle = renderChip(
+    env.module,
+    env.t,
+    snapshotOf({ status: statusOf({ paused: false, idle: true }), countdownMs: COUNTDOWN_MS })
+  );
+  assert.equal(idle.button.props['data-offpeak-state'], 'idle');
+  assert.equal(idle.button.props['data-offpeak-enabled'], 'true');
+  assert.equal(chipTextOf(idle.button), '梁谷 空闲');
+  const idleTitle = idle.button.props.title;
+  assert.equal(
+    idleTitle,
+    [
+      '梁谷：空闲时段运行中',
+      '当前不在高峰时段，调用正常进行。',
+      '将在 08:30 自动暂停'
+    ].join('\n'),
+    `空闲态 title 不符合约定：${idleTitle}`
+  );
+  assert.ok(String(idle.button.props.style.color).includes('--dsw-alias-state-success'));
 
   const busy = renderChip(
     env.module,
     env.t,
-    snapshotOf({ status: statusOf({ paused: true }), busy: true, countdownMs: COUNTDOWN_MS })
+    snapshotOf({ status: statusOf({ paused: true, idle: false }), busy: true, countdownMs: COUNTDOWN_MS })
   );
   assert.equal(busy.button.props['data-offpeak-state'], 'busy');
   assert.equal(busy.button.props.disabled, true);
@@ -599,7 +661,7 @@ test('渲染：失败 Toast 用 sequence 当 key，onDone 只清对应那条', a
   const env = await setup();
   t.after(env.restore);
 
-  const notice = { text: '切换谷峰会话失败（BAD_REQUEST）', sequence: 7 };
+  const notice = { text: '切换梁谷失败（BAD_REQUEST）', sequence: 7 };
   const rendered = renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: false }), notice }));
   const toasts = collectNodes(rendered.tree, (node) => node.type === primitives.Toast);
   assert.equal(toasts.length, 1);
@@ -818,7 +880,7 @@ test('1s tick：暂停中刷新倒计时，到点立刻向 Host 对齐（不等 
         ok: true,
         value: statusOf({
           paused: true,
-          offPeak: false,
+          idle: false,
           serverNow,
           nextChangeAt: serverNow + offsetMs,
           nextChangeKind: 'resume'

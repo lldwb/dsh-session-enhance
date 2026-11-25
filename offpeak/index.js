@@ -1,18 +1,21 @@
 /**
- * 「谷峰会话」组件的 Host 半（Loader 行 `dsh-session-enhance/offpeak`）。
+ * 「梁谷」组件的 Host 半（Loader 行 `dsh-session-enhance/offpeak`）。
  *
  * ## 它做什么
  *
- * 让会话只在 **DeepSeek 谷时**跑：在谷时窗口（默认 00:30–08:30）之外——也就是峰时——
- * 把**已启用**会话的 Agent 挂起（maintenance hold + `agent/status: running` 的同步
- * cancel 安全网），用户这时发的提示留在 durable inbox 里；谷时一到释放并自动续跑。
+ * 让会话只在 **DeepSeek 空闲时段**跑：官方口径的高峰时段是**北京时间周一至周五
+ * （不含中国法定节假日）09:00–12:00、14:00–18:00**，其余时间（午休、夜间、周末、
+ * 法定节假日全天）都是空闲时段。高峰时段里把**已启用**会话的 Agent 挂起
+ * （maintenance hold + `agent/status: running` 的同步 cancel 安全网），用户这时发的
+ * 提示留在 durable inbox 里；进入空闲时段后释放并自动续跑。
  * 每会话的开关由浏览器半通过 RPC `/dsh-session-enhance-offpeak` 切换。
  *
- * 机制细节见 `lib/offpeak/controller.mjs` 的模块注释（三层保护与重入说明）。
+ * 机制细节见 `lib/offpeak/controller.mjs` 的模块注释（三层保护与重入说明）；
+ * 时间判定（工作日/节假日/时段）见 `lib/offpeak/window.mjs`（纯函数）。
  *
  * ## 为什么它是一个独立组件（独立 Loader 行）
  *
- * 这是本包第四个可单独启停的组件：不用峰谷调度的人可以关掉这一行，界面上对应的开关
+ * 这是本包第四个可单独启停的组件：不用梁谷调度的人可以关掉这一行，界面上对应的开关
  * 会因能力探测失败而隐藏（与「会话分享」「中断重试」同一约定）。
  *
  * ## 依赖
@@ -28,11 +31,14 @@
  *
  * ## 配置（全部 volatile，设置页保存后热更新）
  *
- * - `offPeakStart` / `offPeakEnd`：谷时窗口（`HH:MM`，起点含、终点不含，支持跨午夜）；
- * - `timeZone`：窗口按哪个时区解释（默认 `Asia/Shanghai`）；
+ * - `peakWindows`：高峰时段列表（逗号分隔的 `HH:MM-HH:MM`，起点含、终点不含），
+ *   默认 `09:00-12:00,14:00-18:00`；
+ * - `timeZone`：时段与节假日按哪个时区解释（默认 `Asia/Shanghai`）；
+ * - `holidays`：法定节假日日期（逗号/空白分隔的 `YYYY-MM-DD`），默认 2026 年国务院通知
+ *   的日期；**空串 = 不享受节假日豁免**（所有工作日都算高峰日）；
  * - `defaultEnabled`：**没有显式记录**的会话是否默认启用。
  *
- * 非法窗口/时区一律回退默认值并 **只 warn 一次**（配置错不该让组件不激活）。
+ * 非法时段/时区/日期一律回退默认值并 **只 warn 一次**（配置错不该让组件不激活）。
  *
  * @module dsh-session-enhance/offpeak
  */
@@ -47,8 +53,8 @@ import { createOffpeakHandler, installOffpeakChannel } from '../lib/offpeak/rpc.
 import { createOffpeakStore, offpeakStateFilePath } from '../lib/offpeak/store.mjs';
 import {
   DEFAULT_ENABLED,
-  DEFAULT_OFF_PEAK_END,
-  DEFAULT_OFF_PEAK_START,
+  DEFAULT_HOLIDAYS_TEXT,
+  DEFAULT_PEAK_WINDOWS,
   DEFAULT_TIME_ZONE,
   normalizeSchedule,
 } from '../lib/offpeak/window.mjs';
@@ -68,14 +74,14 @@ export { BUILD };
  * 立刻按新值判断相位/重排边界定时器，不需要重启。
  */
 export const Config = z.object({
-  offPeakStart: z.string().default(DEFAULT_OFF_PEAK_START).volatile(),
-  offPeakEnd: z.string().default(DEFAULT_OFF_PEAK_END).volatile(),
+  peakWindows: z.string().default(DEFAULT_PEAK_WINDOWS).volatile(),
   timeZone: z.string().default(DEFAULT_TIME_ZONE).volatile(),
+  holidays: z.string().default(DEFAULT_HOLIDAYS_TEXT).volatile(),
   defaultEnabled: z.boolean().default(DEFAULT_ENABLED).volatile(),
 });
 
 /**
- * 注册「谷峰会话」组件。
+ * 注册「梁谷」组件。
  *
  * @param {any} ctx - Cordis 插件上下文。
  * @param {any} [config] - 已解析的插件配置（`Config` 的实例）。
@@ -88,16 +94,16 @@ export function apply(ctx, config) {
   /**
    * 读一份归一化配置；按原始值缓存，volatile 字段一变就重新归一化。
    *
-   * @returns {{ window: any, defaultEnabled: boolean, issues: string[] }} 归一化配置。
+   * @returns {any} 归一化配置（`normalizeSchedule` 的返回值）。
    */
   let cachedKey = null;
   /** @type {any} */
   let cachedValue = null;
   const readSchedule = () => {
     const raw = {
-      offPeakStart: readOption(config, 'offPeakStart', DEFAULT_OFF_PEAK_START),
-      offPeakEnd: readOption(config, 'offPeakEnd', DEFAULT_OFF_PEAK_END),
+      peakWindows: readOption(config, 'peakWindows', DEFAULT_PEAK_WINDOWS),
       timeZone: readOption(config, 'timeZone', DEFAULT_TIME_ZONE),
+      holidays: readOption(config, 'holidays', DEFAULT_HOLIDAYS_TEXT),
       defaultEnabled: readOption(config, 'defaultEnabled', DEFAULT_ENABLED),
     };
     const key = JSON.stringify(raw);
@@ -132,7 +138,7 @@ export function apply(ctx, config) {
 
   // 控制器自己挂 agent/created · agent/status · agent/disposed 与配置热更新事件，
   // 返回的 dispose 交给 ctx.effect（组件停用即释放全部 hold、清定时器）。
-  ctx.effect(() => controller.attach(ctx), 'dsh-session-enhance: offpeak hold controller');
+  ctx.effect(() => controller.attach(ctx), 'dsh-session-enhance: 梁谷 hold controller');
 
   ctx.logger?.info?.(`dsh-session-enhance/offpeak: ready (hold controller + rpc, build=${BUILD})`);
 }

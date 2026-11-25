@@ -1,5 +1,5 @@
 /**
- * `dsh-session-enhance` —— 浏览器半：会话标题栏的「谷峰会话」「分享会话」「复制会话 ID」
+ * `dsh-session-enhance` —— 浏览器半：会话标题栏的「梁谷」「分享会话」「复制会话 ID」
  * 与 composer 右侧的「中断重试」四个组件。
  *
  * ## 这个 bundle 里有四个组件
@@ -8,7 +8,7 @@
  * 2. **会话分享**：标题栏生成只读分享链接（免登录的只读 HTML 页由 Host 半渲染）；
  * 3. **中断重试**：用户主动停止（`turn/end` 的 `aborted` + `reason.user`）后，在 composer
  *    右侧给一个「重试」圆钮，点一下让 Host 接着跑被中断的上一轮；
- * 4. **谷峰会话**：标题栏一个 chip，开启后本会话在峰时被 Host 挂起、谷时自动恢复，
+ * 4. **梁谷**：标题栏一个 chip，开启后本会话在高峰时段被 Host 挂起、空闲时段自动恢复，
  *    chip 上带「还要暂停多久」的倒计时。
  *
  * 「失败重试」组件（5.0.0 移除的那个，把 composer 发送按钮盖成「重试」）不再由本插件
@@ -67,17 +67,20 @@
  * 里直接卡死，也违反本工作区「不要用 alert/confirm」的约定；所以确认态做在对话框
  * footer 里：第一次点变「确认停止分享」，再点才真正执行，旁边给「取消」。
  *
- * ## 谷峰会话：状态由 Host 定，浏览器只做倒计时与一次点击
+ * ## 梁谷：状态由 Host 定，浏览器只做倒计时与一次点击
  *
- * 标题栏最左的 chip 是会话级「模式开关」：开启后，峰时（谷时窗口之外）由 Host 半把
- * 本会话的 agent 挂起 —— 提示词留在持久化收件箱里排队、不发起任何模型调用；进入谷时
- * 窗口后自动恢复。浏览器半只做三件事：显示状态、每秒走倒计时、把点击变成一次
- * `setEnabled` 调用。
+ * 标题栏最左的 chip 是会话级「模式开关」：开启后，高峰时段由 Host 半把本会话的 agent
+ * 挂起 —— 提示词留在持久化收件箱里排队、不发起任何模型调用；进入空闲时段后自动恢复。
+ * 高峰时段按官方口径：北京时间周一至周五（不含法定节假日）09:00–12:00、14:00–18:00；
+ * 其余时间（含周末与法定节假日全天）都是空闲时段。
+ * 浏览器半只做三件事：显示状态、每秒走倒计时、把点击变成一次 `setEnabled` 调用。
  *
- * **峰时/谷时的判定一律以 Host 返回为准**（`paused`）：客户端本地算窗口会和服务端
- * 的时钟、时区配置、跨午夜规则三处对不上，一旦显示不一致，用户只会怀疑功能坏了。
- * 本地只在两次轮询（15 秒）之间把倒计时走得顺滑，并以「收到响应时的本地时刻」当锚点
- * 抵消两端时钟偏差（`nextChangeAt - serverNow - 本地已过去的时间`）。
+ * **高峰/空闲的判定一律以 Host 返回为准**（`paused`）：客户端本地算时段会和服务端的
+ * 节假日表、时区配置、跨午夜规则三处对不上，一旦显示不一致，用户只会怀疑功能坏了。
+ * 展示用的 idle 由 `enabled && !paused` 推出（Host 的 `idle` 是全局相位，未启用时也是
+ * true）。本地只在两次轮询（15 秒）之间把倒计时走得顺滑，并以「收到响应时的本地时刻」当
+ * 锚点抵消两端时钟偏差（`nextChangeAt - serverNow - 本地已过去的时间`）。
+ * `status.schedule` 只用于在 title 里拼「高峰时段：周一至周五 …」，不参与判定。
  *
  * 切换失败时**保留旧状态**并弹一条 Toast（与复制按钮同款：`sequence` 当 React key）：
  * 状态以服务端为准，点击只是请求 —— 请求没成功就不该让界面先假装成功。
@@ -136,27 +139,32 @@ window.__ModuleLoader__.load({
       'retry.busy': 'Retrying…',
       'retry.failed': 'Retry did not take effect ({code})',
 
-      // 谷峰会话（标题栏 chip）
-      'offpeak.chip.off': 'Off-peak',
-      'offpeak.chip.paused': 'Paused {countdown}',
-      'offpeak.chip.pausedNoEta': 'Paused',
-      'offpeak.chip.active': 'Off-peak now',
+      // 梁谷（标题栏 chip）
+      'offpeak.chip.off': 'Lianggu',
+      'offpeak.chip.paused': 'Lianggu paused {countdown}',
+      'offpeak.chip.pausedNoEta': 'Lianggu paused',
+      'offpeak.chip.idle': 'Lianggu idle',
       'offpeak.chip.busy': '…',
-      'offpeak.title.off':
-        'Off-peak session: off\nWhen on, this session pauses outside the off-peak window {start}–{end} ({tz}) and resumes automatically inside it.\nClick to enable.',
+      'offpeak.title.off': 'Lianggu: off',
+      'offpeak.title.offBody':
+        'When on, this session pauses during peak hours and resumes automatically the rest of the time.',
       'offpeak.title.offNoWindow':
-        'Off-peak session: off\nPauses during peak hours and resumes automatically in the off-peak window.\nClick to enable (the window is still loading).',
-      'offpeak.title.paused': 'Off-peak session: paused\nIt is peak time, so no AI call will start.',
-      'offpeak.title.active': 'Off-peak session: running in the off-peak window\nAI calls run normally.',
-      'offpeak.title.busy': 'Switching the off-peak session…',
-      'offpeak.windowLine': 'Off-peak window: {start}–{end} ({tz})',
+        'Lianggu: off\nWhen on, this session pauses during peak hours and resumes automatically the rest of the time.\nClick to enable (the schedule is still loading).',
+      'offpeak.title.paused': 'Lianggu: paused',
+      'offpeak.title.pausedBody': 'It is peak hours now, so no AI call will start.',
+      'offpeak.title.idle': 'Lianggu: running in the idle window',
+      'offpeak.title.idleBody': 'It is not peak hours now, so AI calls run normally.',
+      'offpeak.title.busy': 'Switching Lianggu…',
+      'offpeak.peakHours': 'Peak hours: Mon–Fri {windows} ({tz}; public holidays and weekends excluded)',
+      'offpeak.windowJoiner': ', ',
+      'offpeak.clickToEnable': 'Click to enable.',
       'offpeak.resumeAt': 'Resumes automatically at {time}',
       'offpeak.pauseAt': 'Pauses automatically at {time}',
-      'offpeak.queued': '{n} message(s) queued; they start when the off-peak window opens',
-      'offpeak.toast.failed': 'Could not switch the off-peak session ({code})',
+      'offpeak.queued': '{n} message(s) queued; they start when the idle window begins',
+      'offpeak.toast.failed': 'Could not switch Lianggu ({code})',
       'offpeak.toast.notPersisted':
-        'The off-peak switch changed, but the setting could not be saved; it may reset after a restart',
-      'offpeak.toast.noConnection': 'Not connected to the host; the off-peak switch did not change',
+        'Lianggu changed, but the setting could not be saved; it may reset after a restart',
+      'offpeak.toast.noConnection': 'Not connected to the host; Lianggu did not change',
 
       // 上下文用量 + 手动压缩
       'context.label': 'Context',
@@ -240,26 +248,30 @@ window.__ModuleLoader__.load({
       'retry.busy': '正在重试…',
       'retry.failed': '重试未生效（{code}）',
 
-      // 谷峰会话（标题栏 chip）
-      'offpeak.chip.off': '谷峰',
-      'offpeak.chip.paused': '谷峰 暂停 {countdown}',
-      'offpeak.chip.pausedNoEta': '谷峰 暂停',
-      'offpeak.chip.active': '谷峰 谷时',
+      // 梁谷（标题栏 chip）
+      'offpeak.chip.off': '梁谷',
+      'offpeak.chip.paused': '梁谷 暂停 {countdown}',
+      'offpeak.chip.pausedNoEta': '梁谷 暂停',
+      'offpeak.chip.idle': '梁谷 空闲',
       'offpeak.chip.busy': '…',
-      'offpeak.title.off':
-        '谷峰会话：关闭\n开启后，谷时窗口 {start}–{end}（{tz}）之外自动暂停本会话，窗口内自动恢复运行。\n点击开启。',
+      'offpeak.title.off': '梁谷：关闭',
+      'offpeak.title.offBody': '开启后，在高峰时段暂停本会话，空闲时段自动恢复运行。',
       'offpeak.title.offNoWindow':
-        '谷峰会话：关闭\n峰时自动暂停本会话、谷时自动恢复运行。\n点击开启（状态读取中，窗口时间稍后显示）。',
-      'offpeak.title.paused': '谷峰会话：已暂停\n当前是峰时，不会发起任何 AI 调用。',
-      'offpeak.title.active': '谷峰会话：谷时运行中\n当前在谷时窗口内，调用正常进行。',
-      'offpeak.title.busy': '正在切换谷峰会话…',
-      'offpeak.windowLine': '谷时窗口 {start}–{end}（{tz}）',
+        '梁谷：关闭\n开启后，在高峰时段暂停本会话，空闲时段自动恢复运行。\n点击开启（时段读取中，稍后显示）。',
+      'offpeak.title.paused': '梁谷：已暂停',
+      'offpeak.title.pausedBody': '当前是高峰时段，不会发起任何 AI 调用。',
+      'offpeak.title.idle': '梁谷：空闲时段运行中',
+      'offpeak.title.idleBody': '当前不在高峰时段，调用正常进行。',
+      'offpeak.title.busy': '正在切换梁谷…',
+      'offpeak.peakHours': '高峰时段：周一至周五 {windows}（{tz}，法定节假日与周末除外）',
+      'offpeak.windowJoiner': '、',
+      'offpeak.clickToEnable': '点击开启。',
       'offpeak.resumeAt': '将在 {time} 自动恢复',
       'offpeak.pauseAt': '将在 {time} 自动暂停',
-      'offpeak.queued': '队列中 {n} 条消息，谷时开始后自动处理',
-      'offpeak.toast.failed': '切换谷峰会话失败（{code}）',
-      'offpeak.toast.notPersisted': '已切换谷峰会话，但状态没能写入磁盘，重启后可能回落',
-      'offpeak.toast.noConnection': '未连接到 Host，无法切换谷峰会话',
+      'offpeak.queued': '队列中 {n} 条消息，空闲时段开始后自动处理',
+      'offpeak.toast.failed': '切换梁谷失败（{code}）',
+      'offpeak.toast.notPersisted': '已切换梁谷，但状态没能写入磁盘，重启后可能回落',
+      'offpeak.toast.noConnection': '未连接到 Host，无法切换梁谷',
 
       // 上下文用量 + 手动压缩
       'context.label': '上下文',
@@ -352,14 +364,14 @@ window.__ModuleLoader__.load({
     const SHARE_SLOT_ORDER = -11;
 
     /**
-     * 谷峰 chip 的槽位 id / 顺序。
+     * 梁谷 chip 的槽位 id / 顺序。
      *
      * order -12 比分享的 -11 更小，所以渲染在最左：它是「会话级模式开关」，与分享/复制
      * 这类一次性动作不是一个量级的东西，放在最左更容易被认成状态而不是普通按钮。
      */
     const OFFPEAK_SLOT_ID = 'session-offpeak';
 
-    /** 谷峰 chip 的槽位顺序（list 槽位按 order 升序渲染）。 */
+    /** 梁谷 chip 的槽位顺序（list 槽位按 order 升序渲染）。 */
     const OFFPEAK_SLOT_ORDER = -12;
 
     /**
@@ -394,17 +406,17 @@ window.__ModuleLoader__.load({
     const RETRY_RPC_CHANNEL = '/dsh-session-enhance-retry';
 
     /**
-     * 谷峰会话的 Host 通道（Host 半见 `lib/offpeak/rpc.mjs`）。
+     * 梁谷会话的 Host 通道（Host 半见 `lib/offpeak/rpc.mjs`）。
      *
      * 与分享/中断重试一样：客户端不能 import Host 包，这个字符串在这里重复一遍；改名时
-     * 必须与 Host 半一起改，否则 chip 点了只会报「切换谷峰会话失败」。
+     * 必须与 Host 半一起改，否则 chip 点了只会报「切换梁谷会话失败」。
      */
     const OFFPEAK_RPC_CHANNEL = '/dsh-session-enhance-offpeak';
 
     /**
-     * 谷峰状态的轮询间隔（毫秒）。
+     * 梁谷状态的轮询间隔（毫秒）。
      *
-     * 1 秒 tick 只负责让 chip 上的倒计时走得顺滑；「现在到底是峰时还是谷时」由 Host
+     * 1 秒 tick 只负责让 chip 上的倒计时走得顺滑；「现在到底是高峰时段还是空闲时段」由 Host
      * 判定，所以每 15 秒向 Host 对齐一次（外加到点 `nextChangeAt` 时的即时对齐）。
      */
     const OFFPEAK_POLL_INTERVAL = 15_000;
@@ -515,13 +527,13 @@ window.__ModuleLoader__.load({
 
     // #region 组件能力探测
     /**
-     * 三个 Host 组件行（会话分享 / 中断重试 / 谷峰会话）的启用状态（浏览器半据此决定
+     * 三个 Host 组件行（会话分享 / 中断重试 / 梁谷会话）的启用状态（浏览器半据此决定
      * 要不要渲染对应 UI）。
      *
      * ## 为什么需要探测
      *
      * 浏览器半是**包级一份**（`dsh.client` 不能按行拆），只要承载它的第一行还在，
-     * 它就一定被加载。而 Host 侧的「会话分享」「中断重试」「谷峰会话」是三条独立的
+     * 它就一定被加载。而 Host 侧的「会话分享」「中断重试」「梁谷会话」是三条独立的
      * Loader 行，可以在「设置 → 插件 → 会话增强 → 包含的组件」里单独停用。停用之后
      * 它们注册的 RPC 前缀路由不再存在，请求会落到 SPA fallback —— 于是按钮还挂在
      * 标题栏 / composer 上，点一下却永远失败。这才是"组件拆了但边界没生效"。
@@ -531,7 +543,7 @@ window.__ModuleLoader__.load({
      * Host 的 prefix 路由只在对应行启用时注册。实测（2026-10-28，真实 Loader）：
      *
      * - 组件在 → `POST /dsh-session-enhance`（分享）/ `POST /dsh-session-enhance-retry`
-     *   （中断重试）/ `POST /dsh-session-enhance-offpeak`（谷峰会话）返回 **200** +
+     *   （中断重试）/ `POST /dsh-session-enhance-offpeak`（梁谷会话）返回 **200** +
      *   业务信封；
      * - 组件停用 → 落到 SPA fallback，返回 **405**、空 body。
      *
@@ -541,7 +553,7 @@ window.__ModuleLoader__.load({
     const CAPABILITY_INITIAL = { share: true, retry: true, offpeak: true };
 
     /**
-     * 能力快照源：`{ share, retry, offpeak }` 三个布尔值，分享 UI、中断重试 UI 与谷峰
+     * 能力快照源：`{ share, retry, offpeak }` 三个布尔值，分享 UI、中断重试 UI 与梁谷
      * chip 各订阅自己那一路（`value.share` / `value.retry` / `value.offpeak`）。
      */
     const capabilityStore = createSnapshotStore(CAPABILITY_INITIAL);
@@ -1417,25 +1429,32 @@ window.__ModuleLoader__.load({
     }
     // #endregion
 
-    // #region 谷峰会话（标题栏 chip）
+    // #region 梁谷（标题栏 chip）
     //
-    // 「谷峰会话」是会话级的模式开关：开启后，峰时（谷时窗口之外）由 Host 半把本会话的
-    // agent 挂起 —— 提示词留在持久化收件箱里排队、不会发起任何模型调用；到谷时窗口
-    // 自动恢复。浏览器半只做三件事：显示当前状态、每秒走一次倒计时、把点击变成一次
-    // `setEnabled` 调用。
+    // 「梁谷」是会话级的模式开关：开启后，高峰时段由 Host 半把本会话的 agent 挂起 ——
+    // 提示词留在持久化收件箱里排队、不会发起任何模型调用；空闲时段自动恢复。
+    // 高峰时段按官方口径：北京时间周一至周五（不含法定节假日）09:00–12:00、
+    // 14:00–18:00；其余时间（含周末与法定节假日全天）都是空闲时段。
     //
-    // 为什么状态不自己算：峰时/谷时的判定、排队条数、以及"agent 是否真的被挂起"都在
-    // Host（它才是能 hold 住 agent 的那一侧）。客户端本地算窗口会和服务端的时钟、
-    // 时区配置、跨午夜规则三处对不上，用户看到不一致时只会怀疑功能坏了 —— 所以这里的
-    // `paused` 一律以 Host 返回为准，本地只负责在两次轮询之间把倒计时走得顺滑。
+    // 浏览器半只做三件事：显示当前状态、每秒走一次倒计时、把点击变成一次 `setEnabled`
+    // 调用。
+    //
+    // 为什么状态不自己算：高峰/空闲的判定、排队条数、以及"agent 是否真的被挂起"都在
+    // Host（它才是能 hold 住 agent 的那一侧，也只有它知道法定节假日表）。客户端本地算
+    // 时段会和节假日表、时区配置、跨午夜规则三处对不上，用户看到不一致时只会怀疑功能
+    // 坏了 —— 所以 `paused` 一律以 Host 返回为准；展示用的 idle 由 `enabled && !paused`
+    // 推出（Host 的 `idle` 是全局相位，未启用时也是 true，不能直接拿来决定 chip 状态）。
+    // 本地只负责在两次轮询之间把倒计时走得顺滑。
     //
     // 倒计时为什么以「收到响应时的本地时刻」为锚点：`serverNow` 与 `nextChangeAt` 都是
     // 服务端时钟的绝对毫秒，直接拿本地 `Date.now()` 去减会掺进两端时钟偏差（差几分钟
     // 就显示成「马上恢复」或「还要 3 小时」）。用
     // `nextChangeAt - serverNow - 本地已过去的时间` 才把偏差抵消掉。
+    //
+    // `status.schedule` 只用于展示（title 里拼「高峰时段：周一至周五 …」），不参与判定。
 
     /**
-     * 谷峰快照的初始值。
+     * 梁谷快照的初始值。
      *
      * - `status`：Host 最近一次返回的原样对象（null = 还没读到）；
      * - `busy`：切换请求进行中（chip 显示「…」并禁用）；
@@ -1450,7 +1469,7 @@ window.__ModuleLoader__.load({
     });
 
     /**
-     * 谷峰图标：一轮弯月 + 一点星光（「谷时」= 夜间/低峰，与「峰时」相对）。
+     * 梁谷图标：一轮弯月 + 一点星光（「空闲时段」= 夜间/低峰，与「高峰时段」相对）。
      *
      * 与复制/分享/重试图标同样的自绘路线（不赌 primitives 的图标导出名），
      * `currentColor` 描边、颜色由 chip 的 `color` 继承。
@@ -1478,7 +1497,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 谷峰 chip 的文档级样式：hover / disabled 与暂停态的 hover 底色。
+     * 梁谷 chip 的文档级样式：hover / disabled 与暂停态的 hover 底色。
      *
      * 尺寸、圆角与状态色仍走内联样式；这里只写本插件自己的
      * `[data-dsh-offpeak-button]` 选择器，不碰官方 CSS class。卸载时整条移除。
@@ -1522,6 +1541,50 @@ window.__ModuleLoader__.load({
       return `${seconds}s`;
     }
 
+    /** 官方高峰时段（展示兜底；Host 正常会在 `status.schedule.peakWindows` 里给出）。 */
+    const DEFAULT_PEAK_WINDOWS = Object.freeze(['09:00-12:00', '14:00-18:00']);
+
+    /**
+     * 把 Host 的 `schedule.peakWindows`（`['09:00-12:00', '14:00-18:00']`）拼成 title 里的
+     * 时段文本：分隔连字符统一成 en dash `–`、小时补零，再用调用方给的连接符（zh「、」/
+     * en「, 」）连起来。
+     *
+     * 空数组 / 非数组 / 全是空串时退回 {@link DEFAULT_PEAK_WINDOWS}：title 里少一段说明
+     * 比显示「高峰时段：」后面空着好。
+     *
+     * @param {unknown} peakWindows - Host 返回的时段数组（`'HH:MM-HH:MM'`）。
+     * @param {unknown} joiner - 连接符（随语言）。
+     * @returns {string} 例如 `09:00–12:00、14:00–18:00`。
+     */
+    function formatPeakWindowList(peakWindows, joiner) {
+      const separator = typeof joiner === 'string' ? joiner : '、';
+      const source = Array.isArray(peakWindows) && peakWindows.length > 0 ? peakWindows : DEFAULT_PEAK_WINDOWS;
+      const normalizeClock = (value) => {
+        const parts = String(value).split(':');
+        if (parts.length !== 2) return String(value);
+        const hour = Number(parts[0]);
+        if (!Number.isInteger(hour) || hour < 0 || hour > 23) return String(value);
+        return `${String(hour).padStart(2, '0')}:${parts[1]}`;
+      };
+      const formatOne = (entry) => {
+        if (typeof entry !== 'string') return '';
+        const text = entry.trim();
+        if (text === '') return '';
+        const match = /^(\d{1,2}:\d{2})\s*[-–~～]\s*(\d{1,2}:\d{2})$/.exec(text);
+        if (match === null) return text;
+        return `${normalizeClock(match[1])}–${normalizeClock(match[2])}`;
+      };
+      const parts = [];
+      for (const entry of source) {
+        const formatted = formatOne(entry);
+        if (formatted !== '') parts.push(formatted);
+      }
+      if (parts.length === 0) {
+        return DEFAULT_PEAK_WINDOWS.map((entry) => formatOne(entry)).join(separator);
+      }
+      return parts.join(separator);
+    }
+
     /**
      * 把绝对毫秒按配置时区格式化成 `HH:MM`（title 里的「将在 … 自动恢复」用）。
      *
@@ -1552,13 +1615,14 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 由快照得出 chip 的四个状态之一：`off` / `paused` / `active` / `busy`。
+     * 由快照得出 chip 的四个状态之一：`off` / `paused` / `idle` / `busy`。
      *
      * 纯函数（不读时间、不碰 DOM），既给组件用也给离线单测用。判据只有 Host 返回的
-     * `enabled` / `paused` 两个字段 —— 客户端不自己判断「现在是不是峰时」。
+     * `enabled` / `paused` 两个字段 —— 客户端不自己判断「现在是不是高峰时段」：
+     * 启用且暂停 = paused，启用且未暂停 = idle（空闲时段正常运行）。
      *
      * @param {unknown} snapshot - 控制器快照（`{ status, busy, ... }`）。
-     * @returns {'off'|'paused'|'active'|'busy'} 状态。
+     * @returns {'off'|'paused'|'idle'|'busy'} 状态。
      */
     function offpeakViewState(snapshot) {
       if (snapshot === null || typeof snapshot !== 'object') return 'off';
@@ -1566,7 +1630,7 @@ window.__ModuleLoader__.load({
       const status = snapshot.status;
       if (status === null || typeof status !== 'object') return 'off';
       if (status.enabled !== true) return 'off';
-      return status.paused === true ? 'paused' : 'active';
+      return status.paused === true ? 'paused' : 'idle';
     }
 
     /**
@@ -1589,13 +1653,13 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 每个会话一份的「谷峰会话」控制器：状态、倒计时、轮询与切换动作。
+     * 每个会话一份的「梁谷会话」控制器：状态、倒计时、轮询与切换动作。
      *
      * 订阅者（renderer 的 `useSyncExternalStore`）归零时停表：标题栏卸载后没必要继续
      * 每秒 tick / 每 15 秒轮询。再次出现订阅者时立即重拉一次状态，所以切回会话、刷新
      * 页面都不会停在上一次的快照上。
      *
-     * 控制器**不判断**峰时/谷时，只负责把 Host 的结论搬进快照；RPC 失败只影响 Toast，
+     * 控制器**不判断**高峰时段/空闲时段，只负责把 Host 的结论搬进快照；RPC 失败只影响 Toast，
      * 不影响聊天本身 —— 即使整条通道不可用，会话照旧能用，只是 chip 显示不了状态。
      *
      * @param {any} ctx - 浏览器插件上下文（用 `connection.rpc` 发请求）。
@@ -1615,7 +1679,7 @@ window.__ModuleLoader__.load({
       let crossed = false;
       let sequence = 1;
 
-      /** 调 Host 的谷峰通道；没连上时返回 undefined（调用方按 NO_CONNECTION 收口）。 */
+      /** 调 Host 的梁谷通道；没连上时返回 undefined（调用方按 NO_CONNECTION 收口）。 */
       const call = async (method, payload) => {
         const connection = ctx.connection;
         if (connection === undefined || connection === null) return undefined;
@@ -1668,7 +1732,7 @@ window.__ModuleLoader__.load({
           previous.paused === status.paused;
         receivedAt = at;
         // 只有「新 deadline 还在未来」才允许复位：服务端时钟偏慢时会连续几次返回
-        // 「仍是峰时、同一个已过期的 nextChangeAt」，若按「deadline 变了」复位，
+        // 「仍是高峰时段、同一个已过期的 nextChangeAt」，若按「deadline 变了」复位，
         // 就会退化成每秒重拉一次。
         const fresh = offpeakCountdownOf(status, at, at);
         if (!sameDeadline && fresh !== null && fresh > 0) crossed = false;
@@ -1816,7 +1880,7 @@ window.__ModuleLoader__.load({
     /**
      * chip 上显示的字。短是硬要求：标题栏还要放标题与「⋯」，chip 只给一眼。
      *
-     * @param {'off'|'paused'|'active'|'busy'} view - 状态。
+     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @param {any} snapshot - 控制器快照。
      * @param {(key: string, params?: any) => string} t - 词典读取器。
      * @returns {string} 文案。
@@ -1829,17 +1893,18 @@ window.__ModuleLoader__.load({
           ? t('offpeak.chip.paused', { countdown: formatOffpeakCountdown(countdown) })
           : t('offpeak.chip.pausedNoEta');
       }
-      if (view === 'active') return t('offpeak.chip.active');
+      if (view === 'idle') return t('offpeak.chip.idle');
       return t('offpeak.chip.off');
     }
 
     /**
-     * chip 的悬停提示：把「窗口 / 下一次自动变化 / 排队条数」三件事说全。
+     * chip 的悬停提示：把「高峰时段 / 下一次自动变化 / 排队条数」说全。
      *
-     * 用户对「为什么这条消息没发出去」的疑问，全部在这段文字里回答：现在是峰时、
-     * 还有几条在队列、几点会自己恢复。窗口时间与恢复时间都用 Host 配置的时区。
+     * 用户对「为什么这条消息没发出去」的疑问，全部在这段文字里回答：现在是高峰时段、
+     * 还有几条在队列、几点会自己恢复。时段文本由 Host 的 `status.schedule` 拼（客户端
+     * 不硬编码官方时段），恢复/暂停时刻按 `schedule.timeZone` 换算。
      *
-     * @param {'off'|'paused'|'active'|'busy'} view - 状态。
+     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @param {any} snapshot - 控制器快照。
      * @param {(key: string, params?: any) => string} t - 词典读取器。
      * @returns {string} 多行 title 文本。
@@ -1848,35 +1913,35 @@ window.__ModuleLoader__.load({
       if (view === 'busy') return t('offpeak.title.busy');
       const status = snapshot === null || snapshot === undefined ? null : snapshot.status;
       if (status === null || typeof status !== 'object') return t('offpeak.title.offNoWindow');
-      const win = status.window !== null && typeof status.window === 'object' ? status.window : {};
-      const start = typeof win.start === 'string' && win.start !== '' ? win.start : '00:30';
-      const end = typeof win.end === 'string' && win.end !== '' ? win.end : '08:30';
-      const timeZone = typeof win.timeZone === 'string' && win.timeZone !== '' ? win.timeZone : 'Asia/Shanghai';
-      const params = { start, end, tz: timeZone };
+      const schedule = status.schedule !== null && typeof status.schedule === 'object' ? status.schedule : {};
+      const timeZone =
+        typeof schedule.timeZone === 'string' && schedule.timeZone !== '' ? schedule.timeZone : 'Asia/Shanghai';
+      const windows = formatPeakWindowList(schedule.peakWindows, t('offpeak.windowJoiner'));
+      const peakHours = t('offpeak.peakHours', { windows, tz: timeZone });
       const nextAt = formatOffpeakClock(status.nextChangeAt, timeZone);
       if (view === 'paused') {
-        const lines = [t('offpeak.title.paused'), t('offpeak.windowLine', params)];
+        const lines = [t('offpeak.title.paused'), t('offpeak.title.pausedBody'), peakHours];
         if (nextAt !== '') lines.push(t('offpeak.resumeAt', { time: nextAt }));
         const cover = status.cover !== null && typeof status.cover === 'object' ? status.cover : {};
         const queued = typeof cover.queued === 'number' ? cover.queued : 0;
         if (queued > 0) lines.push(t('offpeak.queued', { n: queued }));
         return lines.join('\n');
       }
-      if (view === 'active') {
-        const lines = [t('offpeak.title.active'), t('offpeak.windowLine', params)];
+      if (view === 'idle') {
+        const lines = [t('offpeak.title.idle'), t('offpeak.title.idleBody')];
         if (nextAt !== '') lines.push(t('offpeak.pauseAt', { time: nextAt }));
         return lines.join('\n');
       }
-      return t('offpeak.title.off', params);
+      return [t('offpeak.title.off'), t('offpeak.title.offBody'), peakHours, t('offpeak.clickToEnable')].join('\n');
     }
 
     /**
      * chip 的状态色：关闭 = 次要文字色（muted），暂停 = 琥珀（warn token），
-     * 谷时 = 绿色（success token）；busy 用关闭色但由 `:disabled` 降透明度。
+     * 空闲时段 = 绿色（success token）；busy 用关闭色但由 `:disabled` 降透明度。
      *
      * token 都带 fallback：拿得到主题 token 时跟着主题走，拿不到时仍是可读的语义色。
      *
-     * @param {'off'|'paused'|'active'|'busy'} view - 状态。
+     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @returns {{ color: string, background: string }} 颜色。
      */
     function offpeakChipPalette(view) {
@@ -1886,7 +1951,7 @@ window.__ModuleLoader__.load({
           background: 'var(--dsw-alias-state-warn-tertiary, rgba(245, 158, 11, 0.14))'
         };
       }
-      if (view === 'active') {
+      if (view === 'idle') {
         return {
           color: 'var(--dsw-alias-state-success-primary, #067647)',
           background: 'var(--dsw-alias-state-success-tertiary, rgba(6, 118, 71, 0.12))'
@@ -1899,7 +1964,7 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 会话标题栏的「谷峰会话」chip。
+     * 会话标题栏的「梁谷会话」chip。
      *
      * 与另外两个标题栏控件同构：`sessionId`、`t` 由槽位注入，`useOffpeak` 读快照、
      * `useCapability` 读能力探测结果、`offpeak.toggle()` 是动作 —— 全部来自本插件
@@ -2709,8 +2774,8 @@ window.__ModuleLoader__.load({
     const inject = ['slots', 'locale', 'connection', 'sessions', 'configForms'];
 
     /**
-     * 挂载标题栏的「谷峰会话」「分享」「复制」三个控件与 composer 右侧的中断重试按钮，
-     * 并把分享对话框 / 谷峰 chip / 中断重试的全部状态与动作绑到各自的 Session。
+     * 挂载标题栏的「梁谷会话」「分享」「复制」三个控件与 composer 右侧的中断重试按钮，
+     * 并把分享对话框 / 梁谷 chip / 中断重试的全部状态与动作绑到各自的 Session。
      *
      * 注册包在 `ctx.slots.inject(SLOT_NAME, …)` 里，而不是裸 `ctx.slots.register`：
      * 槽位名属于 `@deepseek-ai/dsh-client-ui-conversation`，浏览器插件之间的加载顺序
@@ -2729,7 +2794,7 @@ window.__ModuleLoader__.load({
       const t = ctx.locale.bind(NS);
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-session-enhance: 词典');
 
-      // 组件能力探测：只探测一次，结果写进 capabilityStore；分享/中断重试/谷峰三个 UI
+      // 组件能力探测：只探测一次，结果写进 capabilityStore；分享/中断重试/梁谷三个 UI
       // 各订阅自己那一路。
       //
       // 探测**不阻塞**注册：先按"都在"渲染，探测出停用后再收起。这样既不会因为
@@ -2952,7 +3017,7 @@ window.__ModuleLoader__.load({
         )
       );
 
-      // ---- 谷峰会话：标题栏的模式 chip（暂停倒计时 + 切换 + 失败 Toast）----
+      // ---- 梁谷会话：标题栏的模式 chip（暂停倒计时 + 切换 + 失败 Toast）----
       //
       // 与分享/复制挂在同一个 `conversation.session.header.utilities` list 槽位，
       // order -12 落在最左：它是会话级的「模式开关」，与分享/复制这类一次性动作不是一个
@@ -3081,11 +3146,12 @@ window.__ModuleLoader__.load({
     exports.ContextSessionTracker = ContextSessionTracker;
     exports.InterruptedRetryButton = InterruptedRetryButton;
     exports.OffpeakButton = OffpeakButton;
-    // 谷峰 chip 的纯函数：离线冒烟测试用它验证状态判定、倒计时格式化与时区换算，
+    // 梁谷 chip 的纯函数：离线冒烟测试用它验证状态判定、倒计时格式化、时段文本与时区换算，
     // 不需要浏览器（与 `settingsBooleanField` 同一条路线）。
     exports.offpeakViewState = offpeakViewState;
     exports.formatOffpeakCountdown = formatOffpeakCountdown;
     exports.formatOffpeakClock = formatOffpeakClock;
+    exports.formatPeakWindowList = formatPeakWindowList;
     exports.AutoCompactCard = AutoCompactCard;
     exports.AutoCompactToggleRow = AutoCompactToggleRow;
     exports.settingsBooleanField = settingsBooleanField;

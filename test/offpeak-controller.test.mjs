@@ -1,13 +1,13 @@
 /**
- * 「谷峰会话」控制器。
+ * 「梁谷会话」控制器。
  *
  * 用**假 Agent + 假定时器 + 假存储**离线驱动真实控制器代码（控制器本身不 import 任何
  * Cordis/Agent 运行时，依赖全部注入）。覆盖的关键行为：
  *
- * - 峰时 hold：idle Agent 被 `runMaintenance` 钉住，公开 status 仍是 idle；
+ * - 高峰时段 hold：idle Agent 被 `runMaintenance` 钉住，公开 status 仍是 idle；
  * - 安全网：`agent/status: running` 时**同步** `cancel({kind:'hook'}, {keepInbox:true})`，
  *   提示留在 inbox（首个 prompt 在 hold 挂上之前就被 cancel 的场景）；
- * - 释放：谷时释放 hold；「排队提示 + 没有 wakeRequested」补 `followup`（空 content +
+ * - 释放：空闲时段释放 hold；「排队提示 + 没有 wakeRequested」补 `followup`（空 content +
  *   `source.kind='retry'`）；中途被打断的回合也补一次续跑；
  * - 创建窗口：`agent/created` 期间的 arm 会抛 "already has active work"，必须等到
  *   第一次 `agent/status: idle` 才挂上；
@@ -30,13 +30,13 @@ import {
 } from '../lib/offpeak/controller.mjs';
 import { normalizeSchedule, wallClockToEpoch } from '../lib/offpeak/window.mjs';
 
-/** 谷时：2026-11-25 01:00 +08:00。 */
-const OFF_PEAK_NOW = wallClockToEpoch({ year: 2026, month: 11, day: 25, hour: 1, minute: 0 }, 'Asia/Shanghai');
+/** 空闲时段：2026-11-28（周六）10:00 +08:00（周末全天空闲）。 */
+const IDLE_NOW = wallClockToEpoch({ year: 2026, month: 11, day: 28, hour: 10, minute: 0 }, 'Asia/Shanghai');
 
-/** 峰时：2026-11-25 10:00 +08:00。 */
-const PEAK_NOW = wallClockToEpoch({ year: 2026, month: 11, day: 25, hour: 10, minute: 0 }, 'Asia/Shanghai');
+/** 高峰时段：2026-11-24（周二）10:00 +08:00（工作日上午高峰）。 */
+const PEAK_NOW = wallClockToEpoch({ year: 2026, month: 11, day: 24, hour: 10, minute: 0 }, 'Asia/Shanghai');
 
-/** 默认窗口 + 默认关闭。 */
+/** 默认高峰时段 + 默认 2026 节假日表 + 默认关闭。 */
 function defaultSchedule(overrides = {}) {
   return normalizeSchedule({ ...overrides });
 }
@@ -298,31 +298,37 @@ test('message 形状：空 content + source.kind retry（官方 continuation 触
   });
 });
 
-test('谷时：不 hold、不 cancel；status 显示 offPeak 且下一次是切峰', async () => {
-  const harness = createHarness({ now: OFF_PEAK_NOW });
+test('空闲时段（周末）：不 hold、不 cancel；status 显示 idle 且下一次是周一 09:00 的高峰起点', async () => {
+  const harness = createHarness({ now: IDLE_NOW });
   harness.store.setEnabled('s1', true);
   const { state } = harness.addAgent({ id: 's1' });
   harness.attach();
   await harness.flush();
 
-  assert.equal(state.maintenanceRuns, 0, '谷时不该 hold');
+  assert.equal(state.maintenanceRuns, 0, '空闲时段不该 hold');
   assert.deepEqual(harness.controller.describe().holds, []);
-  assert.equal(harness.controller.describe().tickActive, false, '谷时不该开 1 秒轮询');
+  assert.equal(harness.controller.describe().tickActive, false, '空闲时段不该开 1 秒轮询');
 
   const status = harness.controller.status('s1');
   assert.equal(status.enabled, true);
   assert.equal(status.enabledSource, 'session');
-  assert.equal(status.paused, false, '谷时不暂停');
-  assert.equal(status.offPeak, true);
+  assert.equal(status.paused, false, '空闲时段不暂停');
+  assert.equal(status.idle, true);
   assert.equal(status.nextChangeKind, 'pause');
-  assert.equal(status.nextChangeAt, wallClockToEpoch({ year: 2026, month: 11, day: 25, hour: 8, minute: 30 }, 'Asia/Shanghai'));
+  // 2026-11-28 周六 → 下一次进入高峰是 2026-11-30 周一 09:00。
+  assert.equal(status.nextChangeAt, wallClockToEpoch({ year: 2026, month: 11, day: 30, hour: 9, minute: 0 }, 'Asia/Shanghai'));
+  assert.deepEqual(status.schedule, {
+    peakWindows: ['09:00-12:00', '14:00-18:00'],
+    timeZone: 'Asia/Shanghai',
+    holidaysCount: 33,
+  });
   assert.equal(status.cover.agent, true);
   assert.equal(status.cover.held, false);
   assert.equal(status.persisted, true);
   assert.equal(status.build, 'test-build');
 });
 
-test('峰时 setEnabled(true) → 立即 hold；status.cover.held 为 true', async () => {
+test('高峰时段 setEnabled(true) → 立即 hold；status.cover.held 为 true', async () => {
   const harness = createHarness();
   const { state } = harness.addAgent({ id: 's1' });
   harness.attach();
@@ -335,7 +341,10 @@ test('峰时 setEnabled(true) → 立即 hold；status.cover.held 为 true', asy
   assert.equal(harness.controller.describe().holds.length, 1);
   assert.equal(status.enabled, true);
   assert.equal(status.paused, true);
-  assert.equal(status.offPeak, false);
+  assert.equal(status.idle, false);
+  // 2026-11-24 周二 10:00 → 下一次是 12:00 午休（resume）。
+  assert.equal(status.nextChangeKind, 'resume');
+  assert.equal(status.nextChangeAt, wallClockToEpoch({ year: 2026, month: 11, day: 24, hour: 12, minute: 0 }, 'Asia/Shanghai'));
   assert.equal(status.cover.held, true);
   assert.equal(harness.store.isEnabled('s1', false), true, '已落盘');
 
@@ -396,7 +405,7 @@ test('首个 prompt 在 arm 之前被 cancel：同步 cancel + keepInbox，消�
   assert.equal(harness.controller.status('s1').cover.queued, 1);
 });
 
-test('hold 期间排队：不 cancel 不消费；谷时释放后用空 content 的 retry 消息唤醒', async () => {
+test('hold 期间排队：不 cancel 不消费；空闲时段释放后用空 content 的 retry 消息唤醒', async () => {
   const harness = createHarness();
   harness.store.setEnabled('s1', true);
   const { state } = harness.addAgent({ id: 's1' });
@@ -411,8 +420,8 @@ test('hold 期间排队：不 cancel 不消费；谷时释放后用空 content �
   assert.equal(state.inboxTurn.length, 1, 'hold 期间不该消费提示');
   assert.equal(harness.controller.status('s1').cover.queued, 1);
 
-  // 谷时到：释放 → hold 结束 → 补一条 continue 消息把排队提示拉起来。
-  harness.clock.now = OFF_PEAK_NOW;
+  // 空闲时段到：释放 → hold 结束 → 补一条 continue 消息把排队提示拉起来。
+  harness.clock.now = IDLE_NOW;
   harness.controller.reconcile();
   await harness.flush();
 
@@ -423,7 +432,7 @@ test('hold 期间排队：不 cancel 不消费；谷时释放后用空 content �
   assert.equal(state.followups[0].role, 'user');
 });
 
-test('中途被打断（openTurnStartSeq 非空）→ 标记 interrupted，谷时释放后续跑', async () => {
+test('中途被打断（openTurnStartSeq 非空）→ 标记 interrupted，空闲时段释放后续跑', async () => {
   const harness = createHarness();
   harness.store.setEnabled('s1', true);
   const { state, agent } = harness.addAgent({ id: 's1', openTurnStartSeq: 42 });
@@ -431,26 +440,26 @@ test('中途被打断（openTurnStartSeq 非空）→ 标记 interrupted，谷�
   harness.attach();
   await harness.flush();
 
-  // 峰时开始：reconcile 看到 running + 覆盖 → cancel，并因为回合已开而标记 interrupted。
+  // 高峰时段开始：reconcile 看到 running + 覆盖 → cancel，并因为回合已开而标记 interrupted。
   assert.equal(state.cancelCalls.length, 1);
   assert.equal(state.cancelCalls[0].options.keepInbox, true);
   assert.equal(harness.controller.status('s1').cover.interrupted, true);
 
-  // 取消后回到 idle：先挂上 hold（等待谷时）。
+  // 取消后回到 idle：先挂上 hold（等待空闲时段）。
   state.phase = 'idle';
   harness.emit('agent/status', { agent, status: 'idle' });
   await harness.flush();
   assert.equal(state.maintenanceRuns, 1);
 
-  // 谷时释放 → 没有排队提示，但 interrupted 要求续跑。
-  harness.clock.now = OFF_PEAK_NOW;
+  // 空闲时段释放 → 没有排队提示，但 interrupted 要求续跑。
+  harness.clock.now = IDLE_NOW;
   harness.controller.reconcile();
   await harness.flush();
   assert.equal(state.followups.length, 1, 'interrupted 也要补续跑');
   assert.equal(harness.controller.status('s1').cover.interrupted, false, '续跑后标记清除');
 });
 
-test('跑着时被暂停打断且当时没有 hold：谷时也要兜底续跑', async () => {
+test('跑着时被暂停打断且当时没有 hold：空闲时段也要兜底续跑', async () => {
   const harness = createHarness();
   harness.store.setEnabled('s1', true);
   const { state, agent } = harness.addAgent({ id: 's1', openTurnStartSeq: 7 });
@@ -460,8 +469,8 @@ test('跑着时被暂停打断且当时没有 hold：谷时也要兜底续跑', 
   assert.equal(state.cancelCalls.length, 1);
   assert.equal(harness.controller.status('s1').cover.interrupted, true);
 
-  // 极端情况：取消后没能挂上 hold（例如创建期抛错），谷时直接靠 reconcile 兜底唤醒。
-  harness.clock.now = OFF_PEAK_NOW;
+  // 极端情况：取消后没能挂上 hold（例如创建期抛错），空闲时段直接靠 reconcile 兜底唤醒。
+  harness.clock.now = IDLE_NOW;
   state.phase = 'idle';
   harness.controller.reconcile();
   await harness.flush();
@@ -496,7 +505,7 @@ test('agents 服务缺失：不崩、status 仍可用', async () => {
 
   const status = harness.controller.setEnabled('s1', true);
   assert.equal(status.enabled, true);
-  assert.equal(status.paused, true, '启用 + 峰时，即使没有 live agent 也是"暂停中"');
+  assert.equal(status.paused, true, '启用 + 高峰时段，即使没有 live agent 也是"暂停中"');
   assert.equal(status.cover.agent, false);
   assert.equal(status.cover.held, false);
   harness.controller.reconcile();
@@ -540,7 +549,7 @@ test('hold 被外部 cancel 打断：任务正常收敛（无 unhandled rejectio
   await harness.flush();
   assert.equal(harness.controller.describe().holds.length, 0, 'hold 先结束');
 
-  // 仍在峰时 → reconcile 重新 arm。
+  // 仍在高峰时段 → reconcile 重新 arm。
   harness.controller.reconcile();
   await harness.flush();
   assert.equal(state.maintenanceRuns, 2, '仍暂停时应重新挂 hold');
@@ -662,7 +671,7 @@ test('边界定时器不重复重建（每秒 reconcile 不抖动 timer）', asy
   await harness.flush();
 
   assert.equal(harness.boundaryTimers().length, 1, '应排一个边界定时器');
-  assert.equal(harness.tickTimers().length, 1, '峰时 + 有覆盖会话 → 1 秒轮询');
+  assert.equal(harness.tickTimers().length, 1, '高峰时段 + 有覆盖会话 → 1 秒轮询');
 
   const firstSpec = harness.controller.describe().boundarySpec;
   for (let round = 0; round < 5; round += 1) {
@@ -673,7 +682,7 @@ test('边界定时器不重复重建（每秒 reconcile 不抖动 timer）', asy
   assert.equal(harness.controller.describe().boundarySpec, firstSpec);
 
   // 相位翻转后下一次边界不同 → 允许重建。
-  harness.clock.now = OFF_PEAK_NOW;
+  harness.clock.now = IDLE_NOW;
   harness.controller.reconcile();
   await harness.flush();
   assert.equal(harness.boundaryTimers().length, 1);
@@ -742,14 +751,18 @@ test('diag：全局相位 + 配置 + 会话明细（含无 live agent 的持久�
   await harness.flush();
 
   const diag = harness.controller.diag();
-  assert.equal(diag.paused, true, '全局峰时');
-  assert.equal(diag.offPeak, false);
+  assert.equal(diag.paused, true, '全局高峰时段');
+  assert.equal(diag.idle, false);
   assert.equal(diag.build, 'test-build');
-  assert.deepEqual(diag.window, { start: '00:30', end: '08:30', timeZone: 'Asia/Shanghai' });
-  assert.deepEqual(diag.config, {
-    offPeakStart: '00:30',
-    offPeakEnd: '08:30',
+  assert.deepEqual(diag.schedule, {
+    peakWindows: ['09:00-12:00', '14:00-18:00'],
     timeZone: 'Asia/Shanghai',
+    holidaysCount: 33,
+  });
+  assert.deepEqual(diag.config, {
+    peakWindows: ['09:00-12:00', '14:00-18:00'],
+    timeZone: 'Asia/Shanghai',
+    holidaysCount: 33,
     defaultEnabled: false,
     issues: [],
   });
@@ -779,19 +792,21 @@ test('status 契约字段齐全且禁用时仍给下一次切换', async () => {
     'cover',
     'enabled',
     'enabledSource',
+    'idle',
     'nextChangeAt',
     'nextChangeKind',
-    'offPeak',
     'paused',
     'persisted',
+    'schedule',
     'serverNow',
-    'window',
   ]);
   assert.equal(status.enabled, false);
   assert.equal(status.enabledSource, 'default');
   assert.equal(status.paused, false);
+  assert.equal(status.idle, false, '周二 10:00 是高峰时段');
+  // 2026-11-24 周二 10:00 高峰中 → 下一次 12:00 午休。
   assert.equal(status.nextChangeKind, 'resume');
-  assert.equal(status.nextChangeAt, wallClockToEpoch({ year: 2026, month: 11, day: 26, hour: 0, minute: 30 }, 'Asia/Shanghai'));
+  assert.equal(status.nextChangeAt, wallClockToEpoch({ year: 2026, month: 11, day: 24, hour: 12, minute: 0 }, 'Asia/Shanghai'));
   assert.deepEqual(Object.keys(status.cover).sort(), ['agent', 'held', 'interrupted', 'queued', 'running']);
   assert.equal(status.serverNow, PEAK_NOW);
 });

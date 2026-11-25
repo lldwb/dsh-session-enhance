@@ -4,15 +4,16 @@
 # `dsh-session-id` 改为 `dsh-session-enhance`（row id / specifier / RPC 前缀同步改名，
 # 旧名相关的历史标识见 README 的「3.0 改名」一节）；5.0.0 曾移除「失败重试」组件
 # （DSH 0.2.2 官方内置「继续生成」覆盖失败）；**5.2.0 新增「中断重试」组件**——
-# 只补官方不覆盖的「用户主动停止」场景；**本次新增「谷峰会话」组件**——谷时之外的
-# 峰时把已启用会话的 Agent 挂起（提示留在 inbox），谷时自动释放续跑。
+# 只补官方不覆盖的「用户主动停止」场景；**本次新增「梁谷」组件**——官方高峰时段
+# （北京时间周一至周五 09:00–12:00、14:00–18:00，中国法定节假日除外）把已启用会话的
+# Agent 挂起（提示留在 inbox），其余空闲时段（午休、夜间、周末、节假日全天）自动释放续跑。
 #
 # | 行 id                       | Loader name                   | 组件     | 内容 |
 # |-----------------------------|-------------------------------|----------|------|
 # | `dsh-session-enhance`       | `dsh-session-enhance`         | 会话增强 | 工具 `session_lookup`；**浏览器半（三块界面）都挂在这一行** |
 # | `dsh-session-enhance-share` | `dsh-session-enhance/share`   | 会话分享 | 工具 `session_share`、`GET /share/<token>`、RPC `/dsh-session-enhance` |
 # | `dsh-session-enhance-retry` | `dsh-session-enhance/retry`   | 中断重试 | `session/event` 判定 + RPC `/dsh-session-enhance-retry`（pending / retry / diag） |
-# | `dsh-session-enhance-offpeak` | `dsh-session-enhance/offpeak` | 谷峰会话 | Agent hold 控制器 + RPC `/dsh-session-enhance-offpeak`（status / setEnabled / diag） |
+# | `dsh-session-enhance-offpeak` | `dsh-session-enhance/offpeak` | 梁谷 | Agent hold 控制器 + RPC `/dsh-session-enhance-offpeak`（status / setEnabled / diag） |
 #
 # ## 为什么第一行必须是「精确包名」
 #
@@ -25,26 +26,26 @@
 # - 第一行读包根 `locale/`：标题「会话增强」（与卡片同名，因为它同时是主组件）；
 # - 第二行读 `share/locale/`：标题「会话分享」；
 # - 第三行读 `retry/locale/`：标题「中断重试」；
-# - 第四行读 `offpeak/locale/`：标题「谷峰会话」。
+# - 第四行读 `offpeak/locale/`：标题「梁谷」。
 #
 # 为什么拆：界面上每个 Loader 行都是一个可单独启用/停用的「组件」，一行装多件事
-# 时用户只能整体开关。拆开后可以只留会话增强、关掉分享 / 中断重试 / 谷峰会话。
+# 时用户只能整体开关。拆开后可以只留会话增强、关掉分享 / 中断重试 / 梁谷。
 #
 # ## 停用某一行之后
 #
 # 浏览器半只有一份（`dsh.client` 是包级声明），所以停用「会话分享」「中断重试」
-# 或「谷峰会话」时界面上的对应按钮/开关不会自动消失——浏览器半启动时会各发一次
+# 或「梁谷」时界面上的对应按钮/开关不会自动消失——浏览器半启动时会各发一次
 # 能力探测：
 #
 # - 分享行：`POST /dsh-session-enhance` 在 → 200，停用 → 405 → 分享按钮换成隐藏占位
 #   （`data-session-share="disabled"`）；
 # - 中断重试行：`POST /dsh-session-enhance-retry` 同理 → 重试按钮换成隐藏占位
 #   （`data-interrupted-retry="hidden"`）；
-# - 谷峰会话行：`POST /dsh-session-enhance-offpeak` 同理 → 开关换成隐藏占位。
+# - 梁谷行：`POST /dsh-session-enhance-offpeak` 同理 → 开关换成隐藏占位。
 #
 # 要完全移除界面按钮，停用第一行即可。
 #
-# 不按 preset 挂载：复制 id、查会话、分享会话、中断重试、谷峰调度都是 Web 外壳与任何
+# 不按 preset 挂载：复制 id、查会话、分享会话、中断重试、梁谷调度都是 Web 外壳与任何
 # 模式的通用能力。
 - insert:
     - id: dsh-session-enhance

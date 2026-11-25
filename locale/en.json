@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Session Enhance",
-    "description": "Inspect any session and all of its subagents by ID (plus a title-bar copy-ID button), share a session as a read-only link, retry a turn the user interrupted (the official Continue action covers model failures only), run an \"off-peak session\" that pauses during DeepSeek peak time and resumes automatically during the off-peak window (toggle at the top right), and use Claude Code-style tiered context compaction (auto/manual, toggleable in settings)."
+    "description": "Inspect any session and all of its subagents by ID (plus a title-bar copy-ID button), share a session as a read-only link, retry a turn the user interrupted (the official Continue action covers model failures only), run \"Lianggu\" — an off-peak session that pauses during DeepSeek official peak hours (Beijing time Mon–Fri 09:00–12:00 and 14:00–18:00, statutory holidays excluded) and resumes automatically otherwise (toggle at the top right) — and use Claude Code-style tiered context compaction (auto/manual, toggleable in settings)."
   }
 }

@@ -1,5 +1,5 @@
 /**
- * 「谷峰会话」RPC：端点信封、错误码、以及 prefix 路由的安装形状。
+ * 「梁谷」RPC：端点信封、错误码、以及 prefix 路由的安装形状。
  *
  * handler 与 HTTP 解耦，所以先直接驱动它（不碰 Node 的 req/res）；再用 mock
  * `webServer` / `connection` 验一遍安装器（认证、信封、405/400/413 分支、退路）。
@@ -24,8 +24,12 @@ function createFakeController() {
     enabled: true,
     enabledSource: 'session',
     paused: true,
-    offPeak: false,
-    window: { start: '00:30', end: '08:30', timeZone: 'Asia/Shanghai' },
+    idle: false,
+    schedule: {
+      peakWindows: ['09:00-12:00', '14:00-18:00'],
+      timeZone: 'Asia/Shanghai',
+      holidaysCount: 33,
+    },
     serverNow: 1,
     nextChangeAt: 2,
     nextChangeKind: 'resume',
@@ -42,7 +46,7 @@ function createFakeController() {
     },
     setEnabled(sessionId, enabled) {
       calls.push(['setEnabled', sessionId, enabled]);
-      return { ...statusValue, enabled, paused: enabled && !statusValue.offPeak };
+      return { ...statusValue, enabled, paused: enabled && !statusValue.idle };
     },
     diag() {
       calls.push(['diag']);

@@ -1,16 +1,18 @@
-# dsh-session-enhance（显示名：会话增强）—— 全局挂载，三个可单独启停的组件。
+# dsh-session-enhance（显示名：会话增强）—— 全局挂载，四个可单独启停的组件。
 #
 # 2.0 起这个包向 Loader 插入多行（1.x 只有一行）；3.0.0 起包名由
 # `dsh-session-id` 改为 `dsh-session-enhance`（row id / specifier / RPC 前缀同步改名，
 # 旧名相关的历史标识见 README 的「3.0 改名」一节）；5.0.0 曾移除「失败重试」组件
 # （DSH 0.2.2 官方内置「继续生成」覆盖失败）；**5.2.0 新增「中断重试」组件**——
-# 只补官方不覆盖的「用户主动停止」场景，Loader 行回到三行。
+# 只补官方不覆盖的「用户主动停止」场景；**本次新增「谷峰会话」组件**——谷时之外的
+# 峰时把已启用会话的 Agent 挂起（提示留在 inbox），谷时自动释放续跑。
 #
 # | 行 id                       | Loader name                   | 组件     | 内容 |
 # |-----------------------------|-------------------------------|----------|------|
 # | `dsh-session-enhance`       | `dsh-session-enhance`         | 会话增强 | 工具 `session_lookup`；**浏览器半（三块界面）都挂在这一行** |
 # | `dsh-session-enhance-share` | `dsh-session-enhance/share`   | 会话分享 | 工具 `session_share`、`GET /share/<token>`、RPC `/dsh-session-enhance` |
 # | `dsh-session-enhance-retry` | `dsh-session-enhance/retry`   | 中断重试 | `session/event` 判定 + RPC `/dsh-session-enhance-retry`（pending / retry / diag） |
+# | `dsh-session-enhance-offpeak` | `dsh-session-enhance/offpeak` | 谷峰会话 | Agent hold 控制器 + RPC `/dsh-session-enhance-offpeak`（status / setEnabled / diag） |
 #
 # ## 为什么第一行必须是「精确包名」
 #
@@ -19,28 +21,31 @@
 # client 半。所以携带 `client.js` 的那一行只能写 `dsh-session-enhance`——这也是唯一一行
 # 组件标题等于包根 `locale/`（即卡片标题「会话增强」）的原因。
 #
-# 三个组件的显示名分工：
+# 四个组件的显示名分工：
 # - 第一行读包根 `locale/`：标题「会话增强」（与卡片同名，因为它同时是主组件）；
 # - 第二行读 `share/locale/`：标题「会话分享」；
-# - 第三行读 `retry/locale/`：标题「中断重试」。
+# - 第三行读 `retry/locale/`：标题「中断重试」；
+# - 第四行读 `offpeak/locale/`：标题「谷峰会话」。
 #
 # 为什么拆：界面上每个 Loader 行都是一个可单独启用/停用的「组件」，一行装多件事
-# 时用户只能整体开关。拆开后可以只留会话增强、关掉分享或中断重试。
+# 时用户只能整体开关。拆开后可以只留会话增强、关掉分享 / 中断重试 / 谷峰会话。
 #
 # ## 停用某一行之后
 #
-# 浏览器半只有一份（`dsh.client` 是包级声明），所以停用「会话分享」或「中断重试」时
-# 界面上的对应按钮不会自动消失——浏览器半启动时会各发一次能力探测：
+# 浏览器半只有一份（`dsh.client` 是包级声明），所以停用「会话分享」「中断重试」
+# 或「谷峰会话」时界面上的对应按钮/开关不会自动消失——浏览器半启动时会各发一次
+# 能力探测：
 #
 # - 分享行：`POST /dsh-session-enhance` 在 → 200，停用 → 405 → 分享按钮换成隐藏占位
 #   （`data-session-share="disabled"`）；
 # - 中断重试行：`POST /dsh-session-enhance-retry` 同理 → 重试按钮换成隐藏占位
-#   （`data-interrupted-retry="hidden"`）。
+#   （`data-interrupted-retry="hidden"`）；
+# - 谷峰会话行：`POST /dsh-session-enhance-offpeak` 同理 → 开关换成隐藏占位。
 #
 # 要完全移除界面按钮，停用第一行即可。
 #
-# 不按 preset 挂载：复制 id、查会话、分享会话、中断重试都是 Web 外壳与任何模式的
-# 通用能力。
+# 不按 preset 挂载：复制 id、查会话、分享会话、中断重试、谷峰调度都是 Web 外壳与任何
+# 模式的通用能力。
 - insert:
     - id: dsh-session-enhance
       name: 'dsh-session-enhance'
@@ -48,3 +53,5 @@
       name: 'dsh-session-enhance/share'
     - id: dsh-session-enhance-retry
       name: 'dsh-session-enhance/retry'
+    - id: dsh-session-enhance-offpeak
+      name: 'dsh-session-enhance/offpeak'

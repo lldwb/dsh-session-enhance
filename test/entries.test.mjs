@@ -1,5 +1,5 @@
 /**
- * 三个 Loader 行入口的离线冒烟。
+ * 四个 Loader 行入口的离线冒烟。
  *
  * 这一层只检查**形状**：每个入口导出 `name` / `inject` / `apply`，且 `apply` 在 mock
  * ctx 上注册了该组件应有的东西。真实 Loader 能否解析子路径 specifier、界面「包含的
@@ -18,6 +18,7 @@ import test from 'node:test';
 import * as copyEntry from '../index.js';
 import * as shareEntry from '../share/index.js';
 import * as retryEntry from '../retry/index.js';
+import * as offpeakEntry from '../offpeak/index.js';
 
 /**
  * 造一个够用的 mock ctx。
@@ -59,20 +60,22 @@ function mockCtx(services = {}) {
   };
 }
 
-test('三个入口都导出 name / inject / apply，且 name 与 Loader 行的 specifier 对应', () => {
+test('四个入口都导出 name / inject / apply，且 name 与 Loader 行的 specifier 对应', () => {
   assert.equal(copyEntry.name, 'dsh-session-enhance');
   assert.equal(shareEntry.name, 'dsh-session-enhance/share');
   assert.equal(retryEntry.name, 'dsh-session-enhance/retry');
+  assert.equal(offpeakEntry.name, 'dsh-session-enhance/offpeak');
 
-  for (const entry of [copyEntry, shareEntry, retryEntry]) {
+  for (const entry of [copyEntry, shareEntry, retryEntry, offpeakEntry]) {
     assert.equal(typeof entry.apply, 'function');
     assert.ok(Array.isArray(entry.inject), 'inject 必须是数组');
   }
 
-  // 前两个入口注册工具，都依赖 tools；中断重试行不注册工具，不声明这个硬依赖。
+  // 前两个入口注册工具，都依赖 tools；中断重试与谷峰会话不注册工具，不声明这个硬依赖。
   assert.deepEqual(copyEntry.inject, ['tools']);
   assert.deepEqual(shareEntry.inject, ['tools']);
   assert.deepEqual(retryEntry.inject, []);
+  assert.deepEqual(offpeakEntry.inject, []);
 });
 
 test('会话增强行注册 session_lookup / overview / grep / read 与 session_resume_subagents', () => {
@@ -211,4 +214,77 @@ test('中断重试行不注册工具，只挂 session/event 与 RPC 通道', () 
 
   const deps = ctx.collected.injections.map((entry) => entry.deps.join(','));
   assert.ok(deps.includes('connection,webServer'), '应声明中断重试 RPC 通道');
+});
+
+test('谷峰会话行不注册工具，挂 agent 生命周期事件、配置热更新事件与 RPC 通道', () => {
+  const previousHome = process.env.DSH_HOME;
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'dsh-session-enhance-offpeak-entries-'));
+  process.env.DSH_HOME = home;
+  try {
+    const ctx = mockCtx();
+    offpeakEntry.apply(ctx);
+
+    assert.deepEqual(ctx.collected.tools, [], '谷峰会话组件不该注册模型工具');
+
+    const events = ctx.collected.events.map((entry) => entry.event);
+    for (const required of ['agent/created', 'agent/status', 'agent/disposed']) {
+      assert.ok(events.includes(required), `应监听 ${required}`);
+    }
+    // 配置热更新（事件不存在时会静默降级，但入口必须尝试订阅）。
+    assert.ok(events.includes('app-boot/config-reload'), '应监听配置重载');
+    assert.ok(events.includes('settings/document-updated'), '应监听设置页保存');
+
+    const deps = ctx.collected.injections.map((entry) => entry.deps.join(','));
+    assert.ok(deps.includes('connection,webServer'), '应声明谷峰会话 RPC 通道');
+
+    // 控制器挂载点交给 ctx.effect：组件停用即释放全部 hold。
+    assert.ok(ctx.collected.effects.length >= 1, '应通过 ctx.effect 注册 dispose');
+    // 状态文件路径在 DSH_HOME 下（此时还没写盘）。
+    assert.equal(fs.existsSync(path.join(home, 'dsh-session-enhance', 'offpeak.json')), false);
+  } finally {
+    if (previousHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previousHome;
+    fs.rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('谷峰会话配置：四个字段都 volatile、默认值正确（设置页可热更新）', () => {
+  const parsed = new offpeakEntry.Config({});
+  for (const [key, expected] of [
+    ['offPeakStart', '00:30'],
+    ['offPeakEnd', '08:30'],
+    ['timeZone', 'Asia/Shanghai'],
+  ]) {
+    const field = offpeakEntry.Config.dict[key];
+    assert.equal(field.type, 'string', key);
+    assert.equal(field.meta.volatile, true, `${key} 必须 volatile`);
+    assert.equal(field.meta.default, expected, key);
+    assert.equal(parsed[key].get(), expected, key);
+  }
+  const defaultField = offpeakEntry.Config.dict.defaultEnabled;
+  assert.equal(defaultField.type, 'boolean');
+  assert.equal(defaultField.meta.volatile, true);
+  assert.equal(defaultField.meta.default, false, '新会话默认不启用');
+  assert.equal(parsed.defaultEnabled.get(), false);
+});
+
+test('谷峰会话：非法窗口/时区回退默认值且只 warn 一次，不影响激活', () => {
+  const warnings = [];
+  const ctx = mockCtx();
+  ctx.logger = { info() {}, debug() {}, warn: (message) => warnings.push(message) };
+
+  // 两个字段都非法：窗口回退 00:30–08:30、时区回退 Asia/Shanghai。
+  const config = new offpeakEntry.Config({ offPeakStart: '99:99', offPeakEnd: '25:00', timeZone: 'Mars/Olympus' });
+  assert.doesNotThrow(() => offpeakEntry.apply(ctx, config));
+
+  assert.equal(warnings.length, 1, '只 warn 一次');
+  assert.match(warnings[0], /配置有非法值/u);
+  assert.match(warnings[0], /00:30/u);
+  assert.match(warnings[0], /Asia\/Shanghai/u);
+
+  // 反复触发配置重载也只 warn 一次（缓存 + 只提示一次的标志）。
+  const reload = ctx.collected.events.find((entry) => entry.event === 'app-boot/config-reload');
+  assert.ok(reload, '应监听配置重载');
+  for (let round = 0; round < 3; round += 1) reload.handler({});
+  assert.equal(warnings.length, 1);
 });

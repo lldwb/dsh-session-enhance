@@ -1,13 +1,15 @@
 /**
- * `dsh-session-enhance` —— 浏览器半：会话标题栏的「分享会话」「复制会话 ID」与 composer
- * 右侧的「中断重试」三个组件。
+ * `dsh-session-enhance` —— 浏览器半：会话标题栏的「谷峰会话」「分享会话」「复制会话 ID」
+ * 与 composer 右侧的「中断重试」四个组件。
  *
- * ## 这个 bundle 里有三个组件
+ * ## 这个 bundle 里有四个组件
  *
  * 1. **会话 ID**：标题栏一键复制 session id，交给 Agent 按 id 查会话、子代理与历史；
  * 2. **会话分享**：标题栏生成只读分享链接（免登录的只读 HTML 页由 Host 半渲染）；
  * 3. **中断重试**：用户主动停止（`turn/end` 的 `aborted` + `reason.user`）后，在 composer
- *    右侧给一个「重试」圆钮，点一下让 Host 接着跑被中断的上一轮。
+ *    右侧给一个「重试」圆钮，点一下让 Host 接着跑被中断的上一轮；
+ * 4. **谷峰会话**：标题栏一个 chip，开启后本会话在峰时被 Host 挂起、谷时自动恢复，
+ *    chip 上带「还要暂停多久」的倒计时。
  *
  * 「失败重试」组件（5.0.0 移除的那个，把 composer 发送按钮盖成「重试」）不再由本插件
  * 提供：DSH 0.2.2 起官方已内置模型失败重试（composer 的 `retry(failureSeq)` +
@@ -64,6 +66,21 @@
  * 「停止分享」是不可撤销的破坏性动作，但 `window.confirm` 会阻塞页面、在自动化验证
  * 里直接卡死，也违反本工作区「不要用 alert/confirm」的约定；所以确认态做在对话框
  * footer 里：第一次点变「确认停止分享」，再点才真正执行，旁边给「取消」。
+ *
+ * ## 谷峰会话：状态由 Host 定，浏览器只做倒计时与一次点击
+ *
+ * 标题栏最左的 chip 是会话级「模式开关」：开启后，峰时（谷时窗口之外）由 Host 半把
+ * 本会话的 agent 挂起 —— 提示词留在持久化收件箱里排队、不发起任何模型调用；进入谷时
+ * 窗口后自动恢复。浏览器半只做三件事：显示状态、每秒走倒计时、把点击变成一次
+ * `setEnabled` 调用。
+ *
+ * **峰时/谷时的判定一律以 Host 返回为准**（`paused`）：客户端本地算窗口会和服务端
+ * 的时钟、时区配置、跨午夜规则三处对不上，一旦显示不一致，用户只会怀疑功能坏了。
+ * 本地只在两次轮询（15 秒）之间把倒计时走得顺滑，并以「收到响应时的本地时刻」当锚点
+ * 抵消两端时钟偏差（`nextChangeAt - serverNow - 本地已过去的时间`）。
+ *
+ * 切换失败时**保留旧状态**并弹一条 Toast（与复制按钮同款：`sequence` 当 React key）：
+ * 状态以服务端为准，点击只是请求 —— 请求没成功就不该让界面先假装成功。
  */
 window.__ModuleLoader__.load({
   id: 'dsh-session-enhance',
@@ -118,6 +135,28 @@ window.__ModuleLoader__.load({
       'retry.hint': 'Previous turn was interrupted — click to retry',
       'retry.busy': 'Retrying…',
       'retry.failed': 'Retry did not take effect ({code})',
+
+      // 谷峰会话（标题栏 chip）
+      'offpeak.chip.off': 'Off-peak',
+      'offpeak.chip.paused': 'Paused {countdown}',
+      'offpeak.chip.pausedNoEta': 'Paused',
+      'offpeak.chip.active': 'Off-peak now',
+      'offpeak.chip.busy': '…',
+      'offpeak.title.off':
+        'Off-peak session: off\nWhen on, this session pauses outside the off-peak window {start}–{end} ({tz}) and resumes automatically inside it.\nClick to enable.',
+      'offpeak.title.offNoWindow':
+        'Off-peak session: off\nPauses during peak hours and resumes automatically in the off-peak window.\nClick to enable (the window is still loading).',
+      'offpeak.title.paused': 'Off-peak session: paused\nIt is peak time, so no AI call will start.',
+      'offpeak.title.active': 'Off-peak session: running in the off-peak window\nAI calls run normally.',
+      'offpeak.title.busy': 'Switching the off-peak session…',
+      'offpeak.windowLine': 'Off-peak window: {start}–{end} ({tz})',
+      'offpeak.resumeAt': 'Resumes automatically at {time}',
+      'offpeak.pauseAt': 'Pauses automatically at {time}',
+      'offpeak.queued': '{n} message(s) queued; they start when the off-peak window opens',
+      'offpeak.toast.failed': 'Could not switch the off-peak session ({code})',
+      'offpeak.toast.notPersisted':
+        'The off-peak switch changed, but the setting could not be saved; it may reset after a restart',
+      'offpeak.toast.noConnection': 'Not connected to the host; the off-peak switch did not change',
 
       // 上下文用量 + 手动压缩
       'context.label': 'Context',
@@ -200,6 +239,27 @@ window.__ModuleLoader__.load({
       'retry.hint': '上一轮被中断 —— 点击重试',
       'retry.busy': '正在重试…',
       'retry.failed': '重试未生效（{code}）',
+
+      // 谷峰会话（标题栏 chip）
+      'offpeak.chip.off': '谷峰',
+      'offpeak.chip.paused': '谷峰 暂停 {countdown}',
+      'offpeak.chip.pausedNoEta': '谷峰 暂停',
+      'offpeak.chip.active': '谷峰 谷时',
+      'offpeak.chip.busy': '…',
+      'offpeak.title.off':
+        '谷峰会话：关闭\n开启后，谷时窗口 {start}–{end}（{tz}）之外自动暂停本会话，窗口内自动恢复运行。\n点击开启。',
+      'offpeak.title.offNoWindow':
+        '谷峰会话：关闭\n峰时自动暂停本会话、谷时自动恢复运行。\n点击开启（状态读取中，窗口时间稍后显示）。',
+      'offpeak.title.paused': '谷峰会话：已暂停\n当前是峰时，不会发起任何 AI 调用。',
+      'offpeak.title.active': '谷峰会话：谷时运行中\n当前在谷时窗口内，调用正常进行。',
+      'offpeak.title.busy': '正在切换谷峰会话…',
+      'offpeak.windowLine': '谷时窗口 {start}–{end}（{tz}）',
+      'offpeak.resumeAt': '将在 {time} 自动恢复',
+      'offpeak.pauseAt': '将在 {time} 自动暂停',
+      'offpeak.queued': '队列中 {n} 条消息，谷时开始后自动处理',
+      'offpeak.toast.failed': '切换谷峰会话失败（{code}）',
+      'offpeak.toast.notPersisted': '已切换谷峰会话，但状态没能写入磁盘，重启后可能回落',
+      'offpeak.toast.noConnection': '未连接到 Host，无法切换谷峰会话',
 
       // 上下文用量 + 手动压缩
       'context.label': '上下文',
@@ -292,6 +352,17 @@ window.__ModuleLoader__.load({
     const SHARE_SLOT_ORDER = -11;
 
     /**
+     * 谷峰 chip 的槽位 id / 顺序。
+     *
+     * order -12 比分享的 -11 更小，所以渲染在最左：它是「会话级模式开关」，与分享/复制
+     * 这类一次性动作不是一个量级的东西，放在最左更容易被认成状态而不是普通按钮。
+     */
+    const OFFPEAK_SLOT_ID = 'session-offpeak';
+
+    /** 谷峰 chip 的槽位顺序（list 槽位按 order 升序渲染）。 */
+    const OFFPEAK_SLOT_ORDER = -12;
+
+    /**
      * 中断重试按钮的槽位名：官方 composer 右侧、主发送按钮之前。
      *
      * 这是官方 `conversation.input.right` slot（session scope，按会话注入），所以按钮
@@ -321,6 +392,25 @@ window.__ModuleLoader__.load({
      * 显示「重试未生效」。
      */
     const RETRY_RPC_CHANNEL = '/dsh-session-enhance-retry';
+
+    /**
+     * 谷峰会话的 Host 通道（Host 半见 `lib/offpeak/rpc.mjs`）。
+     *
+     * 与分享/中断重试一样：客户端不能 import Host 包，这个字符串在这里重复一遍；改名时
+     * 必须与 Host 半一起改，否则 chip 点了只会报「切换谷峰会话失败」。
+     */
+    const OFFPEAK_RPC_CHANNEL = '/dsh-session-enhance-offpeak';
+
+    /**
+     * 谷峰状态的轮询间隔（毫秒）。
+     *
+     * 1 秒 tick 只负责让 chip 上的倒计时走得顺滑；「现在到底是峰时还是谷时」由 Host
+     * 判定，所以每 15 秒向 Host 对齐一次（外加到点 `nextChangeAt` 时的即时对齐）。
+     */
+    const OFFPEAK_POLL_INTERVAL = 15_000;
+
+    /** 倒计时 tick 间隔（毫秒）。 */
+    const OFFPEAK_TICK_INTERVAL = 1_000;
 
     /**
      * 图标按钮的样式。
@@ -425,30 +515,35 @@ window.__ModuleLoader__.load({
 
     // #region 组件能力探测
     /**
-     * 三个 Host 组件行的启用状态（浏览器半据此决定要不要渲染对应 UI）。
+     * 三个 Host 组件行（会话分享 / 中断重试 / 谷峰会话）的启用状态（浏览器半据此决定
+     * 要不要渲染对应 UI）。
      *
      * ## 为什么需要探测
      *
      * 浏览器半是**包级一份**（`dsh.client` 不能按行拆），只要承载它的第一行还在，
-     * 它就一定被加载。而 Host 侧的「会话分享」「中断重试」是两条独立的 Loader 行，
-     * 可以在「设置 → 插件 → 会话增强 → 包含的组件」里单独停用。停用之后它们注册的
-     * RPC 前缀路由不再存在，请求会落到 SPA fallback —— 于是按钮还挂在标题栏 /
-     * composer 上，点一下却永远失败。这才是"组件拆了但边界没生效"。
+     * 它就一定被加载。而 Host 侧的「会话分享」「中断重试」「谷峰会话」是三条独立的
+     * Loader 行，可以在「设置 → 插件 → 会话增强 → 包含的组件」里单独停用。停用之后
+     * 它们注册的 RPC 前缀路由不再存在，请求会落到 SPA fallback —— 于是按钮还挂在
+     * 标题栏 / composer 上，点一下却永远失败。这才是"组件拆了但边界没生效"。
      *
      * ## 信号
      *
      * Host 的 prefix 路由只在对应行启用时注册。实测（2026-10-28，真实 Loader）：
      *
      * - 组件在 → `POST /dsh-session-enhance`（分享）/ `POST /dsh-session-enhance-retry`
-     *   （中断重试）返回 **200** + 业务信封；
+     *   （中断重试）/ `POST /dsh-session-enhance-offpeak`（谷峰会话）返回 **200** +
+     *   业务信封；
      * - 组件停用 → 落到 SPA fallback，返回 **405**、空 body。
      *
      * 所以 `200 = 在`、`405 = 停用`。其它状态（401 / 5xx / 网络异常）无法判定，
      * 一律按"在"处理（乐观）——宁可多一个按钮，也不要把正在工作的按钮撤掉。
      */
-    const CAPABILITY_INITIAL = { share: true, retry: true };
+    const CAPABILITY_INITIAL = { share: true, retry: true, offpeak: true };
 
-    /** 能力快照源：`{ share, retry }` 两个布尔值，分享 UI 与中断重试 UI 各订阅一路。 */
+    /**
+     * 能力快照源：`{ share, retry, offpeak }` 三个布尔值，分享 UI、中断重试 UI 与谷峰
+     * chip 各订阅自己那一路（`value.share` / `value.retry` / `value.offpeak`）。
+     */
     const capabilityStore = createSnapshotStore(CAPABILITY_INITIAL);
 
     /**
@@ -1322,6 +1417,583 @@ window.__ModuleLoader__.load({
     }
     // #endregion
 
+    // #region 谷峰会话（标题栏 chip）
+    //
+    // 「谷峰会话」是会话级的模式开关：开启后，峰时（谷时窗口之外）由 Host 半把本会话的
+    // agent 挂起 —— 提示词留在持久化收件箱里排队、不会发起任何模型调用；到谷时窗口
+    // 自动恢复。浏览器半只做三件事：显示当前状态、每秒走一次倒计时、把点击变成一次
+    // `setEnabled` 调用。
+    //
+    // 为什么状态不自己算：峰时/谷时的判定、排队条数、以及"agent 是否真的被挂起"都在
+    // Host（它才是能 hold 住 agent 的那一侧）。客户端本地算窗口会和服务端的时钟、
+    // 时区配置、跨午夜规则三处对不上，用户看到不一致时只会怀疑功能坏了 —— 所以这里的
+    // `paused` 一律以 Host 返回为准，本地只负责在两次轮询之间把倒计时走得顺滑。
+    //
+    // 倒计时为什么以「收到响应时的本地时刻」为锚点：`serverNow` 与 `nextChangeAt` 都是
+    // 服务端时钟的绝对毫秒，直接拿本地 `Date.now()` 去减会掺进两端时钟偏差（差几分钟
+    // 就显示成「马上恢复」或「还要 3 小时」）。用
+    // `nextChangeAt - serverNow - 本地已过去的时间` 才把偏差抵消掉。
+
+    /**
+     * 谷峰快照的初始值。
+     *
+     * - `status`：Host 最近一次返回的原样对象（null = 还没读到）；
+     * - `busy`：切换请求进行中（chip 显示「…」并禁用）；
+     * - `notice`：失败 Toast（与复制按钮同款 `{text,tone,sequence}`）；
+     * - `countdownMs`：本地每秒重算的「距下一次自动变化还有多久」，只用于展示。
+     */
+    const OFFPEAK_INITIAL = Object.freeze({
+      status: null,
+      busy: false,
+      notice: null,
+      countdownMs: null
+    });
+
+    /**
+     * 谷峰图标：一轮弯月 + 一点星光（「谷时」= 夜间/低峰，与「峰时」相对）。
+     *
+     * 与复制/分享/重试图标同样的自绘路线（不赌 primitives 的图标导出名），
+     * `currentColor` 描边、颜色由 chip 的 `color` 继承。
+     *
+     * @returns {any} 15×15 的 SVG 元素。
+     */
+    function offpeakIcon() {
+      return jsxs('svg', {
+        width: 15,
+        height: 15,
+        viewBox: '0 0 16 16',
+        fill: 'none',
+        stroke: 'currentColor',
+        strokeWidth: 1.25,
+        strokeLinecap: 'round',
+        strokeLinejoin: 'round',
+        'aria-hidden': 'true',
+        focusable: 'false',
+        style: { display: 'block' },
+        children: [
+          jsx('path', { d: 'M13.4 9.9A5.9 5.9 0 0 1 6.1 2.6a6 6 0 1 0 7.3 7.3Z' }),
+          jsx('path', { d: 'M12.9 2.1v2M11.9 3.1h2' })
+        ]
+      });
+    }
+
+    /**
+     * 谷峰 chip 的文档级样式：hover / disabled 与暂停态的 hover 底色。
+     *
+     * 尺寸、圆角与状态色仍走内联样式；这里只写本插件自己的
+     * `[data-dsh-offpeak-button]` 选择器，不碰官方 CSS class。卸载时整条移除。
+     *
+     * @returns {() => void} 清理函数。
+     */
+    function installOffpeakStyle() {
+      if (typeof document === 'undefined') return () => {};
+      const style = document.createElement('style');
+      style.setAttribute('data-dsh-enhance-offpeak-style', '');
+      style.textContent = [
+        '[data-dsh-offpeak-button]{transition:background-color .12s ease,color .12s ease;}',
+        '[data-dsh-offpeak-button]:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14));}',
+        '[data-dsh-offpeak-button][data-offpeak-state="paused"]:hover:not(:disabled){background:var(--dsw-alias-state-warn-tertiary,rgba(245,158,11,.18));}',
+        '[data-dsh-offpeak-button]:disabled{opacity:.55;cursor:default;}'
+      ].join('');
+      document.head.appendChild(style);
+      return () => {
+        style.remove();
+      };
+    }
+
+    /**
+     * 把剩余毫秒格式化成 chip 里的短倒计时。
+     *
+     * 口径：≥ 1 小时 → `3h05m`（分钟补零）；< 1 小时 → `12m34s`（秒补零）；
+     * < 1 分钟 → `42s`。负数与非法值一律按 0 处理 —— 服务端时钟刚过界时宁可显示
+     * `0s`，也不要让用户看到 `-1s`。
+     *
+     * @param {unknown} ms - 剩余毫秒。
+     * @returns {string} 例如 `3h05m` / `12m34s` / `42s` / `0s`。
+     */
+    function formatOffpeakCountdown(ms) {
+      const totalSeconds = typeof ms === 'number' && Number.isFinite(ms) ? Math.max(0, Math.floor(ms / 1000)) : 0;
+      const pad = (value) => String(value).padStart(2, '0');
+      const hours = Math.floor(totalSeconds / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      const seconds = totalSeconds % 60;
+      if (hours > 0) return `${hours}h${pad(minutes)}m`;
+      if (minutes > 0) return `${minutes}m${pad(seconds)}s`;
+      return `${seconds}s`;
+    }
+
+    /**
+     * 把绝对毫秒按配置时区格式化成 `HH:MM`（title 里的「将在 … 自动恢复」用）。
+     *
+     * `hourCycle: 'h23'` 是刻意写的：只写 `hour12: false` 时部分 locale 会输出
+     * `24:30` 而不是 `00:30`。时区非法 / Intl 不可用时退到本机时区：宁可时间偏一点，
+     * 也不要整条提示消失。
+     *
+     * @param {unknown} epochMs - 绝对毫秒（`nextChangeAt` 就是这种）。
+     * @param {unknown} timeZone - IANA 时区名（来自 Host 的 `window.timeZone`）。
+     * @returns {string} 例如 `08:30`；非法输入返回空串。
+     */
+    function formatOffpeakClock(epochMs, timeZone) {
+      if (typeof epochMs !== 'number' || !Number.isFinite(epochMs)) return '';
+      const date = new Date(epochMs);
+      if (Number.isNaN(date.getTime())) return '';
+      const pad = (value) => String(value).padStart(2, '0');
+      try {
+        const formatter = new Intl.DateTimeFormat('en-GB', {
+          ...(typeof timeZone === 'string' && timeZone !== '' ? { timeZone } : {}),
+          hour: '2-digit',
+          minute: '2-digit',
+          hourCycle: 'h23'
+        });
+        return formatter.format(date);
+      } catch {
+        return `${pad(date.getHours())}:${pad(date.getMinutes())}`;
+      }
+    }
+
+    /**
+     * 由快照得出 chip 的四个状态之一：`off` / `paused` / `active` / `busy`。
+     *
+     * 纯函数（不读时间、不碰 DOM），既给组件用也给离线单测用。判据只有 Host 返回的
+     * `enabled` / `paused` 两个字段 —— 客户端不自己判断「现在是不是峰时」。
+     *
+     * @param {unknown} snapshot - 控制器快照（`{ status, busy, ... }`）。
+     * @returns {'off'|'paused'|'active'|'busy'} 状态。
+     */
+    function offpeakViewState(snapshot) {
+      if (snapshot === null || typeof snapshot !== 'object') return 'off';
+      if (snapshot.busy === true) return 'busy';
+      const status = snapshot.status;
+      if (status === null || typeof status !== 'object') return 'off';
+      if (status.enabled !== true) return 'off';
+      return status.paused === true ? 'paused' : 'active';
+    }
+
+    /**
+     * 本地剩余时间 = `nextChangeAt - serverNow - 收到响应后本地已过去的毫秒`。
+     *
+     * @param {unknown} status - Host 状态。
+     * @param {number} receivedAt - 收到该响应的本地时刻（`Date.now()`）。
+     * @param {number} now - 当前本地时刻。
+     * @returns {number|null} 剩余毫秒；未启用 / 字段缺失时 null。
+     */
+    function offpeakCountdownOf(status, receivedAt, now) {
+      if (status === null || typeof status !== 'object') return null;
+      if (status.enabled !== true) return null;
+      const nextChangeAt = status.nextChangeAt;
+      const serverNow = status.serverNow;
+      if (typeof nextChangeAt !== 'number' || !Number.isFinite(nextChangeAt)) return null;
+      if (typeof serverNow !== 'number' || !Number.isFinite(serverNow)) return null;
+      const elapsed = typeof receivedAt === 'number' ? Math.max(0, now - receivedAt) : 0;
+      return nextChangeAt - serverNow - elapsed;
+    }
+
+    /**
+     * 每个会话一份的「谷峰会话」控制器：状态、倒计时、轮询与切换动作。
+     *
+     * 订阅者（renderer 的 `useSyncExternalStore`）归零时停表：标题栏卸载后没必要继续
+     * 每秒 tick / 每 15 秒轮询。再次出现订阅者时立即重拉一次状态，所以切回会话、刷新
+     * 页面都不会停在上一次的快照上。
+     *
+     * 控制器**不判断**峰时/谷时，只负责把 Host 的结论搬进快照；RPC 失败只影响 Toast，
+     * 不影响聊天本身 —— 即使整条通道不可用，会话照旧能用，只是 chip 显示不了状态。
+     *
+     * @param {any} ctx - 浏览器插件上下文（用 `connection.rpc` 发请求）。
+     * @param {string} sessionId - 当前会话 id（空串 = 不发请求）。
+     * @param {(key: string, params?: any) => string} t - 词典绑定（Toast 文案）。
+     * @returns {{ getSnapshot: () => any, subscribe: (listener: () => void) => () => void, toggle: () => Promise<void>, refresh: () => Promise<void>, dismissNotice: (sequence: number) => void, dispose: () => void }} 控制器。
+     */
+    function createOffpeakControl(ctx, sessionId, t) {
+      const base = createSnapshotStore(OFFPEAK_INITIAL);
+      let listeners = 0;
+      let pollTimer;
+      let tickTimer;
+      let receivedAt = 0;
+      let inflight = false;
+      let toggling = false;
+      let disposed = false;
+      let crossed = false;
+      let sequence = 1;
+
+      /** 调 Host 的谷峰通道；没连上时返回 undefined（调用方按 NO_CONNECTION 收口）。 */
+      const call = async (method, payload) => {
+        const connection = ctx.connection;
+        if (connection === undefined || connection === null) return undefined;
+        const rpc = connection.rpc;
+        if (rpc === undefined || rpc === null || typeof rpc.call !== 'function') return undefined;
+        return rpc.call(OFFPEAK_RPC_CHANNEL, method, payload);
+      };
+
+      /** 从 RPC 信封里取 value（失败返回 undefined）。 */
+      const valueOf = (result) =>
+        result !== null && typeof result === 'object' && result.ok === true ? result.value : undefined;
+
+      /** 从失败的 RPC 信封里取错误码。 */
+      const codeOf = (result) => {
+        const error = result !== null && typeof result === 'object' ? result.error : undefined;
+        return error !== null && typeof error === 'object' && typeof error.code === 'string' ? error.code : undefined;
+      };
+
+      /** 展示用倒计时：负数截成 0，避免 chip 上出现 `-1s`。 */
+      const displayCountdown = (raw) => (raw === null ? null : Math.max(0, raw));
+
+      /** 写一条失败 Toast。成功不弹：状态本身已经是反馈，多一条只会吵。 */
+      const notifyFailure = (code) => {
+        const text =
+          code === 'NO_CONNECTION' || code === 'TRANSPORT'
+            ? t('offpeak.toast.noConnection')
+            : t('offpeak.toast.failed', { code: code === undefined || code === '' ? 'UNKNOWN' : code });
+        base.update((current) => ({ ...current, notice: { text, sequence: sequence++ } }));
+      };
+
+      /**
+       * 写入一次 Host 状态，并把倒计时锚点一起更新。
+       *
+       * `crossed`（「已经到点、已向 Host 对齐过」）只在「新 deadline 还在未来」时才
+       * 复位：服务端时钟比本地慢时，可能连续几次都返回「仍是暂停、同一个已过期的
+       * nextChangeAt」，若无条件复位就会退化成每秒重拉一次。
+       *
+       * @param {any} status - Host 返回的状态对象。
+       * @param {number} at - 收到响应的本地时刻。
+       * @returns {void}
+       */
+      const applyStatus = (status, at) => {
+        const previous = base.getSnapshot().status;
+        const sameDeadline =
+          previous !== null &&
+          typeof previous === 'object' &&
+          status !== null &&
+          typeof status === 'object' &&
+          previous.nextChangeAt === status.nextChangeAt &&
+          previous.paused === status.paused;
+        receivedAt = at;
+        // 只有「新 deadline 还在未来」才允许复位：服务端时钟偏慢时会连续几次返回
+        // 「仍是峰时、同一个已过期的 nextChangeAt」，若按「deadline 变了」复位，
+        // 就会退化成每秒重拉一次。
+        const fresh = offpeakCountdownOf(status, at, at);
+        if (!sameDeadline && fresh !== null && fresh > 0) crossed = false;
+        const countdown = displayCountdown(offpeakCountdownOf(status, receivedAt, at));
+        base.update((current) => ({ ...current, status, countdownMs: countdown }));
+      };
+
+      /**
+       * 重读一次状态。
+       *
+       * 失败（传输异常 / 空 value）**不改状态**：宁可让界面停在旧状态，也不要闪一下
+       * 「关闭」；下一次轮询或点按会再对齐。
+       *
+       * @returns {Promise<void>} 完成。
+       */
+      const refresh = async () => {
+        if (disposed || inflight || sessionId === '') return;
+        inflight = true;
+        try {
+          const value = valueOf(await call('status', { sessionId }));
+          if (disposed || value === undefined) return;
+          applyStatus(value, Date.now());
+        } catch {
+          // 传输抖动不改状态：保留上一次的显示，15 秒后自动重试。
+        } finally {
+          inflight = false;
+        }
+      };
+
+      /**
+       * 每秒 tick：暂停中更新倒计时；到点立刻向 Host 对齐（不等下一次 15 秒轮询）。
+       *
+       * 只有「已启用」时才做事：关闭状态下 chip 不显示倒计时，没什么可 tick 的。
+       *
+       * @returns {void}
+       */
+      const tick = () => {
+        if (disposed) return;
+        const current = base.getSnapshot();
+        const status = current.status;
+        if (status === null || typeof status !== 'object' || status.enabled !== true) return;
+        const remaining = offpeakCountdownOf(status, receivedAt, Date.now());
+        if (status.paused === true && remaining !== null) {
+          const display = displayCountdown(remaining);
+          if (display !== current.countdownMs) {
+            base.update((state) => ({ ...state, countdownMs: display }));
+          }
+        }
+        if (remaining !== null && remaining <= 0 && !crossed) {
+          crossed = true;
+          void refresh();
+        }
+      };
+
+      /**
+       * 点一下 chip：先 busy，再按服务端返回更新；失败保留旧状态并弹 Toast。
+       *
+       * 目标值取**服务端上次说的** `enabled` 取反，而不是本地缓存的点击次数 —— 这样即使
+       * 用户在别处（另一个标签页）改过开关，点一下也不会把状态点回反方向。
+       *
+       * @returns {Promise<void>} 完成。
+       */
+      const toggle = async () => {
+        if (disposed || toggling || sessionId === '') return;
+        const current = base.getSnapshot();
+        const status = current.status;
+        const desired = !(status !== null && typeof status === 'object' && status.enabled === true);
+        toggling = true;
+        base.update((state) => ({ ...state, busy: true }));
+        try {
+          const result = await call('setEnabled', { sessionId, enabled: desired });
+          if (disposed) return;
+          const value = valueOf(result);
+          if (value === undefined) {
+            if (result === undefined) notifyFailure('NO_CONNECTION');
+            else notifyFailure(codeOf(result) ?? 'UNKNOWN');
+            return;
+          }
+          applyStatus(value, Date.now());
+          // 开关生效、但状态没落盘：Host 明确要求界面提示「重启后可能回落」。
+          if (value !== null && typeof value === 'object' && value.persisted === false) {
+            base.update((state) => ({
+              ...state,
+              notice: { text: t('offpeak.toast.notPersisted'), sequence: sequence++ }
+            }));
+          }
+        } catch {
+          if (!disposed) notifyFailure('TRANSPORT');
+        } finally {
+          toggling = false;
+          if (!disposed) base.update((state) => ({ ...state, busy: false }));
+        }
+      };
+
+      const start = () => {
+        // 没有会话 id 就没有可查的状态：不建定时器（否则一个空 id 的隐藏占位也会
+        // 每秒 tick、每 15 秒打一次注定失败的请求）。
+        if (disposed || sessionId === '') return;
+        void refresh();
+        pollTimer = setInterval(() => {
+          void refresh();
+        }, OFFPEAK_POLL_INTERVAL);
+        tickTimer = setInterval(tick, OFFPEAK_TICK_INTERVAL);
+      };
+
+      const stop = () => {
+        if (pollTimer !== undefined) {
+          clearInterval(pollTimer);
+          pollTimer = undefined;
+        }
+        if (tickTimer !== undefined) {
+          clearInterval(tickTimer);
+          tickTimer = undefined;
+        }
+      };
+
+      return {
+        getSnapshot: base.getSnapshot,
+        subscribe: (listener) => {
+          listeners += 1;
+          // 首个订阅者出现才启动：renderer 卸载 chip 后没必要继续轮询/倒计时。
+          if (listeners === 1) start();
+          const unsubscribe = base.subscribe(listener);
+          return () => {
+            unsubscribe();
+            listeners -= 1;
+            if (listeners === 0) stop();
+          };
+        },
+        toggle,
+        refresh,
+        dismissNotice: (value) => {
+          const current = base.getSnapshot();
+          if (current.notice !== null && current.notice.sequence === value) {
+            base.update((state) => ({ ...state, notice: null }));
+          }
+        },
+        dispose: () => {
+          disposed = true;
+          stop();
+        }
+      };
+    }
+
+    /**
+     * chip 上显示的字。短是硬要求：标题栏还要放标题与「⋯」，chip 只给一眼。
+     *
+     * @param {'off'|'paused'|'active'|'busy'} view - 状态。
+     * @param {any} snapshot - 控制器快照。
+     * @param {(key: string, params?: any) => string} t - 词典读取器。
+     * @returns {string} 文案。
+     */
+    function offpeakChipText(view, snapshot, t) {
+      if (view === 'busy') return t('offpeak.chip.busy');
+      if (view === 'paused') {
+        const countdown = snapshot === null || snapshot === undefined ? undefined : snapshot.countdownMs;
+        return typeof countdown === 'number' && Number.isFinite(countdown)
+          ? t('offpeak.chip.paused', { countdown: formatOffpeakCountdown(countdown) })
+          : t('offpeak.chip.pausedNoEta');
+      }
+      if (view === 'active') return t('offpeak.chip.active');
+      return t('offpeak.chip.off');
+    }
+
+    /**
+     * chip 的悬停提示：把「窗口 / 下一次自动变化 / 排队条数」三件事说全。
+     *
+     * 用户对「为什么这条消息没发出去」的疑问，全部在这段文字里回答：现在是峰时、
+     * 还有几条在队列、几点会自己恢复。窗口时间与恢复时间都用 Host 配置的时区。
+     *
+     * @param {'off'|'paused'|'active'|'busy'} view - 状态。
+     * @param {any} snapshot - 控制器快照。
+     * @param {(key: string, params?: any) => string} t - 词典读取器。
+     * @returns {string} 多行 title 文本。
+     */
+    function offpeakTitle(view, snapshot, t) {
+      if (view === 'busy') return t('offpeak.title.busy');
+      const status = snapshot === null || snapshot === undefined ? null : snapshot.status;
+      if (status === null || typeof status !== 'object') return t('offpeak.title.offNoWindow');
+      const win = status.window !== null && typeof status.window === 'object' ? status.window : {};
+      const start = typeof win.start === 'string' && win.start !== '' ? win.start : '00:30';
+      const end = typeof win.end === 'string' && win.end !== '' ? win.end : '08:30';
+      const timeZone = typeof win.timeZone === 'string' && win.timeZone !== '' ? win.timeZone : 'Asia/Shanghai';
+      const params = { start, end, tz: timeZone };
+      const nextAt = formatOffpeakClock(status.nextChangeAt, timeZone);
+      if (view === 'paused') {
+        const lines = [t('offpeak.title.paused'), t('offpeak.windowLine', params)];
+        if (nextAt !== '') lines.push(t('offpeak.resumeAt', { time: nextAt }));
+        const cover = status.cover !== null && typeof status.cover === 'object' ? status.cover : {};
+        const queued = typeof cover.queued === 'number' ? cover.queued : 0;
+        if (queued > 0) lines.push(t('offpeak.queued', { n: queued }));
+        return lines.join('\n');
+      }
+      if (view === 'active') {
+        const lines = [t('offpeak.title.active'), t('offpeak.windowLine', params)];
+        if (nextAt !== '') lines.push(t('offpeak.pauseAt', { time: nextAt }));
+        return lines.join('\n');
+      }
+      return t('offpeak.title.off', params);
+    }
+
+    /**
+     * chip 的状态色：关闭 = 次要文字色（muted），暂停 = 琥珀（warn token），
+     * 谷时 = 绿色（success token）；busy 用关闭色但由 `:disabled` 降透明度。
+     *
+     * token 都带 fallback：拿得到主题 token 时跟着主题走，拿不到时仍是可读的语义色。
+     *
+     * @param {'off'|'paused'|'active'|'busy'} view - 状态。
+     * @returns {{ color: string, background: string }} 颜色。
+     */
+    function offpeakChipPalette(view) {
+      if (view === 'paused') {
+        return {
+          color: 'var(--dsw-alias-state-warn-label, #b45309)',
+          background: 'var(--dsw-alias-state-warn-tertiary, rgba(245, 158, 11, 0.14))'
+        };
+      }
+      if (view === 'active') {
+        return {
+          color: 'var(--dsw-alias-state-success-primary, #067647)',
+          background: 'var(--dsw-alias-state-success-tertiary, rgba(6, 118, 71, 0.12))'
+        };
+      }
+      return {
+        color: 'var(--dsw-alias-label-secondary, currentColor)',
+        background: 'transparent'
+      };
+    }
+
+    /**
+     * 会话标题栏的「谷峰会话」chip。
+     *
+     * 与另外两个标题栏控件同构：`sessionId`、`t` 由槽位注入，`useOffpeak` 读快照、
+     * `useCapability` 读能力探测结果、`offpeak.toggle()` 是动作 —— 全部来自本插件
+     * contribution 的 `inject()`。
+     *
+     * hooks 顺序固定：先读状态、再读能力探测，两者都在任何提前 return 之前调用（否则
+     * 「Host 组件被停用」的那次渲染会改变调用顺序，React 直接报 hook 顺序错误）。
+     * 隐藏时返回隐藏占位而不是 null —— 组件保持挂载，订阅才不会被拆掉（组件被重新
+     * 启用时能立刻恢复，不必等刷新）。
+     *
+     * @param {any} props - 槽位注入的 props。
+     * @returns {any} chip（可能带 Toast）或隐藏占位。
+     */
+    function OffpeakButton(props) {
+      const state = props.useOffpeak((value) => value);
+      const capability = props.useCapability((value) => value.offpeak);
+      const sessionId = props.sessionId;
+      const t = props.t;
+      if (sessionId === undefined || sessionId === null || String(sessionId) === '') {
+        return jsx('span', { style: { display: 'none' }, 'data-offpeak-hidden': 'no-session' });
+      }
+      if (capability === false) {
+        // 与分享按钮同策略：返回隐藏占位而不是 null —— 组件保持挂载，订阅才不会被拆掉。
+        return jsx('span', { style: { display: 'none' }, 'data-offpeak-hidden': 'disabled' });
+      }
+      const snapshot = state !== null && typeof state === 'object' ? state : OFFPEAK_INITIAL;
+      const view = offpeakViewState(snapshot);
+      const status = snapshot.status;
+      const enabled = status !== null && typeof status === 'object' && status.enabled === true;
+      const title = offpeakTitle(view, snapshot, t);
+      const toast =
+        snapshot.notice === null || snapshot.notice === undefined
+          ? null
+          : jsx(
+              P.Toast,
+              {
+                text: snapshot.notice.text,
+                onDone: () => {
+                  props.offpeak.dismissNotice(snapshot.notice.sequence);
+                },
+                ...(snapshot.notice.tone === undefined ? {} : { tone: snapshot.notice.tone })
+              },
+              snapshot.notice.sequence
+            );
+      return jsxs('span', {
+        style: { display: 'inline-flex', alignItems: 'center' },
+        children: [
+          jsxs('button', {
+            type: 'button',
+            // 稳定测试钩子：自动化验证按这三个属性定位/断言，不依赖文案（文案随语言变，
+            // `data-*` 不会）。
+            'data-dsh-offpeak-button': '',
+            'data-offpeak-state': view,
+            'data-offpeak-enabled': enabled ? 'true' : 'false',
+            title,
+            'aria-label': title,
+            disabled: view === 'busy',
+            onClick: () => {
+              void props.offpeak.toggle();
+            },
+            style: {
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '4px',
+              height: '24px',
+              maxWidth: '200px',
+              padding: '0 8px',
+              boxSizing: 'border-box',
+              flex: 'none',
+              border: 'none',
+              borderRadius: '999px',
+              fontFamily: 'inherit',
+              fontSize: '12px',
+              lineHeight: 1,
+              whiteSpace: 'nowrap',
+              cursor: view === 'busy' ? 'default' : 'pointer',
+              ...offpeakChipPalette(view)
+            },
+            children: [
+              offpeakIcon(),
+              jsx('span', {
+                // `minWidth: 0` 是 flex 里让文本真正能被压缩的前提（默认 min-width:auto
+                // 会把按钮撑到内容宽度，`text-overflow` 就永远不生效）。
+                style: { overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, whiteSpace: 'nowrap' },
+                children: offpeakChipText(view, snapshot, t)
+              })
+            ]
+          }),
+          toast
+        ]
+      });
+    }
+    // #endregion
+
     // #region 上下文：官方 ContextMeter 面板内的「压缩」动作
     //
     // DSH 0.2.2 起，composer 卡片下方自带一个官方「上下文已用」meter（圆环 + 百分比 +
@@ -2037,8 +2709,8 @@ window.__ModuleLoader__.load({
     const inject = ['slots', 'locale', 'connection', 'sessions', 'configForms'];
 
     /**
-     * 挂载标题栏的复制/分享两个按钮与 composer 右侧的中断重试按钮，并把分享对话框的
-     * 全部状态与动作绑到各自的 Session。
+     * 挂载标题栏的「谷峰会话」「分享」「复制」三个控件与 composer 右侧的中断重试按钮，
+     * 并把分享对话框 / 谷峰 chip / 中断重试的全部状态与动作绑到各自的 Session。
      *
      * 注册包在 `ctx.slots.inject(SLOT_NAME, …)` 里，而不是裸 `ctx.slots.register`：
      * 槽位名属于 `@deepseek-ai/dsh-client-ui-conversation`，浏览器插件之间的加载顺序
@@ -2057,17 +2729,21 @@ window.__ModuleLoader__.load({
       const t = ctx.locale.bind(NS);
       ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'dsh-session-enhance: 词典');
 
-      // 组件能力探测：只探测一次，结果写进 capabilityStore；分享/中断重试两个 UI 各订阅一路。
+      // 组件能力探测：只探测一次，结果写进 capabilityStore；分享/中断重试/谷峰三个 UI
+      // 各订阅自己那一路。
       //
       // 探测**不阻塞**注册：先按"都在"渲染，探测出停用后再收起。这样既不会因为
       // 一次网络抖动把按钮永久藏掉，也不会有"闪一下"的问题（正常情况探测结果与
       // 初始值一致，store 的 set 在值没变时不通知）。
       void Promise.all([
         probeComponent(RPC_CHANNEL, 'share.status'),
-        probeComponent(RETRY_RPC_CHANNEL, 'pending')
-      ]).then(([share, retry]) => {
+        probeComponent(RETRY_RPC_CHANNEL, 'pending'),
+        probeComponent(OFFPEAK_RPC_CHANNEL, 'status')
+      ]).then(([share, retry, offpeak]) => {
         const current = capabilityStore.getSnapshot();
-        if (current.share !== share || current.retry !== retry) capabilityStore.set({ share, retry });
+        if (current.share !== share || current.retry !== retry || current.offpeak !== offpeak) {
+          capabilityStore.set({ share, retry, offpeak });
+        }
       });
 
       // 连续点击时让每条 Toast 都有新序号（key 变化 → 重新挂载 → 重新播放动画）。
@@ -2276,6 +2952,33 @@ window.__ModuleLoader__.load({
         )
       );
 
+      // ---- 谷峰会话：标题栏的模式 chip（暂停倒计时 + 切换 + 失败 Toast）----
+      //
+      // 与分享/复制挂在同一个 `conversation.session.header.utilities` list 槽位，
+      // order -12 落在最左：它是会话级的「模式开关」，与分享/复制这类一次性动作不是一个
+      // 量级；放在最左也最容易被一眼认成状态而不是普通按钮。
+      ctx.slots.inject(SLOT_NAME, () =>
+        ctx.slots.register(
+          {
+            name: SLOT_NAME,
+            id: OFFPEAK_SLOT_ID,
+            order: OFFPEAK_SLOT_ORDER,
+            locale: NS,
+            inject: (sessionId) => {
+              const store = createOffpeakControl(
+                ctx,
+                String(sessionId === undefined || sessionId === null ? '' : sessionId),
+                t
+              );
+              return { hooks: { offpeak: store, capability: capabilityStore }, offpeak: store };
+            }
+          },
+          OffpeakButton
+        )
+      );
+      // chip 的 hover/disabled 规则（选择器只命中本插件自己的按钮，卸载时移除）。
+      ctx.effect(() => installOffpeakStyle(), 'dsh-session-enhance: offpeak chip style');
+
       // ---- 中断重试：官方「继续生成」覆盖不到的「用户主动停止」场景 ----
       //
       // 挂在官方 composer 的 `conversation.input.right` 槽位（session scope）：渲染在
@@ -2377,6 +3080,12 @@ window.__ModuleLoader__.load({
     // bundle 形状；不影响运行时。
     exports.ContextSessionTracker = ContextSessionTracker;
     exports.InterruptedRetryButton = InterruptedRetryButton;
+    exports.OffpeakButton = OffpeakButton;
+    // 谷峰 chip 的纯函数：离线冒烟测试用它验证状态判定、倒计时格式化与时区换算，
+    // 不需要浏览器（与 `settingsBooleanField` 同一条路线）。
+    exports.offpeakViewState = offpeakViewState;
+    exports.formatOffpeakCountdown = formatOffpeakCountdown;
+    exports.formatOffpeakClock = formatOffpeakClock;
     exports.AutoCompactCard = AutoCompactCard;
     exports.AutoCompactToggleRow = AutoCompactToggleRow;
     exports.settingsBooleanField = settingsBooleanField;

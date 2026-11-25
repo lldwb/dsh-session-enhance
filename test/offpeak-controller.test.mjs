@@ -12,6 +12,7 @@
  * - 创建窗口：`agent/created` 期间的 arm 会抛 "already has active work"，必须等到
  *   第一次 `agent/status: idle` 才挂上；
  * - 覆盖：父会话启用 → 子代理（`session.header.parentSession`）一起 hold/cancel；
+ *   **父会话离线但开关仍启用时子代理也一样覆盖**（"整个会话含子代理"不依赖父会话在线）；
  *   父会话关闭 → 子树释放且不残留；
  * - 防御：agents 服务缺失、agent 已 dispose、外部 cancel 打断 hold 后重新 arm、
  *   监听器不抛错、arm 失败日志限流、边界定时器不重复重建。
@@ -587,13 +588,66 @@ test('子代理覆盖：父会话启用 → 空闲子代理 hold、运行中子�
   assert.equal(childEntry.covered, false, '父会话关掉后不再被覆盖');
 });
 
-test('父会话没有 live Agent 时覆盖链中断（不误伤）', async () => {
+test('子代理范围：父会话没有 live Agent 但开关仍是启用 → 子代理照样被 hold/cancel', async () => {
+  // 「梁谷覆盖整个会话含子代理」不能依赖父会话在线：父会话关掉（没有 live Agent）之后，
+  // 它派出的子代理在高峰时段仍然要暂停，否则用户开了开关、子代理还在烧额度。
+  const harness = createHarness();
+  harness.store.setEnabled('parent-offline', true); // 只有存储记录，没有 live Agent
+  const childIdle = harness.addAgent({ id: 'child-idle', parentSession: 'parent-offline' });
+  const childRunning = harness.addAgent({ id: 'child-running', parentSession: 'parent-offline' });
+  childRunning.state.phase = 'running';
+  harness.attach();
+  await harness.flush();
+
+  assert.equal(childIdle.state.maintenanceRuns, 1, '父会话离线也要 hold 空闲子代理');
+  assert.equal(harness.controller.describe().holds.includes('child-idle'), true);
+  assert.equal(childRunning.state.cancelCalls.length, 1, '运行中的子代理仍走安全网 cancel');
+  assert.equal(childRunning.state.cancelCalls[0].options.keepInbox, true);
+
+  const status = harness.controller.status('child-idle');
+  assert.equal(status.enabled, false, '子代理自己没有开关记录');
+  assert.equal(status.enabledSource, 'default');
+  assert.equal(status.cover.held, true, '但被离线的父会话覆盖');
+  const diag = harness.controller.diag();
+  const childEntry = diag.sessions.find((entry) => entry.sessionId === 'child-idle');
+  assert.equal(childEntry.enabled, false);
+  assert.equal(childEntry.covered, true, '诊断里也应是 covered');
+
+  // 父会话开关关掉 → 子代理释放（父会话仍然离线，不依赖它在线才能解除）。
+  harness.controller.setEnabled('parent-offline', false);
+  await harness.flush();
+  assert.deepEqual(harness.controller.describe().holds, [], '父会话关闭后子代理不留 hold');
+  assert.equal(harness.controller.diag().sessions.find((entry) => entry.sessionId === 'child-idle').covered, false);
+});
+
+test('子代理范围（负向）：父会话既不在线也没有启用记录 → 子代理不 hold', async () => {
   const harness = createHarness();
   const { state } = harness.addAgent({ id: 'child', parentSession: 'ghost-parent' });
   harness.attach();
   await harness.flush();
-  assert.equal(state.maintenanceRuns, 0, '链上取不到 live 父会话就停，不 hold');
+
+  assert.equal(state.maintenanceRuns, 0, '父会话无记录 → 不覆盖子代理');
   assert.deepEqual(harness.controller.describe().holds, []);
+  const status = harness.controller.status('child');
+  assert.equal(status.enabled, false);
+  assert.equal(status.cover.held, false);
+  assert.equal(harness.controller.diag().sessions.find((entry) => entry.sessionId === 'child').covered, false);
+
+  // defaultEnabled=true 时「无记录」本身就等于「启用」：没有记录的子代理会话自己就算启用，
+  // 而没有记录的父会话 id 也按默认算启用——两者都会覆盖，这是 defaultEnabled 的定义。
+  const defaultOn = createHarness({ schedule: defaultSchedule({ defaultEnabled: true }) });
+  const childNoRecord = defaultOn.addAgent({ id: 'child-no-record', parentSession: 'ghost-parent' });
+  const childOff = defaultOn.addAgent({ id: 'child-off', parentSession: 'ghost-parent' });
+  defaultOn.store.setEnabled('child-off', false); // 显式关掉自己的开关
+  defaultOn.attach();
+  await defaultOn.flush();
+  assert.equal(childNoRecord.state.maintenanceRuns, 1, '无记录 → 自己被 defaultEnabled 视为启用');
+  assert.equal(childOff.state.maintenanceRuns, 1, '父会话 id 无记录也按 defaultEnabled 视为启用 → 仍被覆盖');
+  assert.deepEqual(
+    defaultOn.controller.describe().holds.sort(),
+    ['child-no-record', 'child-off'],
+    'defaultEnabled=true 下两条子代理都被覆盖（不是"父会话不存在"的特例）',
+  );
 });
 
 test('监听器不抛错：garbage payload / 抛错的 Agent 都被收口', async () => {

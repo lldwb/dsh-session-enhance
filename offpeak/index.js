@@ -24,10 +24,18 @@
  * |---|---|---|
  * | `agents` | 取 live Agent、`turnBoundaryOf` | 软依赖：不 hold、不崩；`status.cover.agent=false` |
  * | `connection` + `webServer` | RPC 通道 | 通道不挂载（浏览器半探测失败即隐藏开关） |
+ * | `sessionController` | 「新建梁谷会话」按钮建会话 | 软依赖：该端点返回 `UNAVAILABLE`，其余照常 |
+ * | `workspaceRegistry` | 解析源会话的工作区，新会话落在同一个工作区 | 软依赖：退化到按 cwd 建会话 |
+ * | `agentPresets` | 新会话沿用源会话的 preset | 软依赖：交给 Host 默认 preset |
  *
- * `inject = []`：不注册模型工具、不要求任何服务在激活时就位——`agents` 用 `ctx.get()`
- * 软取（`lib/retry/host.mjs` 同款），于是这个组件在 headless / 未挂 agent-loop 的部署里
- * 也能干净地激活。
+ * `inject = []`：不注册模型工具、不要求任何服务在激活时就位——`agents` / `sessionController`
+ * 等全部用 `ctx.get()` 软取（`lib/retry/host.mjs` 同款），于是这个组件在 headless /
+ * 未挂 agent-loop 的部署里也能干净地激活。
+ *
+ * ## RPC 端点（浏览器半）
+ *
+ * `status` / `setEnabled` / `diag`，外加 `createLiangguSession`（标题栏下方「新建梁谷会话」
+ * 按钮用：建一个空白会话并把梁谷写为启用，返回新会话 id）。
  *
  * ## 配置（全部 volatile，设置页保存后热更新）
  *
@@ -134,7 +142,95 @@ export function apply(ctx, config) {
     build: BUILD,
   });
 
-  installOffpeakChannel(ctx, createOffpeakHandler({ controller }));
+  /**
+   * 新建一个「梁谷会话」：在源会话所在的工作区建空白会话，并把梁谷开关写为启用。
+   *
+   * 会话创建走 Host 的 `sessionController.create()`——与客户端「新建会话」同一条 Host
+   * 路径（空白会话，首条提示前不建 Agent）；创建成功后立刻把该会话写入开关存储，于是
+   * 它之后的第一次 Agent 创建就会按梁谷规则 hold/放行。
+   *
+   * @param {string} sourceSessionId - 当前会话 id（用来取工作区、cwd 与 preset）。
+   * @returns {Promise<{ sessionId: string, agentPreset: string | null, workspaceId: string | null }>} 新会话。
+   */
+  const createLiangguSession = async (sourceSessionId) => {
+    /** 软取 Host 服务（缺失/异常时 undefined）。 */
+    const service = (name) => {
+      try {
+        return typeof ctx?.get === 'function' ? ctx.get(name) : undefined;
+      } catch {
+        return undefined;
+      }
+    };
+    /** 组装带稳定 code 的错误（RPC 错误码用）。 */
+    const failure = (code, message) => {
+      const error = new Error(message);
+      error.code = code;
+      return error;
+    };
+
+    const sessionController = service('sessionController');
+    if (sessionController === undefined || sessionController === null || typeof sessionController.create !== 'function') {
+      throw failure('UNAVAILABLE', 'session-controller is unavailable in this deployment');
+    }
+
+    const agents = service('agents');
+    const sourceSession =
+      typeof agents?.get === 'function' ? agents.get(sourceSessionId)?.session : undefined;
+    const cwd =
+      typeof sourceSession?.header?.cwd === 'string' && sourceSession.header.cwd !== ''
+        ? sourceSession.header.cwd
+        : undefined;
+
+    // 同一个工作区：优先按 cwd 找 Workspace（create 传 workspaceId 时 Host 才会把新会话
+    // attach 到工作区，侧边栏才看得见）；找不到就退回按 cwd 建（默认工作区）。
+    let workspaceId;
+    const registry = service('workspaceRegistry');
+    if (cwd !== undefined && typeof registry?.resolveByPath === 'function') {
+      try {
+        const workspace = await registry.resolveByPath(cwd);
+        if (typeof workspace?.id === 'string' && workspace.id !== '') workspaceId = workspace.id;
+      } catch (error) {
+        ctx.logger?.debug?.(
+          `dsh-session-enhance/offpeak: resolve workspace for ${sourceSessionId} failed: ${String(error?.message ?? error)}`,
+        );
+      }
+    }
+
+    // 沿用源会话记录的 preset（空白会话通常还没有记录 → 交给 Host 默认 preset）。
+    let agentPreset;
+    const presets = service('agentPresets');
+    if (sourceSession !== undefined && typeof presets?.presetForSession === 'function') {
+      try {
+        agentPreset = presets.presetForSession(sourceSession) ?? undefined;
+      } catch {
+        // preset 读不到就走默认。
+      }
+    }
+
+    let created;
+    try {
+      created = await sessionController.create({
+        ...(workspaceId !== undefined ? { workspaceId } : cwd !== undefined ? { cwd } : {}),
+        ...(agentPreset === undefined ? {} : { agentPreset }),
+      });
+    } catch (error) {
+      throw failure('CREATE_FAILED', `could not create a new session: ${String(error?.message ?? error)}`);
+    }
+    const sessionId = created?.sessionId;
+    if (typeof sessionId !== 'string' || sessionId === '') {
+      throw failure('CREATE_FAILED', 'session-controller returned no session id');
+    }
+
+    // 写为启用：之后该会话的 Agent 创建/首条提示都会被梁谷规则覆盖。
+    controller.setEnabled(sessionId, true);
+    return {
+      sessionId,
+      agentPreset: created?.agentPreset ?? agentPreset ?? null,
+      workspaceId: workspaceId ?? null,
+    };
+  };
+
+  installOffpeakChannel(ctx, createOffpeakHandler({ controller, createLiangguSession }));
 
   // 控制器自己挂 agent/created · agent/status · agent/disposed 与配置热更新事件，
   // 返回的 dispose 交给 ctx.effect（组件停用即释放全部 hold、清定时器）。

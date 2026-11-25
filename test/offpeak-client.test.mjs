@@ -353,6 +353,39 @@ function chipTextOf(button) {
   const texts = collectNodes(button, (node) => node.type === 'span' && typeof node.props.children === 'string');
   return texts.map((node) => node.props.children).join('');
 }
+
+/**
+ * 渲染「新建梁谷会话」按钮。
+ *
+ * @param {any} module - 已加载的浏览器半模块。
+ * @param {(key: string, params?: any) => string} t - 词典。
+ * @param {{ busy?: boolean, notice?: any, capability?: boolean, sessionId?: string }} [options] - 夹具。
+ * @returns {any} `{ tree, button, buttons, created }`。
+ */
+function renderNewButton(module, t, options = {}) {
+  const created = [];
+  const dismissed = [];
+  const capability = options.capability === undefined ? true : options.capability;
+  const snapshot = { busy: options.busy === true, notice: options.notice === undefined ? null : options.notice };
+  const props = {
+    sessionId: options.sessionId === undefined ? 'session-src' : options.sessionId,
+    t,
+    useLiangguNew: (selector) => selector(snapshot),
+    useCapability: (selector) => selector({ share: true, retry: true, offpeak: capability }),
+    liangguNew: {
+      create: () => {
+        created.push(true);
+        return Promise.resolve();
+      },
+      dismissNotice: (sequence) => {
+        dismissed.push(sequence);
+      }
+    }
+  };
+  const tree = module.LiangguNewSessionButton(props);
+  const buttons = collectNodes(tree, (node) => node.type === 'button');
+  return { tree, button: buttons.length === 1 ? buttons[0] : undefined, buttons, created, dismissed };
+}
 // #endregion
 
 // #region 状态夹具
@@ -417,9 +450,11 @@ test('bundle 用 window.__ModuleLoader__.load 注册，工厂只 require 平台�
   }
 });
 
-test('导出面：apply / inject / OffpeakButton 与四个纯函数', () => {
+test('导出面：apply / inject / OffpeakButton / 新建按钮 与五个纯函数', () => {
   const module = loadModule();
   assert.equal(typeof module.OffpeakButton, 'function');
+  assert.equal(typeof module.LiangguNewSessionButton, 'function');
+  assert.equal(typeof module.createLiangguNewControl, 'function');
   assert.equal(typeof module.offpeakViewState, 'function');
   assert.equal(typeof module.formatOffpeakCountdown, 'function');
   assert.equal(typeof module.formatOffpeakClock, 'function');
@@ -453,6 +488,15 @@ test('apply 在标题栏 utils 槽位注册 session-offpeak（order -12、locale
   assert.ok(orderOf('session-offpeak') < orderOf('session-share'));
   assert.ok(orderOf('session-share') < orderOf('session-id-copy'));
   assert.ok(env.state.injections.includes(HEADER_SLOT));
+
+  // 6.2.0：新建会话页（hero 行）的「新建梁谷会话」按钮。
+  const newContribution = env.state.registrations.find((item) => item.entry.id === 'lianggu-new-session');
+  assert.notEqual(newContribution, undefined, 'apply 必须在 hero options 槽位注册 lianggu-new-session');
+  assert.equal(newContribution.entry.name, 'conversation.hero.options');
+  assert.equal(newContribution.entry.order, 0);
+  assert.equal(newContribution.entry.locale, NS);
+  assert.equal(newContribution.component, env.module.LiangguNewSessionButton);
+  assert.ok(env.state.injections.includes('conversation.hero.options'));
 });
 
 test('能力探测：梁谷通道 200 → capability.offpeak=true；405 → false', async (t) => {
@@ -509,22 +553,36 @@ test('词典：offpeak.* 在 en/zh 键集一致，中文文案是「梁谷/空�
   for (const key of zhKeys) {
     assert.ok(env.en[key].length > 0, `en 词条 ${key} 不能为空`);
   }
+
+  // 6.2.0 新建按钮词条：键集一致、中文文案齐全。
+  const zhNewKeys = Object.keys(env.zh).filter((key) => key.startsWith('lianggu.'));
+  const enNewKeys = Object.keys(env.en).filter((key) => key.startsWith('lianggu.'));
+  assert.ok(zhNewKeys.length >= 5, `lianggu 词条太少：${zhNewKeys.length}`);
+  assert.deepEqual(zhNewKeys.slice().sort(), enNewKeys.slice().sort(), 'en/zh 的 lianggu 键必须一一对应');
+  assert.equal(env.zh['lianggu.new'], '新建梁谷会话');
+  assert.ok(env.zh['lianggu.newTitle'].includes('自动开启梁谷'));
+  assert.ok(env.zh['lianggu.newFailed'].includes('{code}'));
+  assert.ok(env.zh['lianggu.newNoConnection'].includes('未连接'));
 });
 // #endregion
 
 // #region 纯函数
-test('formatOffpeakCountdown：3h05m / 12m34s / 42s，负数与非法值按 0', () => {
+test('formatOffpeakCountdown：>1h 小时分钟；≤1h 分钟秒（含不足 1 分钟与 1 小时整点）', () => {
   const { formatOffpeakCountdown } = loadModule();
   assert.equal(formatOffpeakCountdown(COUNTDOWN_MS), '3h05m');
   assert.equal(formatOffpeakCountdown(12 * 60 * 1000 + 34 * 1000), '12m34s');
-  assert.equal(formatOffpeakCountdown(59 * 1000), '59s');
+  assert.equal(formatOffpeakCountdown(59 * 60 * 1000 + 59 * 1000), '59m59s');
   assert.equal(formatOffpeakCountdown(60 * 1000), '1m00s');
-  assert.equal(formatOffpeakCountdown(3600 * 1000), '1h00m');
-  assert.equal(formatOffpeakCountdown(0), '0s');
-  assert.equal(formatOffpeakCountdown(-5000), '0s');
-  assert.equal(formatOffpeakCountdown(Number.NaN), '0s');
-  assert.equal(formatOffpeakCountdown('not-a-number'), '0s');
-  assert.equal(formatOffpeakCountdown(undefined), '0s');
+  assert.equal(formatOffpeakCountdown(59 * 1000), '0m59s');
+  assert.equal(formatOffpeakCountdown(42 * 1000), '0m42s');
+  // 1 小时整点严格按「不超过 1 小时 = 分钟秒」。
+  assert.equal(formatOffpeakCountdown(3600 * 1000), '60m00s');
+  assert.equal(formatOffpeakCountdown(3601 * 1000), '1h00m');
+  assert.equal(formatOffpeakCountdown(0), '0m00s');
+  assert.equal(formatOffpeakCountdown(-5000), '0m00s');
+  assert.equal(formatOffpeakCountdown(Number.NaN), '0m00s');
+  assert.equal(formatOffpeakCountdown('not-a-number'), '0m00s');
+  assert.equal(formatOffpeakCountdown(undefined), '0m00s');
 });
 
 test('offpeakViewState：off / paused / idle / busy 四个状态', () => {
@@ -702,6 +760,95 @@ test('渲染：能力探测 false / 无 sessionId 都返回隐藏占位（保持
 });
 // #endregion
 
+// #region 新建梁谷会话按钮
+test('渲染：新建按钮有 data 钩子/标题，busy 禁用，能力停用与无 session 都是隐藏占位', async (t) => {
+  const env = await setup();
+  t.after(env.restore);
+
+  const normal = renderNewButton(env.module, env.t);
+  assert.deepEqual(normal.buttons.length, 1);
+  assert.equal(normal.button.props['data-dsh-lianggu-new'], '');
+  assert.equal(normal.button.props['data-lianggu-new-busy'], 'false');
+  assert.equal(normal.button.props.disabled, false);
+  assert.equal(normal.button.props.title, '新建梁谷会话（自动开启梁谷）');
+  assert.equal(normal.button.props['aria-label'], '新建梁谷会话（自动开启梁谷）');
+  // 图标：优先用 primitives 的官方图标（测试替身里是函数），否则内联 svg。
+  assert.ok(
+    collectNodes(normal.tree, (node) => node.type === 'svg' || typeof node.type === 'function').length >= 1,
+    '新建按钮必须渲染图标（primitives 图标或内联 svg）'
+  );
+
+  const busy = renderNewButton(env.module, env.t, { busy: true });
+  assert.equal(busy.button.props['data-lianggu-new-busy'], 'true');
+  assert.equal(busy.button.props.disabled, true);
+  assert.equal(busy.button.props.title, '正在新建梁谷会话…');
+
+  const notice = renderNewButton(env.module, env.t, {
+    notice: { text: '新建梁谷会话失败（CREATE_FAILED）', sequence: 3 }
+  });
+  const toast = collectNodes(notice.tree, (node) => node.type !== undefined && node.type !== 'button' && node.type !== 'span');
+  assert.ok(toast.length >= 1, '失败时按钮旁要渲染 Toast');
+
+  const noCapability = renderNewButton(env.module, env.t, { capability: false });
+  assert.equal(noCapability.buttons.length, 0);
+  assert.equal(collectNodes(noCapability.tree, (node) => node.props['data-lianggu-new-hidden'] === 'disabled').length, 1);
+
+  const noSession = renderNewButton(env.module, env.t, { sessionId: '' });
+  assert.equal(noSession.buttons.length, 0);
+  assert.equal(collectNodes(noSession.tree, (node) => node.props['data-lianggu-new-hidden'] === 'no-session').length, 1);
+});
+
+test('新建梁谷会话：busy 同步、RPC payload 正确、成功后 openSession(新 id)', async (t) => {
+  const opened = [];
+  const { connection, calls } = createConnection();
+  const env = await setup({ connection });
+  t.after(env.restore);
+  env.ctx.uiWorkspace = { openSession: (id) => opened.push(id) };
+
+  const contribution = env.state.registrations.find((item) => item.entry.id === 'lianggu-new-session');
+  const control = contribution.entry.inject('session-src').liangguNew;
+  assert.equal(control.getSnapshot().busy, false);
+
+  const pending = control.create();
+  // busy 必须同步置上：否则连点会建出两个会话。
+  assert.equal(control.getSnapshot().busy, true);
+  await pending;
+  assert.equal(control.getSnapshot().busy, false);
+
+  const created = calls.filter((call) => call.method === 'createLiangguSession');
+  assert.deepEqual(created.map((call) => call.payload), [{ sessionId: 'session-src' }]);
+  assert.ok(created.every((call) => call.channel === '/dsh-session-enhance-offpeak'));
+  assert.deepEqual(opened, ['session-created']);
+});
+
+test('新建梁谷会话失败：业务错误码进 Toast，且不打开新会话；无连接单独收口', async (t) => {
+  const { connection } = createConnection({
+    createLiangguSession: () => ({ ok: false, error: { code: 'CREATE_FAILED', message: 'boom' } })
+  });
+  const env = await setup({ connection });
+  t.after(env.restore);
+  const opened = [];
+  env.ctx.uiWorkspace = { openSession: (id) => opened.push(id) };
+
+  const control = env.state.registrations
+    .find((item) => item.entry.id === 'lianggu-new-session')
+    .entry.inject('session-src').liangguNew;
+  await control.create();
+  assert.equal(control.getSnapshot().busy, false);
+  assert.ok(control.getSnapshot().notice !== null);
+  assert.ok(control.getSnapshot().notice.text.includes('CREATE_FAILED'));
+  assert.deepEqual(opened, []);
+
+  const disconnected = await setup();
+  t.after(disconnected.restore);
+  const offline = disconnected.state.registrations
+    .find((item) => item.entry.id === 'lianggu-new-session')
+    .entry.inject('session-src').liangguNew;
+  await offline.create();
+  assert.ok(offline.getSnapshot().notice.text.includes('未连接'));
+});
+// #endregion
+
 // #region 控制器：RPC 与 busy 语义
 /**
  * 造一个可控的 RPC 连接。
@@ -721,6 +868,11 @@ function createConnection(handlers = {}) {
           return handlers.setEnabled === undefined
             ? { ok: true, value: statusOf({ enabled: payload.enabled }) }
             : handlers.setEnabled(payload);
+        }
+        if (method === 'createLiangguSession') {
+          return handlers.createLiangguSession === undefined
+            ? { ok: true, value: { sessionId: 'session-created', agentPreset: null, workspaceId: null } }
+            : handlers.createLiangguSession(payload);
         }
         throw new Error(`unexpected method ${method}`);
       }

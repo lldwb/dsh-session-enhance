@@ -487,12 +487,13 @@ TIMEOUT / TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并有已准入的用户�
   - 开 + 空闲：绿色「梁谷 空闲」，title 写明「将在 HH:MM 自动暂停」；
   - 切换中：置灰「…」；失败时 chip 旁弹 Toast（带错误码），状态回退到切换前的值。
 - **一键新建梁谷会话**（6.2.0 起）：新建会话页「未分组 / 标准模式」那一行、**预设下拉框右侧**
-  有一个方形图标按钮（图标与页面右上角那个方形按钮相同，右上角原按钮保留）。点击 = 在**当前
-  会话所在工作区**新建一个空白会话，并**立刻把该会话的梁谷开关写为启用**，然后打开这个新会话：
-  高峰时段它会直接以「暂停」状态出现、空闲时段则正常。**新会话会归属到源会话所在的工作区**
-  （按成员关系/路径解析；即使源会话是还没有 live Agent 的空白会话也成立——6.2.1 修复了旧版
-  「创建成未挂工作区的孤儿会话、界面无法导航」的问题）。创建失败（没有 `sessionController`、
-  工作区解析失败等）会在按钮旁弹 Toast，不会留下半创建的会话。
+  有一个方形图标按钮（图标是官方右上角那个方形按钮的**同款镜像图标**，右上角原按钮保留）。
+  点击 = 在**当前会话所在工作区**新建一个空白会话，并**立刻把该会话的梁谷开关写为启用**，
+  然后打开这个新会话（成功后先弹「已创建梁谷会话，正在打开…」再导航）：高峰时段它会直接以
+  「暂停」状态出现、空闲时段则正常。**新会话会归属到源会话所在的工作区**（按成员关系/路径
+  解析；即使源会话是还没有 live Agent 的空白会话也成立——6.2.1 修复了旧版「创建成未挂工作区
+  的孤儿会话、界面无法导航」的问题；6.2.2/6.2.3 又补了导航重试与可见反馈）。创建失败（没有
+  `sessionController`、工作区解析失败等）会在按钮旁弹 Toast，不会留下半创建的会话。
 - **高峰发消息会怎样**：消息被 Host 接收并进入**官方 durable 队列**（暂停中先显示为「待发送」
   气泡；刷新页面后出现在 composer 上方的队列条——和平时「会话忙时排队」是同一个 UI，可编辑/
   删除），但**不会开始任何模型调用**；空闲时段开始后按队列顺序逐条执行。
@@ -840,6 +841,7 @@ token 本身（24 字节 / 192 bit 随机、不可枚举、可撤销），不靠
 
 | 层 | 内容 | 结果 |
 |---|---|---|
+| 6.2.3 图标镜像 + 成功反馈 / DSH 0.2.2-rc.5 | 单测 **302/302**（新增图标镜像断言：图标容器 `style.transform === 'scaleX(-1)'`；成功提示断言：创建成功后 notice 含「已创建梁谷会话」）；真实 UI 沙箱（真实 Chrome + 真实 `deepseek-flash`）：按钮存在且图标容器带 `scaleX(-1)`（与右上角「打开右侧边栏」按钮一致）、右上角原按钮保留；点击后 **300ms 内**弹出「已创建梁谷会话，正在打开…」且按钮 busy，随后会话行从旧空白会话切到新 `session-49a1801c…`；`workspace.json` 的 default-workspace `sessionIds` 出现该 id；`offpeak.json` 写入 `enabled:true`；在新会话发「按钮最终验证：只回复 FINAL-OK」→ assistant 回复 FINAL-OK、chip「梁谷 空闲」（旧空白会话 0 条消息） | 通过 |
 | 6.2.1 修复新建按钮「点了没反应」/ 6.2.0 回归 | 单测 **302/302**（新增 `test/offpeak-create.test.mjs` 7 例：冷会话从 `sessionQuery.traceSession().target.header` 取 cwd、按 `workspace.sessionIds` 成员关系带 `workspaceId`、`resolveByPath` 分支、无工作区回退 cwd、live/header 两条 preset 路径、显式 `attachSession` 兜底、UNAVAILABLE/CREATE_FAILED/无 id 失败且不写开关）；**真实桌面数据取证**：7 个点击创建的会话均已正确挂在 `dsh-plugins` 工作区、全部是空白会话（说明创建/归属成功，缺的是导航）→ 主因是客户端在会话列表刷新前 `openSession` 的竞态；真实 UI 沙箱**复现环境**（同装 `dsh-ungrouped`，页面显示「未分组」）验证修复：点按钮 → 会话行切到新 `session-c888e7a6…`，`workspace.json` 未分组 `sessionIds` 出现该 id，`offpeak.json` 写入 `enabled:true`；在新会话发「按钮验证：只回复 FIX-OK」→ 日志确认用户消息与 assistant 回复都在新会话（旧空白会话 0 条消息），创建/归属/导航三件事成立；`node --check`、locale/tool-names 门禁 ✓ | 通过 |
 | 6.2.0 新建梁谷会话按钮 + 倒计时格式 + 子代理范围 / DSH 0.2.2-rc.5 | 单测 **296/296**（倒计时边界：>1h=`3h05m`、59m59s、1h整点=`60m00s`、`0m42s`、非法=`0m00s`；新建按钮渲染/点击流/失败与无连接/隐藏占位；hero slot 注册；Host `coveredOf` 父会话离线但启用 → 子代理仍 hold、离线且无记录 → 不 hold；`createLiangguSession` 端点 6 例）；`node --check`；真实 UI 沙箱（真实 Chrome + 真实 `deepseek-flash`）：新建会话页「标准模式」右侧方形按钮（预设 rect 546–652、按钮 654–682，**间距 2px**，图标与右上角「打开右侧边栏」同款、原按钮保留）；点击 → 新会话 `session-30b463a5…` 创建且 `offpeak.json` 写入 `enabled:true`；首条消息后 chip=`paused`「梁谷 暂停 **1h17m**」（>1h 格式）+ title 含「将在 21:33 自动恢复」「队列中 1 条消息」；会话日志仅 1 条 `agent/inbox/spliced`（20:15:10.097Z），**无 turn/start、无 assistant/message**；≤1h 格式由单测钉住（沙箱未另配 <1h 窗口）；`check-plugin-locale.mjs` / `check-tool-names.mjs` ✓ | 通过 |
 | 6.1.0 侧边提问组件 / DSH 0.2.2-rc.5 | 单测 **286/286**（新增 `test/sideask.test.mjs`：提示词（参考会话 id / 工具清单 / 只读约束 / 引用块 / 中英文案）、RPC 信封与参数校验、控制器「沿用工作区与 Agent 预设建新会话 + 立即切只读 + fail-closed（只读切不上归档新会话）」、保留时恢复**权限预设**（不是 Agent 预设）与 catalog 兜底、forget；`test/sideask-client.test.mjs`：bundle 形状、页面型标签 + guide 卡片、标签正文私有 session 子槽、标题栏入口、合并弹层（`quote` key priority -1 shadow + 兜底 key）、405 时撤销全部注册、记录表与引用格式化；`test/entries.test.mjs` 增加第五个入口）；`node --check` 全部改动文件；`check-plugin-locale.mjs` / `check-tool-names.mjs` ✓；devkit web/UI 沙箱（真实 Chrome + 真实 deepseek-flash）：标题栏「侧边提问」按钮 → 新建**只读**会话（权限控件「仅可查看」），输入框预填提示词（含参考会话 id 与 `session_overview / session_grep / session_read / session_lookup`，以「我的问题：」收尾）；在侧边会话提问「幸运数字是多少」→ 模型实调 `session_grep` / `session_overview`（参数为参考会话 id）并答出父会话里的「7391」；点「保留」→ 权限变「工作区内修改」、标签「已保留 · 普通会话」；点「改回临时」→ 回到「仅可查看」；选中文字 → 弹层并排「引用文本」「侧边提问」（同一行 x=403/480）；旧版崩溃点（`React is not defined`）已修（client 半补 `require('react')`）；控制台 0 错误 | 通过 |

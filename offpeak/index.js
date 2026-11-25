@@ -57,6 +57,7 @@ import { BUILD } from '../lib/build.mjs';
 import { readOption } from '../lib/compact/options.mjs';
 import { resolveDshHome } from '../lib/shares.mjs';
 import { createOffpeakController } from '../lib/offpeak/controller.mjs';
+import { createLiangguSession as createLiangguSessionImpl } from '../lib/offpeak/create.mjs';
 import { createOffpeakHandler, installOffpeakChannel } from '../lib/offpeak/rpc.mjs';
 import { createOffpeakStore, offpeakStateFilePath } from '../lib/offpeak/store.mjs';
 import {
@@ -143,92 +144,22 @@ export function apply(ctx, config) {
   });
 
   /**
-   * 新建一个「梁谷会话」：在源会话所在的工作区建空白会话，并把梁谷开关写为启用。
+   * 新建一个「梁谷会话」：在源会话所在工作区建空白会话，并把梁谷开关写为启用。
    *
-   * 会话创建走 Host 的 `sessionController.create()`——与客户端「新建会话」同一条 Host
-   * 路径（空白会话，首条提示前不建 Agent）；创建成功后立刻把该会话写入开关存储，于是
-   * 它之后的第一次 Agent 创建就会按梁谷规则 hold/放行。
+   * 实现在 `lib/offpeak/create.mjs`：冷会话（hero 上还没有 live Agent 的空白会话）也能从
+   * 持久化 header 拿到 cwd/工作区，并把新会话 attach 进工作区——否则界面无法导航过去，
+   * 表现就是“按钮点了没反应”。
    *
    * @param {string} sourceSessionId - 当前会话 id（用来取工作区、cwd 与 preset）。
    * @returns {Promise<{ sessionId: string, agentPreset: string | null, workspaceId: string | null }>} 新会话。
    */
-  const createLiangguSession = async (sourceSessionId) => {
-    /** 软取 Host 服务（缺失/异常时 undefined）。 */
-    const service = (name) => {
-      try {
-        return typeof ctx?.get === 'function' ? ctx.get(name) : undefined;
-      } catch {
-        return undefined;
-      }
-    };
-    /** 组装带稳定 code 的错误（RPC 错误码用）。 */
-    const failure = (code, message) => {
-      const error = new Error(message);
-      error.code = code;
-      return error;
-    };
-
-    const sessionController = service('sessionController');
-    if (sessionController === undefined || sessionController === null || typeof sessionController.create !== 'function') {
-      throw failure('UNAVAILABLE', 'session-controller is unavailable in this deployment');
-    }
-
-    const agents = service('agents');
-    const sourceSession =
-      typeof agents?.get === 'function' ? agents.get(sourceSessionId)?.session : undefined;
-    const cwd =
-      typeof sourceSession?.header?.cwd === 'string' && sourceSession.header.cwd !== ''
-        ? sourceSession.header.cwd
-        : undefined;
-
-    // 同一个工作区：优先按 cwd 找 Workspace（create 传 workspaceId 时 Host 才会把新会话
-    // attach 到工作区，侧边栏才看得见）；找不到就退回按 cwd 建（默认工作区）。
-    let workspaceId;
-    const registry = service('workspaceRegistry');
-    if (cwd !== undefined && typeof registry?.resolveByPath === 'function') {
-      try {
-        const workspace = await registry.resolveByPath(cwd);
-        if (typeof workspace?.id === 'string' && workspace.id !== '') workspaceId = workspace.id;
-      } catch (error) {
-        ctx.logger?.debug?.(
-          `dsh-session-enhance/offpeak: resolve workspace for ${sourceSessionId} failed: ${String(error?.message ?? error)}`,
-        );
-      }
-    }
-
-    // 沿用源会话记录的 preset（空白会话通常还没有记录 → 交给 Host 默认 preset）。
-    let agentPreset;
-    const presets = service('agentPresets');
-    if (sourceSession !== undefined && typeof presets?.presetForSession === 'function') {
-      try {
-        agentPreset = presets.presetForSession(sourceSession) ?? undefined;
-      } catch {
-        // preset 读不到就走默认。
-      }
-    }
-
-    let created;
-    try {
-      created = await sessionController.create({
-        ...(workspaceId !== undefined ? { workspaceId } : cwd !== undefined ? { cwd } : {}),
-        ...(agentPreset === undefined ? {} : { agentPreset }),
-      });
-    } catch (error) {
-      throw failure('CREATE_FAILED', `could not create a new session: ${String(error?.message ?? error)}`);
-    }
-    const sessionId = created?.sessionId;
-    if (typeof sessionId !== 'string' || sessionId === '') {
-      throw failure('CREATE_FAILED', 'session-controller returned no session id');
-    }
-
-    // 写为启用：之后该会话的 Agent 创建/首条提示都会被梁谷规则覆盖。
-    controller.setEnabled(sessionId, true);
-    return {
-      sessionId,
-      agentPreset: created?.agentPreset ?? agentPreset ?? null,
-      workspaceId: workspaceId ?? null,
-    };
-  };
+  const createLiangguSession = (sourceSessionId) =>
+    createLiangguSessionImpl({
+      sourceSessionId,
+      getService: (name) => (typeof ctx?.get === 'function' ? ctx.get(name) : undefined),
+      controller,
+      logger: ctx.logger,
+    });
 
   installOffpeakChannel(ctx, createOffpeakHandler({ controller, createLiangguSession }));
 

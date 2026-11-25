@@ -2215,11 +2215,26 @@ window.__ModuleLoader__.load({
             return;
           }
           // Host 已经创建好并把该会话的梁谷开关写为启用；这里只负责导航到它。
+          // 新建会话要等客户端列表刷新后才能被 openSession 找到（尤其冷会话刚 attach 到
+          // 工作区时）；先刷新一次会话列表；没有 refresh 接口时补一次延迟重试。
+          let retry = true;
           try {
-            ctx.uiWorkspace?.openSession?.(newId);
+            if (typeof ctx.sessions?.refresh === 'function') {
+              await ctx.sessions.refresh();
+              retry = false;
+            }
           } catch {
-            // 导航失败不影响创建结果：用户仍能在侧边栏找到新会话。
+            retry = true;
           }
+          const open = () => {
+            try {
+              ctx.uiWorkspace?.openSession?.(newId);
+            } catch {
+              // 导航失败不影响创建结果：新会话已在工作区里，用户可从侧边栏打开。
+            }
+          };
+          open();
+          if (retry) setTimeout(open, 300);
         } catch {
           notifyFailure('TRANSPORT');
         } finally {

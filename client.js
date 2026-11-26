@@ -2147,10 +2147,10 @@ window.__ModuleLoader__.load({
 
     // #region 新建会话页的「梁谷」开关（hero 行，预设右侧）
     /**
-     * hero 开关的图标：**关（未启用）= 太阳；开（梁谷）= 月亮**。
+     * hero 开关的图标：**关（未启用）= 太阳；开（梁谷）= 月亮 + 小星星**。
      *
      * primitives 里没有太阳/月亮导出，所以用内联 SVG（15px、currentColor、1.2 描边），
-     * 与官方小图标的视觉尺寸对齐。
+     * 月亮右上角的四角星按用户提供的样式画成实心小星。
      *
      * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @returns {any} 图标元素。
@@ -2181,6 +2181,7 @@ window.__ModuleLoader__.load({
           children: [jsx('circle', { cx: 8, cy: 8, r: 3.2, stroke: 'currentColor', strokeWidth: 1.2 }), ...rays]
         });
       }
+      // 月亮 + 右上角小星星（用户指定的样式：弯月 + 一颗四角星，深夜/睡眠语义）。
       return jsxs('svg', {
         width: 15,
         height: 15,
@@ -2189,10 +2190,15 @@ window.__ModuleLoader__.load({
         'aria-hidden': 'true',
         children: [
           jsx('path', {
-            d: 'M12.6 9.8A5.6 5.6 0 0 1 6.2 3.4a5.6 5.6 0 1 0 6.4 6.4Z',
+            d: 'M10.9 9.6A4.9 4.9 0 0 1 5.5 4.2a4.9 4.9 0 1 0 5.4 5.4Z',
             stroke: 'currentColor',
             strokeWidth: 1.2,
             strokeLinejoin: 'round'
+          }),
+          jsx('path', {
+            d: 'M12.5 3.1l.55 1.35 1.35.55-1.35.55-.55 1.35-.55-1.35-1.35-.55 1.35-.55z',
+            fill: 'currentColor',
+            stroke: 'none'
           })
         ]
       });

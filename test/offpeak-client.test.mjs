@@ -817,7 +817,14 @@ test('渲染：关=太阳+「梁峰」；开=月亮+「梁谷」+倒计时/空�
   assert.equal(heroTextOf(paused.button), '梁谷 3h05m');
   assert.ok(paused.label.includes('高峰暂停'), `暂停态提示：${paused.label}`);
   assert.ok(/将在 \d{2}:\d{2} 自动恢复/.test(paused.label), `暂停态应给恢复时刻：${paused.label}`);
-  assert.ok(collectNodes(paused.tree, (node) => node.type === 'path').length >= 1, '开态应是月亮（path）');
+  assert.ok(
+    collectNodes(paused.tree, (node) => node.type === 'path').length >= 2,
+    '开态应是月亮 + 小星星（两个 path）'
+  );
+  assert.ok(
+    collectNodes(paused.tree, (node) => node.type === 'path' && node.props.fill === 'currentColor').length >= 1,
+    '星星应是实心（fill=currentColor）'
+  );
 
   const idle = renderHeroToggle(env.module, env.t, { view: 'idle' });
   assert.equal(idle.button.props['data-lianggu-state'], 'idle');

@@ -497,7 +497,7 @@ TIMEOUT / TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并有已准入的用户�
   按钮左侧；6.3.8 起与新建页开关统一为官方 `Pill` + `Tooltip` 形制）：
   - 关：灰字「梁谷」（太阳图标）；
   - 开 + 高峰：琥珀色「梁谷 2m32s」（弯月+星星图标，倒计时到空闲时段开始；**剩余 > 1 小时
-    显示 `3h05m`，≤ 1 小时显示 `12m34s`，不足 1 分钟显示 `0m42s`**）；
+    显示 `3h05m`，1 分钟~1 小时显示 `12m34s`，不足 1 分钟显示 `37s`（省略 `0m`，6.5.0 起）**）；
   - 开 + 空闲：绿色「梁谷 空闲」；
   - 切换中：置灰「梁谷 …」；失败时 chip 旁弹 Toast（带错误码），状态回退到切换前的值；
   - **尺寸固定（6.3.9 起；6.4.1 收紧到 105px）**：无论开关/状态/文案/倒计时怎么变，chip 都是
@@ -531,6 +531,11 @@ TIMEOUT / TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并有已准入的用户�
 - **子代理也算「该会话」**：沿 `session.header.parentSession` 向上，任一祖先会话启用了梁谷，
   子树里的 live Agent 一并被 hold/cancel；**祖先会话即使已经关闭（没有 live Agent），只要它的
   开关记录仍是启用，子代理也照样被覆盖**（6.2.0 起）；禁用父会话时子树一起释放。
+- **子智能体的开关是只读的**（6.5.0 起）：`session.header.origin === 'subagent'` 的会话不再
+  使用自己的记录，而是**同步主会话状态**（`enabledSource: 'parent'`、`inheritedFrom` 指向直接
+  父会话）：chip 置灰不可点、提示写明「状态继承自主会话，在子智能体会话里不能修改」；直接调
+  `setEnabled` API 也会被拒绝（`READ_ONLY_INHERITED`）。普通 fork（有 `parentSession` 但不是
+  `origin: subagent`）不受影响，仍可自己设置。
 - **开关是即时的**：高峰打开 → 立刻暂停（必要时中断当前轮）；空闲打开 → 不暂停；关闭 →
   立刻释放，队列里压着的消息马上开始跑。
 - **配置**（设置 → 插件 → 会话增强 → 包含的组件 → 梁谷，四个字段都是 volatile，保存后热更新）：
@@ -869,6 +874,7 @@ token 本身（24 字节 / 192 bit 随机、不可枚举、可撤销），不靠
 
 | 层 | 内容 | 结果 |
 |---|---|---|
+| 6.5.0 子智能体只读继承 + 倒计时 `<1min` 格式 / DSH 0.2.2-rc.5 | 单测 **307/307**（controller 31：子智能体继承父启用/忽略自身记录/`setEnabled` applied:false 且 store 不变/父关同步关闭仍只读、普通 fork 不受影响；RPC 11：`READ_ONLY_INHERITED` + 对照组；client 26：只读 chip 置灰/提示/点击不 toggle、hero 隐藏；倒计时 59s/42s/5s→`59s/42s/5s`、0/999ms→`0s`）；真实 UI 沙箱：父会话开梁谷 → 模型实派子代理 → 页面内 `diag` 显示子会话 `enabledSource=parent/readOnly=true/inheritedFrom=父会话/covered=true`，`setEnabled(子会话,false)` 返回 **`READ_ONLY_INHERITED`**；倒计时实测 `梁谷 1m52s` → **`梁谷 57s`**（无 `0m`）+ `urgent`；locale/tool-names 门禁 ✓ | 通过 |
 | 6.4.1 宽度收紧 105px + 倒计时动效 / DSH 0.2.2-rc.5 | 单测 **303/303**（固定尺寸断言改 105px；紧迫级别：60s/59s→`urgent`、10s/9s→`final`、0s/61s/120s→无钩子，chip 与 hero 都覆盖）；真实 UI 沙箱：`梁谷 5m18s` 无钩子、按钮 `105×24`、文本区 `scrollWidth=clientWidth=70` 且「梁谷 60m00s」也不截断；等到 `梁谷 0m37s` 时 `data-offpeak-urgent="urgent"`、`animationName=dsh-offpeak-urgent-throb`、`1s`，宽度仍 `105×24`（`final` 级别由单测覆盖，真实窗口只抓到 urgent）；locale/tool-names 门禁 ✓ | 通过 |
 | 6.3.9 梁谷按钮固定尺寸 / DSH 0.2.2-rc.5 | 单测 **302/302**（新增：chip 与 hero 在 off/paused/idle/busy 四态均断言 `112px × 24px`）；真实 UI 沙箱逐态实测：hero off `112×24`、hero idle `112×24`、chip idle `112×24`、hero paused `112×24`（「梁谷 46m43s」）、chip paused `112×24`（「梁谷 46m32s」）——宽高不随状态/文案变化；locale/tool-names 门禁 ✓ | 通过 |
 | 6.3.8 梁谷界面统一官方 Pill+Tooltip / DSH 0.2.2-rc.5 | 单测 **301/301**（chip 与 hero 夹具改从 Tooltip 子树取 Pill；两处都断言无原生 `title`、`side='bottom'`、文案/提示逐字匹配）；真实 UI 沙箱：chip 与 hero 均 `height 24px / radius 999px / font-size 12px / hasTitle=false`；hover 分别出现官方深色气泡（chip「梁谷：高峰暂停 / 将在 12:00 自动恢复 / 队列中 1 条消息…」、hero「梁谷：关闭 / 点击开启…」）；截图确认与标题栏官方控件同形制 | 通过 |

@@ -140,6 +140,38 @@ chip 与 hero 都是 `height 24px / radius 999px / font-size 12px / hasTitle=fal
 月亮 `path`、空闲「梁谷 空闲」、busy「梁谷 …」）；真实 UI 沙箱：关态截图「☀ 梁峰」、
 点击后「☾ 梁谷 1h12m」（琥珀 pill）、再点可关；`node --check`、locale/tool-names 门禁 ✓。
 
+## 6.5.0 — 2026-11-26
+
+### 子智能体同步主会话的梁谷状态（只读）；倒计时不足 1 分钟显示 `37s`
+
+**子智能体只读继承（用户要求）**：主智能体设置梁谷后，子智能体**同步该状态且不能修改**。
+
+- Host：`status(sessionId)` 对 `session.header.origin === 'subagent'` 的会话改为**继承判定**——
+  沿祖先链找是否有启用者：`enabled` / `paused` 与主会话一致，`enabledSource='parent'`，
+  新增 `readOnly:true` 与 `inheritedFrom`（直接父会话 id）；子智能体自己的 store 记录被忽略；
+- `setEnabled` 对子智能体会话**不写 store、不下发改动**，返回 `readOnly:true / applied:false`；
+  RPC 层转成 `READ_ONLY_INHERITED` 错误（"state is inherited from the parent session and is
+  read-only here"）——绕过界面直接调 API 也改不了；
+- 客户端：子智能体会话的 chip **置灰不可点**（`data-offpeak-read-only=true`），悬浮提示追加
+  「状态继承自主会话，在子智能体会话里不能修改。」；新建页开关在只读会话里直接隐藏；
+- 边界：只认 `origin === 'subagent'`（普通 fork 带 `parentSession` 但不锁只读）；判定需要
+  同步读到 header（live Agent），读不到时按普通会话处理，不会误锁。
+
+**倒计时格式（用户要求）**：不足 1 分钟**省略 `0m`**，显示 `37s` / `59s`（此前是 `0m37s`）；
+1 分钟~1 小时仍是 `12m34s`，1 小时整点 `60m00s`，超过 1 小时 `3h05m`。
+
+**验证**：
+
+- 单测 **307/307**（controller 31：新增「子智能体同步且只读」——继承父启用、忽略自身记录、
+  `setEnabled` 返回 applied:false 且 store 不变、父关后同步关闭仍只读；「普通 fork 不受影响」；
+  RPC 11：`READ_ONLY_INHERITED` + 普通会话对照组；client 26：只读 chip 置灰/提示/点击不
+  toggle、hero 隐藏；倒计时边界 59s/42s/5s→`59s/42s/5s`，0/999ms→`0s`）；
+- 真实 UI 沙箱：父会话开启梁谷 → 模型实派子代理（`1 个子智能体`）→ 从页面调 `diag`：
+  子会话 `enabled:true / enabledSource:parent / readOnly:true / inheritedFrom:父会话`、
+  `covered:true`；`setEnabled(子会话,false)` 返回 **`READ_ONLY_INHERITED`**；`status` 同样只读；
+  倒计时实测 `梁谷 1m52s` → `梁谷 57s`（无 `0m`）并带 `urgent` 动效；
+- `node --check`、locale / 工具名门禁 ✓。
+
 ## 6.4.1 — 2026-11-26
 
 ### 梁谷按钮宽度收紧到 105px；倒计时最后 60 秒带动效

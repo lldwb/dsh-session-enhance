@@ -552,11 +552,12 @@ TIMEOUT / TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并有已准入的用户�
   - `holidays`：法定节假日日期（`YYYY-MM-DD`，逗号/空白分隔），默认内置 2026+2027 年表；
     **空串 = 不享受节假日豁免**（只按周末 + 高峰窗口判断）；
   - `autoHolidays`：**自动更新节假日表**（默认开）。开启且 `holidays` 仍是默认值时，插件启动
-    3 秒后、以及每 6 小时会自动抓当年 + 次年的官方安排（数据源：`timor.tech`，备用
-    `holiday-cn` 的 jsDelivr / GitHub 镜像），结果缓存在
-    `<DSH_HOME>/dsh-session-enhance/holidays-cache.json`（24 小时内不重复请求）。
-    抓取失败**不影响任何行为**（继续用内置/上次缓存）；用户**改过 `holidays`**（含空串）时
-    自动更新不再覆盖你的配置。整个过程在 Host 里完成，**不需要 AI、不需要联网搜索**；
+    3 秒后做一次检查（不阻塞激活），之后**每天**做一次本地检查；只有缓存超过 **7 天**才真正
+    发网络请求——官方安排一年只发布一次，低频复查就够。数据源：`timor.tech`，备用
+    `holiday-cn` 的 jsDelivr / GitHub 镜像，结果缓存在
+    `<DSH_HOME>/dsh-session-enhance/holidays-cache.json`。抓取失败**不影响任何行为**（继续用
+    内置/上次缓存）；用户**改过 `holidays`**（含空串）时自动更新不再覆盖你的配置。
+    整个过程在 Host 里完成，**不需要 AI、不需要联网搜索**；
   - `defaultEnabled`：新会话默认是否启用，默认关。
   非法值逐字段回退默认并只 warn 一次。
 - **持久化**：每个会话的开关状态写 `<DSH_HOME>/dsh-session-enhance/offpeak.json`（原子写、

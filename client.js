@@ -460,11 +460,16 @@ window.__ModuleLoader__.load({
     /**
      * 两处梁谷开关的固定尺寸（用户要求：无论开关/状态/文案/倒计时怎么变，宽高都不变）。
      *
-     * 宽度按最长文案留出余量：图标 15 + gap 4 + 左右 padding 16 + 「梁谷 60m00s」
-     * （2 个中文字 + 空格 + 6 个数字，12px 字号约 68）≈ 103px；取 112px 留安全余量。
+     * 宽度由实测决定（官方 Pill 字体 12px）：最长文案「梁谷 60m00s」= 68.59px，
+     * 加图标 15 + gap 4 + 左右 padding 16 = 103.59px；取 105px（约 1.4px 余量），
+     * 比原先的 112px 更紧凑，保证最长文案不截断、不抖动。
      */
-    const OFFPEAK_PILL_WIDTH = '112px';
+    const OFFPEAK_PILL_WIDTH = '105px';
     const OFFPEAK_PILL_HEIGHT = '24px';
+
+    /** 倒计时进入「紧迫」的阈值：剩余 ≤ 60s 起有动效，≤ 10s 更急促。 */
+    const OFFPEAK_URGENT_MS = 60_000;
+    const OFFPEAK_FINAL_MS = 10_000;
 
     /**
      * 中断重试按钮的槽位名：官方 composer 右侧、主发送按钮之前。
@@ -1643,7 +1648,51 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 把剩余毫秒格式化成 chip 里的短倒计时。
+     * 倒计时的「紧迫级别」：暂停态且剩余 ≤ 60s 时给 Pill 加动效钩子。
+     *
+     * - `'urgent'`：剩余 ≤ 60s（开始有节奏地呼吸/描边）；
+     * - `'final'`：剩余 ≤ 10s（更快、更醒目的最后冲刺）；
+     * - `''`：普通静态（平时不闪，避免干扰）。
+     *
+     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
+     * @param {any} snapshot - 控制器快照。
+     * @returns {''|'urgent'|'final'} 级别。
+     */
+    function offpeakUrgency(view, snapshot) {
+      if (view !== 'paused') return '';
+      const ms = snapshot === null || snapshot === undefined ? undefined : snapshot.countdownMs;
+      if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return '';
+      if (ms <= OFFPEAK_FINAL_MS) return 'final';
+      if (ms <= OFFPEAK_URGENT_MS) return 'urgent';
+      return '';
+    }
+
+    /**
+     * 倒计时紧迫感的样式（两处开关共用，只注入一次）：
+     * 平时完全静态；剩余 ≤60s 开始呼吸闪烁（内描边 + 轻微透明变化），≤10s 加快并加粗数字。
+     * 数字用 `tabular-nums` 等宽，避免每秒跳动时文本宽度变化。
+     *
+     * @returns {() => void} 卸载函数。
+     */
+    function installOffpeakMotionStyle() {
+      if (typeof document === 'undefined') return () => {};
+      const style = document.createElement('style');
+      style.setAttribute('data-dsh-enhance-offpeak-motion', '');
+      style.textContent = [
+        '[data-offpeak-urgent]{font-variant-numeric:tabular-nums;}',
+        '@keyframes dsh-offpeak-urgent-throb{0%,100%{box-shadow:inset 0 0 0 1px var(--dsw-alias-state-warn-label,#b45309);opacity:1;}50%{box-shadow:inset 0 0 0 1px rgba(0,0,0,0);opacity:.66;}}',
+        '[data-offpeak-urgent="urgent"]{animation:dsh-offpeak-urgent-throb 1s ease-in-out infinite;}',
+        '[data-offpeak-urgent="final"]{animation:dsh-offpeak-urgent-throb .45s ease-in-out infinite;font-weight:600;}',
+        '@media (prefers-reduced-motion: reduce){[data-offpeak-urgent]{animation:none;}}'
+      ].join('');
+      document.head.appendChild(style);
+      return () => {
+        style.remove();
+      };
+    }
+
+    /**
+     * 把剩余毫秒格式化成 chip / 开关里的短倒计时。
      *
      * 口径（用户指定）：
      * - 剩余 **> 1 小时** → `3h05m`（小时 + 两位分钟）；
@@ -2097,6 +2146,7 @@ window.__ModuleLoader__.load({
           ? status.cover.queued
           : undefined;
       const label = offpeakStatusTooltip(view, snapshot, t, { queued });
+      const urgency = offpeakUrgency(view, snapshot);
       const toast =
         snapshot.notice === null || snapshot.notice === undefined
           ? null
@@ -2119,6 +2169,7 @@ window.__ModuleLoader__.load({
         'data-dsh-offpeak-button': '',
         'data-offpeak-state': view,
         'data-offpeak-enabled': enabled ? 'true' : 'false',
+        ...(urgency === '' ? {} : { 'data-offpeak-urgent': urgency }),
         'aria-label': label.split('\n')[0],
         disabled: view === 'busy',
         onClick: () => {
@@ -2250,6 +2301,7 @@ window.__ModuleLoader__.load({
       const enabled = view !== 'off';
       const text = liangguHeroText(view, state, t);
       const label = offpeakStatusTooltip(view, state, t);
+      const urgency = offpeakUrgency(view, state);
       const palette = offpeakChipPalette(view);
       // 与标题栏 chip 同一个官方 `Pill` + `Tooltip` 形制。
       const pill = jsx(P.Pill, {
@@ -2257,6 +2309,7 @@ window.__ModuleLoader__.load({
         'data-dsh-lianggu-hero': '',
         'data-lianggu-state': view,
         'data-lianggu-enabled': enabled ? 'true' : 'false',
+        ...(urgency === '' ? {} : { 'data-offpeak-urgent': urgency }),
         'aria-label': t('lianggu.heroAria'),
         disabled: view === 'busy',
         onClick: () => {
@@ -4136,6 +4189,8 @@ window.__ModuleLoader__.load({
       );
       // chip 的 hover/disabled 规则（选择器只命中本插件自己的按钮，卸载时移除）。
       ctx.effect(() => installOffpeakStyle(), 'dsh-session-enhance: offpeak chip style');
+      // 倒计时 ≤60s / ≤10s 的紧迫动效（两处开关共用，只注入一次）。
+      ctx.effect(() => installOffpeakMotionStyle(), 'dsh-session-enhance: offpeak countdown motion');
 
       // ---- 梁谷：新建会话页的「梁谷」开关（hero 行，预设右侧）----
       //

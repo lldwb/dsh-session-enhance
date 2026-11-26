@@ -396,7 +396,7 @@ function renderHeroToggle(module, t, options = {}) {
   const snapshot = snapshotOf({
     status: statusOf({ enabled: view !== 'off', paused: view === 'paused' }),
     busy: view === 'busy',
-    countdownMs: view === 'paused' ? COUNTDOWN_MS : null
+    countdownMs: options.countdownMs === undefined ? (view === 'paused' ? COUNTDOWN_MS : null) : options.countdownMs
   });
   const props = {
     sessionId: options.sessionId === undefined ? 'session-src' : options.sessionId,
@@ -749,7 +749,7 @@ test('渲染：空闲时段是 green「梁谷 空闲」，提示写明自动暂�
   assert.deepEqual(busy.toggles, [true]);
 });
 
-test('固定尺寸：chip 与 hero 在四种状态下宽高都不变（112 × 24）', async (t) => {
+test('固定尺寸：chip 与 hero 在四种状态下宽高都不变（105 × 24）', async (t) => {
   const env = await setup();
   t.after(env.restore);
   const states = [
@@ -760,14 +760,56 @@ test('固定尺寸：chip 与 hero 在四种状态下宽高都不变（112 × 24
   ];
   for (const [name, snapshot, view] of states) {
     const chip = renderChip(env.module, env.t, snapshot);
-    assert.equal(chip.button.props.style.width, '112px', `chip ${name} 宽固定`);
+    assert.equal(chip.button.props.style.width, '105px', `chip ${name} 宽固定`);
     assert.equal(chip.button.props.style.height, '24px', `chip ${name} 高固定`);
     assert.equal(chip.button.props['data-offpeak-state'], view);
     const hero = renderHeroToggle(env.module, env.t, { view });
-    assert.equal(hero.button.props.style.width, '112px', `hero ${name} 宽固定`);
+    assert.equal(hero.button.props.style.width, '105px', `hero ${name} 宽固定`);
     assert.equal(hero.button.props.style.height, '24px', `hero ${name} 高固定`);
     assert.equal(hero.button.props['data-lianggu-state'], view);
   }
+});
+
+test('倒计时紧迫感：剩余 ≤60s 标 urgent、≤10s 标 final，其余状态不带动效钩子', async (t) => {
+  const env = await setup();
+  t.after(env.restore);
+  const pausedAt = (countdownMs) =>
+    snapshotOf({ status: statusOf({ enabled: true, paused: true }), countdownMs });
+
+  // chip 与 hero 都要有同一套钩子。
+  for (const countdownMs of [120_000, 61_000]) {
+    assert.equal(renderChip(env.module, env.t, pausedAt(countdownMs)).button.props['data-offpeak-urgent'], undefined);
+    assert.equal(
+      renderHeroToggle(env.module, env.t, { view: 'paused', countdownMs }).button.props['data-offpeak-urgent'],
+      undefined,
+      `hero ${countdownMs}ms 不应有 urgent 钩子`
+    );
+  }
+  assert.equal(renderChip(env.module, env.t, pausedAt(60_000)).button.props['data-offpeak-urgent'], 'urgent');
+  assert.equal(renderChip(env.module, env.t, pausedAt(59_000)).button.props['data-offpeak-urgent'], 'urgent');
+  assert.equal(renderChip(env.module, env.t, pausedAt(10_000)).button.props['data-offpeak-urgent'], 'final');
+  assert.equal(renderChip(env.module, env.t, pausedAt(9_000)).button.props['data-offpeak-urgent'], 'final');
+  assert.equal(renderChip(env.module, env.t, pausedAt(0)).button.props['data-offpeak-urgent'], undefined);
+  // hero 同一套判定。
+  assert.equal(
+    renderHeroToggle(env.module, env.t, { view: 'paused', countdownMs: 45_000 }).button.props['data-offpeak-urgent'],
+    'urgent'
+  );
+  assert.equal(
+    renderHeroToggle(env.module, env.t, { view: 'paused', countdownMs: 5_000 }).button.props['data-offpeak-urgent'],
+    'final'
+  );
+
+  // 非暂停态（关/空闲）不带钩子。
+  assert.equal(
+    renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: false }) })).button.props['data-offpeak-urgent'],
+    undefined
+  );
+  assert.equal(
+    renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: true, paused: false }), countdownMs: 5_000 }))
+      .button.props['data-offpeak-urgent'],
+    undefined
+  );
 });
 
 test('渲染：失败 Toast 用 sequence 当 key，onDone 只清对应那条', async (t) => {

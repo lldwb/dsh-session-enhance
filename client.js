@@ -2350,6 +2350,7 @@ window.__ModuleLoader__.load({
       const stateText = offpeakChipState(view, state, t);
       const label = offpeakStatusTooltip(view, state, t);
       const urgency = offpeakUrgency(view, state);
+      const readOnly = state.status !== null && typeof state.status === 'object' && state.status.readOnly === true;
       const palette = offpeakChipPalette(view);
       // 与标题栏 chip 同一个官方 `Pill` + `Tooltip` 形制。
       const pill = jsx(P.Pill, {
@@ -2358,9 +2359,11 @@ window.__ModuleLoader__.load({
         'data-lianggu-state': view,
         'data-lianggu-enabled': enabled ? 'true' : 'false',
         ...(urgency === '' ? {} : { 'data-offpeak-urgent': urgency }),
-        'aria-label': t('lianggu.heroAria'),
-        disabled: view === 'busy',
+        // 与 chip 一致：无障碍名称取提示文案首行（如「梁谷：关闭 / 梁谷：高峰暂停」）。
+        'aria-label': label.split('\n')[0],
+        disabled: view === 'busy' || readOnly,
         onClick: () => {
+          if (view === 'busy' || readOnly) return;
           void props.offpeak.toggle();
         },
         style: {
@@ -2401,14 +2404,36 @@ window.__ModuleLoader__.load({
           })
         ]
       });
+      // 与 chip 一致：切换失败 / 未落盘时在开关旁弹 Toast（此前 hero 漏了这一步，
+      // 失败时界面毫无反馈）。
+      const toast =
+        state.notice === null || state.notice === undefined
+          ? null
+          : jsx(
+              P.Toast,
+              {
+                text: state.notice.text,
+                onDone: () => {
+                  props.offpeak.dismissNotice(state.notice.sequence);
+                },
+                ...(state.notice.tone === undefined ? {} : { tone: state.notice.tone })
+              },
+              state.notice.sequence
+            );
       // 同 chip：Tooltip 锚点用原生 span，不直接把自定义组件交给 Tooltip 克隆。
-      return jsx(P.Tooltip, {
-        label,
-        side: 'bottom',
-        align: 'center',
-        delayMs: 350,
-        maxWidth: 320,
-        children: jsx('span', { style: { display: 'inline-flex' }, children: pill })
+      return jsxs('span', {
+        style: { display: 'inline-flex', alignItems: 'center' },
+        children: [
+          jsx(P.Tooltip, {
+            label,
+            side: 'bottom',
+            align: 'center',
+            delayMs: 350,
+            maxWidth: 320,
+            children: jsx('span', { style: { display: 'inline-flex' }, children: pill })
+          }),
+          toast
+        ]
       });
     }
 

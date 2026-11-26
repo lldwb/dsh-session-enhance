@@ -392,6 +392,7 @@ function heroTextOf(button) {
  */
 function renderHeroToggle(module, t, options = {}) {
   const toggles = [];
+  const dismissed = [];
   const capability = options.capability === undefined ? true : options.capability;
   const view = options.view === undefined ? 'off' : options.view;
   const snapshot = snapshotOf({
@@ -401,7 +402,8 @@ function renderHeroToggle(module, t, options = {}) {
       ...(options.readOnly === true ? { readOnly: true, enabledSource: 'parent', inheritedFrom: 'parent' } : {})
     }),
     busy: view === 'busy',
-    countdownMs: options.countdownMs === undefined ? (view === 'paused' ? COUNTDOWN_MS : null) : options.countdownMs
+    countdownMs: options.countdownMs === undefined ? (view === 'paused' ? COUNTDOWN_MS : null) : options.countdownMs,
+    notice: options.notice === undefined ? null : options.notice
   });
   const props = {
     sessionId: options.sessionId === undefined ? 'session-src' : options.sessionId,
@@ -412,6 +414,9 @@ function renderHeroToggle(module, t, options = {}) {
       toggle: () => {
         toggles.push(true);
         return Promise.resolve();
+      },
+      dismissNotice: (sequence) => {
+        dismissed.push(sequence);
       }
     }
   };
@@ -423,7 +428,15 @@ function renderHeroToggle(module, t, options = {}) {
     (node) => node.props !== undefined && node.props['data-dsh-lianggu-hero'] !== undefined
   )[0];
   const buttons = button === undefined ? [] : [button];
-  return { tree, tooltip, button, buttons, toggles, label: tooltip === undefined ? undefined : tooltip.props.label };
+  return {
+    tree,
+    tooltip,
+    button,
+    buttons,
+    toggles,
+    dismissed,
+    label: tooltip === undefined ? undefined : tooltip.props.label
+  };
 }
 // #endregion
 
@@ -776,6 +789,22 @@ test('固定尺寸：chip 与 hero 在四种状态下宽高都不变（106 × 24
     assert.equal(hero.button.props.style.height, '24px', `hero ${name} 高固定`);
     assert.equal(hero.button.props['data-lianggu-state'], view);
   }
+});
+
+test('新建页开关：失败时与 chip 一样弹 Toast（不再静默）', async (t) => {
+  const env = await setup();
+  t.after(env.restore);
+  const notice = { text: '切换梁谷失败（READ_ONLY_INHERITED）', sequence: 9 };
+  const rendered = renderHeroToggle(env.module, env.t, { view: 'paused', notice });
+  const toasts = collectNodes(rendered.tree, (node) => node.type === primitives.Toast);
+  assert.equal(toasts.length, 1, 'hero 开关失败时必须渲染 Toast');
+  assert.equal(toasts[0].props.text, notice.text);
+  assert.equal(toasts[0].key, 9, 'Toast 以 sequence 为 key');
+  toasts[0].props.onDone();
+  assert.deepEqual(rendered.dismissed, [9], 'onDone 清对应 notice');
+
+  const quiet = renderHeroToggle(env.module, env.t, { view: 'paused' });
+  assert.equal(collectNodes(quiet.tree, (node) => node.type === primitives.Toast).length, 0);
 });
 
 test('节庆 emoji：暂停倒计时 ≤60s 加 🎉、≤10s 加 🎊，其余状态不加', async (t) => {

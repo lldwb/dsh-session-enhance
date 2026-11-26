@@ -52,9 +52,9 @@ dsh plugin add .
 
 | 写法 | 从哪来 | 例子 |
 |---|---|---|
-| `session-<uuid>` | 根会话的真实 id；「复制会话 ID」按钮复制的就是它 | `session-559eb381-39ff-42bf-b3b6-4ae109b37eb1` |
-| `<uuid>` | **子代理会话**的真实 id（没有前缀）；也是 `~/.dsh/sessions/…/subagents/<uuid>/` 的目录名 | `1da52432-571f-458c-a8f0-5716e8cf2d59` |
-| `dsh-session-session-<uuid>.zip` | 会话导出文件名（用 `@` 引用 zip 时就是它）；整条路径、带不带 `.zip` 都行 | `C:\Users\me\Downloads\dsh-session-session-559eb381-….zip` |
+| `session-<uuid>` | 根会话的真实 id；「复制会话 ID」按钮复制的就是它 | `session-<uuid>` |
+| `<uuid>` | **子代理会话**的真实 id（没有前缀）；也是 `~/.dsh/sessions/…/subagents/<uuid>/` 的目录名 | `<uuid>` |
+| `dsh-session-session-<uuid>.zip` | 会话导出文件名（用 `@` 引用 zip 时就是它）；整条路径、带不带 `.zip` 都行 | `C:\Users\me\Downloads\dsh-session-session-<uuid>.zip` |
 
 归一化的锚点是 **UUID**：精确 id 没命中时，插件会用 `sessionQuery.listSessions()` 按 UUID 回查语料库，命中后把真实 id 用起来，并在摘要里明说「你给的 X 与真实 id Y 是同一个会话」——不会悄悄改写。命中多个时报「不唯一」而不是随便挑；回查本身失败（例如存储不可用）会把原始错误带出来，不伪装成「会话不存在」。后续读取与分享记录都落在归一化后的真实 id 上。
 
@@ -64,7 +64,7 @@ dsh plugin add .
 
 ### 先概括、再检索、后精读：`session_overview` / `session_grep` / `session_read`
 
-`session_lookup` 是「把整棵树一次读出来」的重工具。会话一长（真实案例：4468 个事件、736 次工具调用、2730 分钟跨度）它只给最后几条、每条截断，不合适。三个补位工具构成一条「先概括、再定位、后精读」的路径：
+`session_lookup` 是「把整棵树一次读出来」的重工具。会话很长时（几千个事件、几百次工具调用）它只给最后几条、每条截断，不合适。三个补位工具构成一条「先概括、再定位、后精读」的路径：
 
 | 工具 | 一次调用读什么 | 回答什么 |
 |---|---|---|

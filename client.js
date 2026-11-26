@@ -3179,58 +3179,80 @@ window.__ModuleLoader__.load({
      *
      * @returns {object} React 元素。
      */
-    function sideAskIcon() {
-      return jsxs('svg', {
-        viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': true,
-        style: { display: 'block', flex: '0 0 auto' },
-        children: [
-          jsx('path', {
-            d: 'M2.5 3.2h7.2a1 1 0 0 1 1 1v5.1a1 1 0 0 1-1 1H6.1L3.6 12v-1.7h-.1a1 1 0 0 1-1-1V4.2a1 1 0 0 1 1-1Z',
+    /**
+     * 取官方图标组件（`@deepseek-ai/dsh-client-ui-primitives` 的 icons 导出）。
+     *
+     * @returns {{ size?: number } => object} 图标组件；部署里没有该导出时返回兜底 SVG 组件。
+     */
+    function sideAskIconComponent() {
+      let official = null;
+      try {
+        const glyph = P === null || P === undefined ? undefined : P.IconNewChatOutlineRegular;
+        if (typeof glyph === 'function') official = glyph;
+      } catch { /* 忽略：走兜底 */ }
+      if (official !== null) return official;
+      return function SideAskFallbackIcon(props) {
+        const size = props !== null && typeof props === 'object' && typeof props.size === 'number'
+          ? props.size
+          : 16;
+        return jsx('svg', {
+          viewBox: '0 0 16 16', width: size, height: size, 'aria-hidden': true,
+          style: { display: 'block', flex: '0 0 auto' },
+          children: jsx('path', {
+            d: 'M3.5 3h9a1 1 0 0 1 1 1v6.2a1 1 0 0 1-1 1H8l-3 2.2v-2.2H3.5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z',
             fill: 'none', stroke: 'currentColor', strokeWidth: 1.2, strokeLinejoin: 'round'
-          }),
-          jsx('path', {
-            d: 'M12.4 5.4h1.1a1 1 0 0 1 1 1v6.1a1 1 0 0 1-1 1h-2.2l-1.6 1.2v-1.2h-.2',
-            fill: 'none', stroke: 'currentColor', strokeWidth: 1.2, strokeLinejoin: 'round', opacity: 0.55
           })
-        ]
-      });
+        });
+      };
     }
 
-    /** 合并操作条：分组容器。 */
-    const SIDEASK_ACTION_GROUP_STYLE = {
-      display: 'inline-flex',
-      alignItems: 'center',
-      background: 'var(--dsw-alias-bg-overlay, #ffffff)',
-      border: '1px solid var(--dsw-alias-border-l1, rgba(127, 127, 127, 0.18))',
-      borderRadius: 8,
-      boxShadow: '0 6px 20px rgba(0, 0, 0, 0.16)',
-      overflow: 'hidden'
-    };
-
-    /** 合并操作条：单个按钮。 */
-    const SIDEASK_ACTION_BUTTON_STYLE = {
-      display: 'inline-flex',
-      alignItems: 'center',
-      gap: 6,
-      height: 30,
-      padding: '0 12px',
-      border: 'none',
-      background: 'transparent',
-      color: 'var(--dsw-alias-label-primary, currentColor)',
-      font: 'inherit',
-      fontSize: 13,
-      lineHeight: '30px',
-      cursor: 'pointer',
-      whiteSpace: 'nowrap'
-    };
-
-    /** 合并操作条：按钮之间的分隔线。 */
-    const SIDEASK_ACTION_SEPARATOR_STYLE = {
-      width: 1,
-      height: 16,
-      flex: '0 0 auto',
-      background: 'var(--dsw-alias-border-l1, rgba(127, 127, 127, 0.18))'
-    };
+    /**
+     * 「侧边提问」的样式表：全部走 DSH 官方 token，与官方同款组件对齐。
+     *
+     * - 浮层动作沿用官方 Quote 动作（`button-floating-fill` + `elevation-panel` + 999px 圆角）；
+     * - 标题栏入口沿用官方 28px 圆形 icon 按钮（`label-tertiary` / `interactive-bg-hover`）；
+     * - 标签正文的顶部状态栏沿用右侧栏 title-row（`specific-sidebar-fill` + hairline 分隔）。
+     *
+     * 手写 bundle 没有 CSS module，所以按本包既有做法插入一张 `<style>`（卸载时移除）。
+     *
+     * @returns {() => void} 撤销函数。
+     */
+    function installSideAskStyle() {
+      if (typeof document === 'undefined' || document.head === null) return () => {};
+      const style = document.createElement('style');
+      style.setAttribute('data-dsh-enhance-side-ask-style', '');
+      style.textContent = [
+        '[data-dsh-side-ask-bar]{box-sizing:border-box;display:flex;align-items:center;',
+        'justify-content:space-between;gap:8px;flex:0 0 auto;min-width:0;padding:4px 10px;',
+        'background:var(--dsw-specific-sidebar-fill);border-bottom:0.5px solid var(--dsw-alias-border-l3,var(--dsw-alias-border-l1));',
+        'color:var(--dsw-alias-label-secondary);font:var(--dsw-font-xs-13,13px/18px var(--dsw-font-family,system-ui));}',
+        '[data-dsh-side-ask-bar-label]{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}',
+        '[data-dsh-side-ask-body]{box-sizing:border-box;display:flex;flex-direction:column;flex:1 1 auto;',
+        'min-width:0;min-height:0;}',
+        '[data-dsh-side-ask-root]{box-sizing:border-box;display:flex;flex-direction:column;',
+        'width:100%;height:100%;min-width:0;min-height:0;}',
+        '[data-dsh-side-ask-actions]{display:inline-flex;align-items:center;gap:6px;}',
+        '[data-dsh-side-ask-action]{display:inline-flex;align-items:center;gap:4px;padding:5px 10px;border:0;',
+        'border-radius:999px;background:var(--dsw-alias-button-floating-fill,var(--dsw-alias-bg-overlay,#fff));',
+        'box-shadow:var(--dsw-elevation-panel,0 6px 20px rgba(0,0,0,.16));',
+        'color:var(--dsw-alias-label-primary);font:var(--dsw-font-xs-13,13px/18px var(--dsw-font-family,system-ui));',
+        'cursor:pointer;white-space:nowrap;}',
+        '[data-dsh-side-ask-action]:hover,[data-dsh-side-ask-action]:focus-visible{',
+        'background:var(--dsw-alias-button-floating-hover,var(--dsw-alias-bg-overlay,#fff));}',
+        '[data-dsh-side-ask-trigger]{display:inline-flex;align-items:center;justify-content:center;',
+        'width:28px;height:28px;padding:0;border:0;border-radius:28px;background:transparent;',
+        'color:var(--dsw-alias-label-tertiary,var(--dsw-alias-label-secondary));cursor:pointer;}',
+        '[data-dsh-side-ask-trigger]:hover,[data-dsh-side-ask-trigger]:focus-visible{',
+        'color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-interactive-bg-hover);}',
+        '[data-dsh-side-ask-trigger] svg{display:block;flex:none;}',
+        '[data-dsh-side-ask-note]{padding:14px 16px;color:var(--dsw-alias-label-secondary);',
+        'font:var(--dsw-font-xs-13,13px/18px var(--dsw-font-family,system-ui));}',
+        '[data-dsh-side-ask-note] pre{margin:8px 0 0;white-space:pre-wrap;word-break:break-word;',
+        'font:inherit;opacity:.75;}'
+      ].join('');
+      document.head.appendChild(style);
+      return () => { style.remove(); };
+    }
 
     /**
      * 侧边提问标签页正文：一行状态栏 + 原生会话。
@@ -3292,50 +3314,33 @@ window.__ModuleLoader__.load({
       });
       let body;
       if (reference === null) {
-        body = jsx('div', {
-          style: { padding: '14px 16px', color: 'var(--dsw-alias-label-secondary, #7a7f87)', fontSize: 13 },
-          children: t('sideAsk.tab.creating')
-        });
+        body = jsx('div', { 'data-dsh-side-ask-note': '', children: t('sideAsk.tab.creating') });
       } else if (typeof SessionProvider !== 'function') {
         // 降级正文：主 key 的注册失败（或被撤下）时，kind 兜底 key 会渲染到这里。
         // 显示可读提示 + 注册失败摘要，用户可直接截图，不必开 DevTools。
         body = jsxs('div', {
-          style: { padding: '14px 16px', color: 'var(--dsw-alias-label-secondary, #7a7f87)', fontSize: 13 },
+          'data-dsh-side-ask-note': '',
           children: [
             jsx('div', { children: t('sideAsk.tab.unavailable') }),
             typeof sideAskBodyFailure === 'string' && sideAskBodyFailure !== ''
-              ? jsx('pre', {
-                style: {
-                  margin: '8px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
-                  fontSize: 11, opacity: 0.75
-                },
-                children: sideAskBodyFailure
-              })
+              ? jsx('pre', { children: sideAskBodyFailure })
               : null
           ]
         });
       } else {
         body = jsx(SessionProvider, { session: reference, children: content });
       }
+      const statusLabel = kept ? t('sideAsk.tab.kept') : t('sideAsk.tab.temporary');
       return jsxs('div', {
-        style: {
-          display: 'flex', flexDirection: 'column', width: '100%', height: '100%',
-          minWidth: 0, minHeight: 0
-        },
+        'data-dsh-side-ask-root': '',
         children: [
           jsxs('div', {
-            style: {
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8,
-              padding: '5px 10px', flex: '0 0 auto', fontSize: 12,
-              color: 'var(--dsw-alias-label-secondary, #7a7f87)',
-              borderBottom: '1px solid var(--dsw-alias-border-l1, rgba(127, 127, 127, 0.18))',
-              background: 'var(--dsw-specific-sidebar-fill, rgba(127, 127, 127, 0.06))'
-            },
+            'data-dsh-side-ask-bar': '',
             children: [
               jsx('span', {
-                style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-                title: kept ? t('sideAsk.tab.kept') : t('sideAsk.tab.temporary'),
-                children: kept ? t('sideAsk.tab.kept') : t('sideAsk.tab.temporary')
+                'data-dsh-side-ask-bar-label': '',
+                title: statusLabel,
+                children: statusLabel
               }),
               childSessionId === undefined
                 ? null
@@ -3348,13 +3353,7 @@ window.__ModuleLoader__.load({
                 })
             ]
           }),
-          jsx('div', {
-            style: {
-              display: 'flex', flexDirection: 'column', flex: '1 1 auto',
-              minHeight: 0, minWidth: 0
-            },
-            children: body
-          })
+          jsx('div', { 'data-dsh-side-ask-body': '', children: body })
         ]
       });
     }
@@ -3368,15 +3367,15 @@ window.__ModuleLoader__.load({
     function SideAskHeaderButton(props) {
       const { onOpen, hidden, t } = props;
       if (hidden === true) return null;
-      return jsx(P.Button, {
-        size: 'sm',
+      const Icon = sideAskIconComponent();
+      // 与官方标题栏图标按钮同款：28px 圆形、透明底、label-tertiary 图标色、hover 出底色。
+      return jsx('button', {
+        type: 'button',
+        'data-dsh-side-ask-trigger': '',
         title: t('sideAsk.header.hint'),
         'aria-label': t('sideAsk.header.open'),
         onClick: onOpen,
-        children: jsxs('span', {
-          style: { display: 'inline-flex', alignItems: 'center', gap: 5 },
-          children: [sideAskIcon(), jsx('span', { children: t('sideAsk.header.open') })]
-        })
+        children: jsx(Icon, { size: 16 })
       });
     }
 
@@ -3423,25 +3422,30 @@ window.__ModuleLoader__.load({
         children.push(jsx('button', {
           key: 'quote',
           type: 'button',
-          style: SIDEASK_ACTION_BUTTON_STYLE,
+          'data-dsh-side-ask-action': '',
+          'aria-label': t('sideAsk.selection.quote'),
           onPointerDown: (event) => { event.preventDefault(); },
           onClick: runQuote,
           children: t('sideAsk.selection.quote')
         }));
       }
-      if (canQuote && canAsk) children.push(jsx('span', { key: 'sep', style: SIDEASK_ACTION_SEPARATOR_STYLE }));
       if (canAsk) {
+        const Icon = sideAskIconComponent();
         children.push(jsx('button', {
           key: 'ask',
           type: 'button',
-          style: SIDEASK_ACTION_BUTTON_STYLE,
+          'data-dsh-side-ask-action': '',
+          'aria-label': t('sideAsk.selection.askHint'),
           title: t('sideAsk.selection.askHint'),
           onPointerDown: (event) => { event.preventDefault(); },
           onClick: runAsk,
-          children: [sideAskIcon(), jsx('span', { key: 'label', children: t('sideAsk.selection.ask') })]
+          children: [
+            jsx(Icon, { key: 'icon', size: 14 }),
+            jsx('span', { key: 'label', children: t('sideAsk.selection.ask') })
+          ]
         }));
       }
-      return jsx('span', { style: SIDEASK_ACTION_GROUP_STYLE, children });
+      return jsx('span', { 'data-dsh-side-ask-actions': '', children });
     }
 
     /**
@@ -3462,6 +3466,15 @@ window.__ModuleLoader__.load({
     let sideAskBodyFailure = null;
 
     function installSideAsk(ctx, t) {
+      // 官方 token 样式（浮层动作 / 标题栏图标按钮 / 面板状态栏）：插入一张 <style>，卸载时移除。
+      try {
+        const disposeStyle = installSideAskStyle();
+        if (typeof ctx.effect === 'function') {
+          ctx.effect(() => disposeStyle, 'dsh-session-enhance: side-ask styles');
+        }
+      } catch (error) {
+        console.warn('dsh-session-enhance: could not install side-ask styles', error);
+      }
       let storage;
       try { storage = window.localStorage; } catch { storage = undefined; }
       const store = createSideAskStore(storage);
@@ -3668,7 +3681,7 @@ window.__ModuleLoader__.load({
             order: 30,
             title: () => t('sideAsk.guide.title'),
             description: () => t('sideAsk.guide.description'),
-            icon: sideAskIcon
+            icon: sideAskIconComponent()
           }]
         }));
 

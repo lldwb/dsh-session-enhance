@@ -140,6 +140,25 @@ chip 与 hero 都是 `height 24px / radius 999px / font-size 12px / hasTitle=fal
 月亮 `path`、空闲「梁谷 空闲」、busy「梁谷 …」）；真实 UI 沙箱：关态截图「☀ 梁峰」、
 点击后「☾ 梁谷 1h12m」（琥珀 pill）、再点可关；`node --check`、locale/tool-names 门禁 ✓。
 
+## 6.4.0 — 2026-11-26
+
+### 侧边提问的界面统一为 DSH 官方风格
+
+侧边提问原先用自写内联样式（独立的分组浮层、自绘图标、自定义状态栏），与官方组件观感不一致。
+现在四处界面全部对齐官方实现：
+
+- **选中文字的合并弹层**：两个动作各自是官方 Quote 那种**药丸按钮**（`var(--dsw-alias-button-floating-fill)`
+  + `var(--dsw-elevation-panel)` + 999px 圆角 + `var(--dsw-font-xs-13)`），不再自绘分组容器与阴影；
+  「侧边提问」带官方图标。
+- **标题栏入口**：改成官方标题栏同款 **28px 圆形图标按钮**（`--dsw-alias-label-tertiary` 图标色、
+  hover `--dsw-alias-interactive-bg-hover`），不再是带文字的 `P.Button`。
+- **标签正文状态栏**：用官方右侧栏 title-row 的底与分隔（`--dsw-specific-sidebar-fill` +
+  `0.5px solid var(--dsw-alias-border-l3)` + `--dsw-font-xs-13`），「保留」按钮沿用官方 `Button`。
+- **图标**：改用 `@deepseek-ai/dsh-client-ui-primitives` 的官方图标 `IconNewChatOutlineRegular`
+  （guide 卡片、标题栏入口、弹层动作三处一致）；部署里没有该导出时回退到内置 SVG。
+- 手写 bundle 没有 CSS module，样式按本包既有做法插入一张 `<style>`（`data-dsh-enhance-side-ask-style`），
+  卸载时移除；全部颜色/字体都走官方 token，并给了兜底值。
+
 ## 6.3.2 — 2026-11-26
 
 ### 侧边提问入口不再「按记录隐藏」：弹层始终「引用文本 + 侧边提问」，标题栏始终有按钮

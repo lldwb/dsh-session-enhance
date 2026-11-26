@@ -48,6 +48,11 @@ function at(month, day, hour, minute) {
   return wallClockToEpoch({ year: 2026, month, day, hour, minute }, DEFAULT_TIME_ZONE);
 }
 
+/** 2027 年的同一时刻（上海时区）。 */
+function at2027(month, day, hour, minute) {
+  return wallClockToEpoch({ year: 2027, month, day, hour, minute }, DEFAULT_TIME_ZONE);
+}
+
 /**
  * 把时间戳断言成"某天某时刻（上海）"。
  *
@@ -62,13 +67,13 @@ function assertShanghai(actual, month, day, hour, minute) {
   assert.equal(actual, at(month, day, hour, minute), `期望 2026-${month}-${day} ${hour}:${minute} +08`);
 }
 
-test('默认常量：官方高峰时段、上海时区、2026 法定节假日 33 天', () => {
+test('默认常量：官方高峰时段、上海时区、2026+2027 法定节假日 62 天', () => {
   assert.equal(DEFAULT_PEAK_WINDOWS, '09:00-12:00,14:00-18:00');
   assert.equal(DEFAULT_TIME_ZONE, 'Asia/Shanghai');
-  assert.equal(DEFAULT_HOLIDAYS.length, 33);
+  assert.equal(DEFAULT_HOLIDAYS.length, 62, '2026 的 33 天 + 2027 的 29 天');
   assert.equal(DEFAULT_HOLIDAYS_TEXT, DEFAULT_HOLIDAYS.join(','));
   assert.equal(DEFAULT_HOLIDAYS[0], '2026-01-01');
-  assert.equal(DEFAULT_HOLIDAYS.at(-1), '2026-10-07');
+  assert.equal(DEFAULT_HOLIDAYS.at(-1), '2027-10-07');
   // 各区间的首尾都在（抽查，防止区间展开错位）。
   for (const date of ['2026-01-03', '2026-02-15', '2026-02-23', '2026-04-04', '2026-05-05', '2026-06-19', '2026-09-25', '2026-10-01']) {
     assert.ok(DEFAULT_HOLIDAYS.includes(date), `默认节假日应包含 ${date}`);
@@ -175,7 +180,7 @@ test('parseHolidays：字符串/数组/空串/非法日期', () => {
 test('normalizeSchedule：默认值、非法值逐字段回退、holidays 空串语义', () => {
   assert.equal(DEFAULT_SCHEDULE.peakWindowsText, DEFAULT_PEAK_WINDOWS);
   assert.equal(DEFAULT_SCHEDULE.timeZone, DEFAULT_TIME_ZONE);
-  assert.equal(DEFAULT_SCHEDULE.holidays.size, 33);
+  assert.equal(DEFAULT_SCHEDULE.holidays.size, 62);
   assert.equal(DEFAULT_SCHEDULE.defaultEnabled, false);
   assert.deepEqual(DEFAULT_SCHEDULE.issues, []);
 
@@ -201,7 +206,7 @@ test('normalizeSchedule：默认值、非法值逐字段回退、holidays 空串
   assert.match(badZone.issues.join(';'), /timeZone/);
 
   // 节假日：缺失 → 默认 2026 表；空串 → 空表（不豁免）。
-  assert.equal(normalizeSchedule({}).holidays.size, 33);
+  assert.equal(normalizeSchedule({}).holidays.size, 62);
   assert.equal(normalizeSchedule({ holidays: '' }).holidays.size, 0);
   assert.deepEqual(normalizeSchedule({ holidays: '' }).issues, []);
 
@@ -247,6 +252,18 @@ test('isPeakAt：法定节假日（工作日日期）全天空闲；节后工作
   // 中秋：2026-09-25 周五；国庆：2026-10-01 周四。
   assert.equal(isPeakAt(at(9, 25, 10, 0), DEFAULT_SCHEDULE), false);
   assert.equal(isPeakAt(at(10, 1, 10, 0), DEFAULT_SCHEDULE), false);
+
+  // 2027（国办发明电〔2026〕10 号）：春节 2027-02-05..02-13；节后 02-15 周一恢复高峰。
+  assert.equal(isPeakAt(at2027(2, 5, 10, 0), DEFAULT_SCHEDULE), false, '2027-02-05 除夕在春节假期内');
+  assert.equal(isPeakAt(at2027(2, 13, 10, 0), DEFAULT_SCHEDULE), false, '2027-02-13 假期最后一天');
+  assert.equal(isPeakAt(at2027(2, 15, 10, 0), DEFAULT_SCHEDULE), true, '2027-02-15 节后周一恢复高峰');
+  // 2027 国庆 10-01..10-07；10-08 周五恢复高峰。
+  assert.equal(isPeakAt(at2027(10, 1, 10, 0), DEFAULT_SCHEDULE), false);
+  assert.equal(isPeakAt(at2027(10, 8, 10, 0), DEFAULT_SCHEDULE), true, '2027-10-08 节后周五恢复高峰');
+  // 2027 端午 06-09（周三单日）；中秋 09-15（周三单日）都在假期内，各自前后工作日仍是高峰。
+  assert.equal(isPeakAt(at2027(6, 9, 10, 0), DEFAULT_SCHEDULE), false, '2027-06-09 端午单日');
+  assert.equal(isPeakAt(at2027(6, 10, 10, 0), DEFAULT_SCHEDULE), true, '2027-06-10 次日恢复高峰');
+  assert.equal(isPeakAt(at2027(9, 15, 10, 0), DEFAULT_SCHEDULE), false, '2027-09-15 中秋单日');
 
   // 自定义空节假日表 = 不豁免：同一个 2026-01-01 变成高峰日。
   const noExemption = normalizeSchedule({ holidays: '' });

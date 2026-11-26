@@ -344,7 +344,7 @@ test('空闲时段（周末）：不 hold、不 cancel；status 显示 idle 且�
   assert.deepEqual(status.schedule, {
     peakWindows: ['09:00-12:00', '14:00-18:00'],
     timeZone: 'Asia/Shanghai',
-    holidaysCount: 33,
+    holidaysCount: 62,
   });
   assert.equal(status.cover.agent, true);
   assert.equal(status.cover.held, false);
@@ -1042,12 +1042,12 @@ test('diag：全局相位 + 配置 + 会话明细（含无 live agent 的持久�
   assert.deepEqual(diag.schedule, {
     peakWindows: ['09:00-12:00', '14:00-18:00'],
     timeZone: 'Asia/Shanghai',
-    holidaysCount: 33,
+    holidaysCount: 62,
   });
   assert.deepEqual(diag.config, {
     peakWindows: ['09:00-12:00', '14:00-18:00'],
     timeZone: 'Asia/Shanghai',
-    holidaysCount: 33,
+    holidaysCount: 62,
     defaultEnabled: false,
     issues: [],
   });

@@ -28,7 +28,7 @@ function createFakeController() {
     schedule: {
       peakWindows: ['09:00-12:00', '14:00-18:00'],
       timeZone: 'Asia/Shanghai',
-      holidaysCount: 33,
+      holidaysCount: 62,
     },
     serverNow: 1,
     nextChangeAt: 2,

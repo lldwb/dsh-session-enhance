@@ -280,14 +280,16 @@ test('梁谷配置：四个字段都 volatile、默认值正确（设置页可�
     assert.equal(parsed[key].get(), expected, key);
   }
 
-  // 节假日默认值 = 2026 国务院通知的日期串（33 天），空串表示不豁免。
+  // 节假日默认值 = 2026+2027 国务院通知的日期串（62 天），空串表示不豁免。
   const holidaysField = offpeakEntry.Config.dict.holidays;
   assert.equal(holidaysField.type, 'string');
   assert.equal(holidaysField.meta.volatile, true);
   const holidaysText = parsed.holidays.get();
-  assert.equal(holidaysText.split(',').length, 33);
+  assert.equal(holidaysText.split(',').length, 62);
   assert.ok(holidaysText.startsWith('2026-01-01'));
   assert.ok(holidaysText.includes('2026-10-07'));
+  assert.ok(holidaysText.includes('2027-02-05'), '默认表应带上 2027 春节');
+  assert.ok(holidaysText.includes('2027-10-07'), '默认表应带上 2027 国庆最后一天');
 
   const defaultField = offpeakEntry.Config.dict.defaultEnabled;
   assert.equal(defaultField.type, 'boolean');

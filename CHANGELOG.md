@@ -140,6 +140,32 @@ chip 与 hero 都是 `height 24px / radius 999px / font-size 12px / hasTitle=fal
 月亮 `path`、空闲「梁谷 空闲」、busy「梁谷 …」）；真实 UI 沙箱：关态截图「☀ 梁峰」、
 点击后「☾ 梁谷 1h12m」（琥珀 pill）、再点可关；`node --check`、locale/tool-names 门禁 ✓。
 
+## 6.5.3 — 2026-11-26
+
+### 审计新建页开关与标题栏 chip：修「hero 失败无 Toast」与 aria 不一致
+
+用户要求检查两处梁谷按钮的样式与逻辑。逐项核对后确认：尺寸（`106×24`）、圆角、字号、
+三段布局、图标/名称/状态文案、emoji、动效、Tooltip、只读规则、capability 隐藏、同一控制器
+与去重（`toggling` 防连点）均一致；**发现并修复两处问题**：
+
+1. **新建页开关失败时没有反馈（真 bug）**：`createOffpeakControl.toggle` 失败 / 未落盘时会写
+   `notice`，标题栏 chip 会据此弹 Toast，但新建页开关的渲染漏了这一段——用户点了失败什么都
+   看不到。现在 hero 与 chip 一样渲染 `P.Toast`（同一 `notice`、`sequence` 当 key、`onDone`
+   清对应那条），并补了点击守卫（busy/只读时 early return）。
+2. **无障碍名称不一致**：chip 的 `aria-label` 取提示文案首行（如「梁谷：高峰暂停」），
+   hero 用的是固定文案。现在统一为提示文案首行。
+
+**核对结果（样式）**：两处都是官方 `Pill` 106×24、`border-radius:999px`、12px 字号、
+无原生 `title`；真实 UI 沙箱同一会话实测——新建页 `梁谷3h16m`（106×24）与标题栏
+`梁谷3h16m`（106×24）逐项一致。
+
+**核对结果（逻辑）**：两处共用 `createOffpeakControl`（同一次 `setEnabled` RPC、同一轮询/
+倒计时、同一防连点）；状态语义一致（关/暂停/空闲/busy）；只读会话 chip 置灰而 hero 隐藏
+（有意差异）；组件停用（405）两处都隐藏；失败/未落盘现在两处都有 Toast。
+
+**验证**：单测 **310/310**（新增：hero 失败渲染 Toast + `onDone` 清 notice；既有只读/emoji/
+三段布局用例继续覆盖）；真实 UI 沙箱并排核对尺寸与文案；`node --check`、locale / 工具名门禁 ✓。
+
 ## 6.5.2 — 2026-11-26
 
 ### 倒计时最后 60 秒在状态前加节庆 emoji（🎉 / 🎊）

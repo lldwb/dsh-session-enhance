@@ -422,15 +422,18 @@ window.__ModuleLoader__.load({
     const LIANGGU_NEW_SLOT_ORDER = 0;
 
     /**
-     * 两处梁谷开关的固定尺寸（用户要求：无论开关/状态/文案/倒计时怎么变，宽高都不变）。
+     * 两处谷峰开关的固定尺寸（用户要求：无论开关/状态/文案/倒计时怎么变，宽高都不变）。
      *
-     * 宽度 106px = padding 16 + 图标 15 + gap 4 + 名称 24 + gap 4 + 状态 43；
-     * 名称区固定 24px（「梁峰」「梁谷」都是两字），状态区从固定位置开始——
-     * 所以图标与名称**不会随倒计时/空闲等状态文字变化而移动**（用户明确要求）。
+     * 布局：padding 16 + 图标 15 + gap 2 + 相位 24 + gap 2 + 倒计时 47 = 106px…
+     * 实际取 **108px**：`14h51m` 这类长倒计时（空闲→高峰，约 45px）在 47px 里放得下；
+     * gap 从 4 收到 2（用户 2026-11-26 反馈「空闲 14h51…」被省略号折叠——原来的
+     * 106px 里倒计时只剩 43px）。相位区固定 24px，所以图标/相位位置仍不随状态变化。
      */
-    const OFFPEAK_PILL_WIDTH = '106px';
+    const OFFPEAK_PILL_WIDTH = '108px';
     const OFFPEAK_PILL_HEIGHT = '24px';
     const OFFPEAK_NAME_WIDTH = '24px';
+    /** 段间间距：2px（比官方的 4px 紧，给倒计时让出宽度）。 */
+    const OFFPEAK_PILL_GAP = '2px';
 
     /** 倒计时进入「紧迫」的阈值：剩余 ≤ 60s 起有动效，≤ 10s 更急促。 */
     const OFFPEAK_URGENT_MS = 60_000;
@@ -2173,6 +2176,7 @@ window.__ModuleLoader__.load({
           height: OFFPEAK_PILL_HEIGHT,
           maxWidth: 'none',
           boxSizing: 'border-box',
+          gap: OFFPEAK_PILL_GAP,
           justifyContent: 'center'
         },
         children: [
@@ -2318,6 +2322,7 @@ window.__ModuleLoader__.load({
           height: OFFPEAK_PILL_HEIGHT,
           maxWidth: 'none',
           boxSizing: 'border-box',
+          gap: OFFPEAK_PILL_GAP,
           justifyContent: 'center'
         },
         children: [

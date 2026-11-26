@@ -462,12 +462,13 @@ window.__ModuleLoader__.load({
     /**
      * 两处梁谷开关的固定尺寸（用户要求：无论开关/状态/文案/倒计时怎么变，宽高都不变）。
      *
-     * 宽度由实测决定（官方 Pill 字体 12px）：最长文案「梁谷 60m00s」= 68.59px，
-     * 加图标 15 + gap 4 + 左右 padding 16 = 103.59px；取 105px（约 1.4px 余量），
-     * 比原先的 112px 更紧凑，保证最长文案不截断、不抖动。
+     * 宽度 106px = padding 16 + 图标 15 + gap 4 + 名称 24 + gap 4 + 状态 43；
+     * 名称区固定 24px（「梁峰」「梁谷」都是两字），状态区从固定位置开始——
+     * 所以图标与名称**不会随倒计时/空闲等状态文字变化而移动**（用户明确要求）。
      */
-    const OFFPEAK_PILL_WIDTH = '105px';
+    const OFFPEAK_PILL_WIDTH = '106px';
     const OFFPEAK_PILL_HEIGHT = '24px';
+    const OFFPEAK_NAME_WIDTH = '24px';
 
     /** 倒计时进入「紧迫」的阈值：剩余 ≤ 60s 起有动效，≤ 10s 更急促。 */
     const OFFPEAK_URGENT_MS = 60_000;
@@ -2062,25 +2063,34 @@ window.__ModuleLoader__.load({
      * @returns {string} 文案。
      */
     /**
-     * chip 的文案（与新建页开关同一套命名）：关「梁谷」、暂停「梁谷 3h05m」、
-     * 空闲「梁谷 空闲」、busy「梁谷 …」。图标已表达状态，不再重复「暂停」二字。
+     * chip 的**名称段**（固定宽 24px，位置不随状态变化）：会话级开关未启用时也叫「梁谷」。
+     *
+     * @param {(key: string, params?: any) => string} t - 词典读取器。
+     * @returns {string} 名称。
+     */
+    function offpeakChipName(t) {
+      return t('lianggu.heroName');
+    }
+
+    /**
+     * chip 的**状态段**（固定起点、左对齐）：暂停=倒计时、空闲=「空闲」、busy=「…」、关=空串。
      *
      * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @param {any} snapshot - 控制器快照。
      * @param {(key: string, params?: any) => string} t - 词典读取器。
-     * @returns {string} 文案。
+     * @returns {string} 状态文字。
      */
-    function offpeakChipText(view, snapshot, t) {
-      const name = t('lianggu.heroName');
-      if (view === 'busy') return `${name} ${t('offpeak.chip.busy')}`;
+    function offpeakChipState(view, snapshot, t) {
+      if (view === 'busy') return t('offpeak.chip.busy');
       if (view === 'paused') {
         const countdown = snapshot === null || snapshot === undefined ? undefined : snapshot.countdownMs;
         return typeof countdown === 'number' && Number.isFinite(countdown)
-          ? `${name} ${formatOffpeakCountdown(countdown)}`
-          : `${name} ${t('offpeak.chip.pausedNoEta')}`;
+          ? formatOffpeakCountdown(countdown)
+          : t('offpeak.chip.pausedNoEta');
       }
-      if (view === 'idle') return `${name} ${t('lianggu.heroIdle')}`;
-      return name;
+      if (view === 'idle') return t('lianggu.heroIdle');
+      // 关：名称段已经是「梁谷」，状态段留空（保持三段固定布局）。
+      return '';
     }
 
     /**
@@ -2193,17 +2203,30 @@ window.__ModuleLoader__.load({
         },
         children: [
           offpeakStatusIcon(view),
+          // 名称段：固定 24px（图标与名称的位置不随状态变化）。
           jsx('span', {
-            // 固定宽度下文本居中、超长才省略；`minWidth:0` 是 flex 压缩的前提。
+            style: {
+              width: OFFPEAK_NAME_WIDTH,
+              flex: 'none',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              textAlign: 'left',
+              whiteSpace: 'nowrap'
+            },
+            children: offpeakChipName(t)
+          }),
+          // 状态段：从固定位置开始，内容变化只在右侧延伸/收缩。
+          jsx('span', {
             style: {
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               minWidth: 0,
               flex: '1 1 auto',
-              textAlign: 'center',
+              textAlign: 'left',
+              fontVariantNumeric: 'tabular-nums',
               whiteSpace: 'nowrap'
             },
-            children: offpeakChipText(view, snapshot, t)
+            children: offpeakChipState(view, snapshot, t)
           })
         ]
       });
@@ -2228,19 +2251,10 @@ window.__ModuleLoader__.load({
      * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @param {any} snapshot - 控制器快照。
      * @param {(key: string, params?: any) => string} t - 词典读取器。
-     * @returns {string} 文案。
+     * @returns {string} 名称。
      */
-    function liangguHeroText(view, snapshot, t) {
-      const name = t('lianggu.heroName');
-      if (view === 'off') return t('lianggu.heroOff');
-      if (view === 'paused') {
-        const countdown = snapshot === null || snapshot === undefined ? undefined : snapshot.countdownMs;
-        return typeof countdown === 'number' && Number.isFinite(countdown)
-          ? `${name} ${formatOffpeakCountdown(countdown)}`
-          : `${name} ${t('offpeak.chip.pausedNoEta')}`;
-      }
-      if (view === 'idle') return `${name} ${t('lianggu.heroIdle')}`;
-      return `${name} ${t('offpeak.chip.busy')}`;
+    function liangguHeroName(view, t) {
+      return view === 'off' ? t('lianggu.heroOff') : t('lianggu.heroName');
     }
 
     /**
@@ -2310,7 +2324,8 @@ window.__ModuleLoader__.load({
       }
       const view = offpeakViewState(state);
       const enabled = view !== 'off';
-      const text = liangguHeroText(view, state, t);
+      const name = liangguHeroName(view, t);
+      const stateText = offpeakChipState(view, state, t);
       const label = offpeakStatusTooltip(view, state, t);
       const urgency = offpeakUrgency(view, state);
       const palette = offpeakChipPalette(view);
@@ -2337,16 +2352,30 @@ window.__ModuleLoader__.load({
         },
         children: [
           offpeakStatusIcon(view),
+          // 名称段固定 24px：图标与名称位置不随状态变化。
+          jsx('span', {
+            style: {
+              width: OFFPEAK_NAME_WIDTH,
+              flex: 'none',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              textAlign: 'left',
+              whiteSpace: 'nowrap'
+            },
+            children: name
+          }),
+          // 状态段固定起点，倒计时/空闲只在右侧变化。
           jsx('span', {
             style: {
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               minWidth: 0,
               flex: '1 1 auto',
-              textAlign: 'center',
+              textAlign: 'left',
+              fontVariantNumeric: 'tabular-nums',
               whiteSpace: 'nowrap'
             },
-            children: text
+            children: stateText
           })
         ]
       });

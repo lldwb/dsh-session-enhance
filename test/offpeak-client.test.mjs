@@ -365,7 +365,8 @@ function renderChip(module, t, snapshot, options = {}) {
  */
 function chipTextOf(button) {
   const texts = collectNodes(button, (node) => node.type === 'span' && typeof node.props.children === 'string');
-  return texts.map((node) => node.props.children).join('');
+  // 三段布局：图标 + 名称 + 状态，这里按「名称 状态」拼接（关态状态为空）。
+  return texts.map((node) => node.props.children).join(' ').trim();
 }
 
 /**
@@ -375,7 +376,7 @@ function chipTextOf(button) {
  */
 function heroTextOf(button) {
   const texts = collectNodes(button, (node) => node.type === 'span' && typeof node.props.children === 'string');
-  return texts.map((node) => node.props.children).join('');
+  return texts.map((node) => node.props.children).join(' ').trim();
 }
 
 /**
@@ -756,7 +757,7 @@ test('渲染：空闲时段是 green「梁谷 空闲」，提示写明自动暂�
   assert.deepEqual(busy.toggles, [true]);
 });
 
-test('固定尺寸：chip 与 hero 在四种状态下宽高都不变（105 × 24）', async (t) => {
+test('固定尺寸：chip 与 hero 在四种状态下宽高都不变（106 × 24）', async (t) => {
   const env = await setup();
   t.after(env.restore);
   const states = [
@@ -767,14 +768,50 @@ test('固定尺寸：chip 与 hero 在四种状态下宽高都不变（105 × 24
   ];
   for (const [name, snapshot, view] of states) {
     const chip = renderChip(env.module, env.t, snapshot);
-    assert.equal(chip.button.props.style.width, '105px', `chip ${name} 宽固定`);
+    assert.equal(chip.button.props.style.width, '106px', `chip ${name} 宽固定`);
     assert.equal(chip.button.props.style.height, '24px', `chip ${name} 高固定`);
     assert.equal(chip.button.props['data-offpeak-state'], view);
     const hero = renderHeroToggle(env.module, env.t, { view });
-    assert.equal(hero.button.props.style.width, '105px', `hero ${name} 宽固定`);
+    assert.equal(hero.button.props.style.width, '106px', `hero ${name} 宽固定`);
     assert.equal(hero.button.props.style.height, '24px', `hero ${name} 高固定`);
     assert.equal(hero.button.props['data-lianggu-state'], view);
   }
+});
+
+test('三段布局：图标 + 固定宽名称 + 状态，名称位置不随状态变化', async (t) => {
+  const env = await setup();
+  t.after(env.restore);
+  const states = [
+    ['off', snapshotOf({ status: statusOf({ enabled: false }) }), 'off'],
+    ['paused', snapshotOf({ status: statusOf({ enabled: true, paused: true }), countdownMs: COUNTDOWN_MS }), 'paused'],
+    ['idle', snapshotOf({ status: statusOf({ enabled: true, paused: false }) }), 'idle'],
+    ['busy', snapshotOf({ status: statusOf({ enabled: true, paused: true }), busy: true }), 'busy']
+  ];
+  for (const [label, snapshot, view] of states) {
+    const chip = renderChip(env.module, env.t, snapshot);
+    const children = chip.button.props.children;
+    assert.equal(children.length, 3, `${label}: 三段（图标/名称/状态）`);
+    assert.equal(children[0].type, 'svg', `${label}: 第一段是图标`);
+    assert.equal(children[1].props.style.width, '24px', `${label}: 名称固定 24px`);
+    assert.equal(children[1].props.style.flex, 'none', `${label}: 名称不参与伸缩`);
+    assert.equal(children[2].props.style.flex, '1 1 auto', `${label}: 状态段占固定起点后的余量`);
+    assert.equal(children[2].props.style.textAlign, 'left');
+    assert.equal(chip.button.props['data-offpeak-state'], view);
+
+    const hero = renderHeroToggle(env.module, env.t, { view });
+    const heroChildren = hero.button.props.children;
+    assert.equal(heroChildren.length, 3);
+    assert.equal(heroChildren[1].props.style.width, '24px', `hero ${label}: 名称固定 24px`);
+    assert.equal(heroChildren[2].props.style.flex, '1 1 auto');
+  }
+  // 名称段在两种状态间是同一个固定元素（位置不变），只有状态段文字变化。
+  const offName = renderChip(env.module, env.t, states[0][1]).button.props.children[1].props.children;
+  const pausedName = renderChip(env.module, env.t, states[1][1]).button.props.children[1].props.children;
+  assert.equal(offName, pausedName, 'chip 名称段不随状态变化');
+  const heroOffName = renderHeroToggle(env.module, env.t, { view: 'off' }).button.props.children[1].props.children;
+  const heroOnName = renderHeroToggle(env.module, env.t, { view: 'paused' }).button.props.children[1].props.children;
+  assert.equal(heroOffName, '梁峰');
+  assert.equal(heroOnName, '梁谷');
 });
 
 test('倒计时紧迫感：剩余 ≤60s 标 urgent、≤10s 标 final，其余状态不带动效钩子', async (t) => {

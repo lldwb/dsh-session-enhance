@@ -282,6 +282,11 @@ test('界面注册：页面型标签 + guide 卡片、标签正文（私有 sess
     assert.notEqual(body, undefined, '必须注册标签正文');
     const seat = Object.keys(body.entry.children)[0];
     assert.equal(body.entry.children[seat].scope, 'session', '必须声明 session 子槽换取 SessionProvider');
+    // 同一个子槽 key 只能声明一次，所以 kind 兜底 key 的注册**不带** children。
+    const fallbackBody = env.state.registrations.find((item) => item.entry.name === 'sidebar.right.pane.tab'
+      && item.entry.key === 'sideask');
+    assert.notEqual(fallbackBody, undefined, '必须同时注册 kind 兜底正文（旧标签 / 类型不同源时派发到 kind）');
+    assert.equal(fallbackBody.entry.children, undefined, '兜底正文不得重复声明 session 子槽');
     const face = body.entry.inject();
     assert.equal(typeof face.sideAsk.childOf, 'function');
     assert.equal(typeof face.sideAsk.ensureChild, 'function');
@@ -322,12 +327,13 @@ test('能力探测：Host 组件行停用（405）时撤销全部注册，官方
     for (const record of env.state.tabTypes) assert.equal(record.revoked, true, '标签类型必须被撤销');
     // 只断言侧边提问自己的注册（apply 里还有复制/分享/重试/梁谷的注册，它们不受影响）。
     const sideAskRegistrations = env.state.registrations.filter((item) => (
-      (item.entry.name === 'sidebar.right.pane.tab' && item.entry.key === 'dsh-session-enhance/side-ask')
+      (item.entry.name === 'sidebar.right.pane.tab'
+        && (item.entry.key === 'dsh-session-enhance/side-ask' || item.entry.key === 'sideask'))
       || (item.entry.name === 'conversation.session.header.utilities' && item.entry.id === 'side-ask')
       || (item.entry.name === 'conversation.chat.text-interaction'
         && (item.entry.key === 'quote' || item.entry.key === 'sideask'))
     ));
-    assert.ok(sideAskRegistrations.length >= 4, '侧边提问应注册标签正文 / 标题栏 / 两个文字交互表面');
+    assert.ok(sideAskRegistrations.length >= 5, '侧边提问应注册两个正文 key / 标题栏 / 两个文字交互表面');
     for (const record of sideAskRegistrations) assert.equal(record.revoked, true, '侧边提问的槽位注册必须被撤销');
     for (const record of env.state.interactions) assert.equal(record.revoked, true, '手势注册必须被撤销');
   } finally {

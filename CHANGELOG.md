@@ -3,6 +3,30 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 6.3.1 — 2026-11-26
+
+### 修复：侧边提问标签页显示「这类内容还没有可用的查看方式」
+
+**现象**：右侧栏引导页的「侧边提问」卡片能出现（tab 类型注册成功），但点开后正文是 owner 的
+通用 fallback（`tab.unavailable`）；同一页面里选中文字的合并弹层正常（说明其它注册成功）。
+
+**根因**：正文走 `sidebar.right.pane.tab` 这个 **keyed** 槽，右侧栏按
+`entryKey = definition?.id ?? tab.kind` 派发。原实现只注册了 `key = 'dsh-session-enhance/side-ask'`，
+一旦在位的类型 id 与它不同源（旧标签、组件被重复加载、或类型注册与本模块不同源），派发的 key
+就落到 kind，正文 key 命不中 → 显示 fallback。另外该注册只包了一层 `slots.inject`，注册本身
+抛错时既不会降级也不会留日志。
+
+**修复**：
+
+- 正文**同时注册两个 key**：`dsh-session-enhance/side-ask`（正常路径）与 `sideask`（kind 兜底），
+  任一派发方式都能命中；
+- 注册逐步 `try/catch`：带私有 session 子槽（框架据此注入 `SessionProvider`）失败时，**降级为
+  不带子槽的同一组件**——显示可读的「本部署没有侧栏会话组件」提示，而不是空白/通用 fallback；
+- 注册完成后 `console.info('[dsh-session-enhance] side-ask tab body registered', …)`，
+  失败时 `console.error` 带上 key 与原始错误，便于下次直接定位；
+- 新增 `test/sideask-client.test.mjs` 覆盖：两个正文 key 都被注册、带 session 子槽声明、
+  组件行停用（405）时全部撤销。
+
 ## 6.3.0 — 2026-11-26
 
 ### 新建页按钮改成「梁谷开关」；重启后自动恢复；中断重试官方优先

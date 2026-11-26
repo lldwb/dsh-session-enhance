@@ -3251,9 +3251,22 @@ window.__ModuleLoader__.load({
           children: t('sideAsk.tab.creating')
         });
       } else if (typeof SessionProvider !== 'function') {
-        body = jsx('div', {
+        // 降级正文：主 key 的注册失败（或被撤下）时，kind 兜底 key 会渲染到这里。
+        // 显示可读提示 + 注册失败摘要，用户可直接截图，不必开 DevTools。
+        body = jsxs('div', {
           style: { padding: '14px 16px', color: 'var(--dsw-alias-label-secondary, #7a7f87)', fontSize: 13 },
-          children: t('sideAsk.tab.unavailable')
+          children: [
+            jsx('div', { children: t('sideAsk.tab.unavailable') }),
+            typeof sideAskBodyFailure === 'string' && sideAskBodyFailure !== ''
+              ? jsx('pre', {
+                style: {
+                  margin: '8px 0 0', whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                  fontSize: 11, opacity: 0.75
+                },
+                children: sideAskBodyFailure
+              })
+              : null
+          ]
         });
       } else {
         body = jsx(SessionProvider, { session: reference, children: content });
@@ -3393,6 +3406,13 @@ window.__ModuleLoader__.load({
      * @param {(key: string) => string} t - 本包词典的翻译函数。
      * @returns {void}
      */
+    /**
+     * 最近一次侧边提问正文注册失败的原因（降级正文会显示它）。
+     *
+     * @type {string | null}
+     */
+    let sideAskBodyFailure = null;
+
     function installSideAsk(ctx, t) {
       let storage;
       try { storage = window.localStorage; } catch { storage = undefined; }
@@ -3604,50 +3624,78 @@ window.__ModuleLoader__.load({
           }]
         }));
 
-        add(ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
-          name: 'sidebar.right.pane.tab',
-          key: SIDEASK_TAB_ID,
-          locale: NS,
-          inject: () => ({
-            sideAsk: {
-              childOf: parentSessionId => {
-                const record = store.childOf(parentSessionId);
-                return record === undefined ? undefined : record.childSessionId;
-              },
-              ensureChild: parentSessionId => ensureChild(parentSessionId),
-              isKept: childSessionId => {
-                const record = store.get(childSessionId);
-                return record !== undefined && record.kept === true;
-              },
-              setKept: (childSessionId, kept) => {
-                store.setKept(childSessionId, kept);
-                void applySideAskMode(childSessionId, kept);
-              },
-              retain: childSessionId => ctx.sessions.retain(childSessionId, {
-                source: 'sideAsk',
-                facets: { conversation: true }
-              }),
-              release: reference => reference.release(),
-              onTabOpen: (childSessionId) => {
-                const record = store.get(childSessionId);
-                if (record !== undefined && record.archived === true) {
-                  store.markActive(childSessionId);
-                  try {
-                    ctx.uiWorkspace.unarchiveSession(childSessionId).catch((error) => {
-                      console.warn('dsh-session-enhance: could not restore the side session', error);
-                    });
-                  } catch (error) {
+        // 正文注册。右侧栏按 `entryKey = definition?.id ?? tab.kind` 派发 `sidebar.right.pane.tab`：
+        // 正常路径命中 SIDEASK_TAB_ID；若在位的类型不是本实现（旧标签、组件被重复加载、
+        // 或类型注册与本模块不同源），派发的 key 会退化成 kind。**两个 key 都注册**，
+        // 任一种情况都能渲染出正文，不会退回 owner 的通用「没有可用的查看方式」。
+        const sideAskFace = () => ({
+          sideAsk: {
+            childOf: parentSessionId => {
+              const record = store.childOf(parentSessionId);
+              return record === undefined ? undefined : record.childSessionId;
+            },
+            ensureChild: parentSessionId => ensureChild(parentSessionId),
+            isKept: childSessionId => {
+              const record = store.get(childSessionId);
+              return record !== undefined && record.kept === true;
+            },
+            setKept: (childSessionId, kept) => {
+              store.setKept(childSessionId, kept);
+              void applySideAskMode(childSessionId, kept);
+            },
+            retain: childSessionId => ctx.sessions.retain(childSessionId, {
+              source: 'sideAsk',
+              facets: { conversation: true }
+            }),
+            release: reference => reference.release(),
+            onTabOpen: (childSessionId) => {
+              const record = store.get(childSessionId);
+              if (record !== undefined && record.archived === true) {
+                store.markActive(childSessionId);
+                try {
+                  ctx.uiWorkspace.unarchiveSession(childSessionId).catch((error) => {
                     console.warn('dsh-session-enhance: could not restore the side session', error);
-                  }
+                  });
+                } catch (error) {
+                  console.warn('dsh-session-enhance: could not restore the side session', error);
                 }
-              },
-              openWorkspace: (workspaceId, adopt) => ctx.uiWorkspace.openWorkspace(workspaceId, adopt)
-            }
-          }),
-          children: {
-            [SIDEASK_SESSION_SEAT]: { kind: 'single', scope: 'session' }
+              }
+            },
+            openWorkspace: (workspaceId, adopt) => ctx.uiWorkspace.openWorkspace(workspaceId, adopt)
           }
-        }, SideAskTab)));
+        });
+        // 注册一个正文 key。**只有主 key 声明私有 session 子槽**：框架据「注册声明了非 root
+        // 作用域子槽」注入 `SessionProvider`（渲染原生会话必需）；而同一个子槽 key 只能被声明
+        // 一次，第二个注册再声明会抛 `slot ... is already declared`。所以：
+        // - 主 key（正常派发路径）带子槽 → 完整正文；
+        // - kind 兜底 key 不带子槽 → 同一组件渲染时 `SessionProvider` 缺席，显示可读提示 +
+        //   失败摘要（而不是 owner 的通用 fallback）。
+        const registerSideAskBody = (key, withChild) => {
+          const entry = { name: 'sidebar.right.pane.tab', key, locale: NS, inject: sideAskFace };
+          try {
+            add(ctx.slots.register(withChild
+              ? { ...entry, children: { [SIDEASK_SESSION_SEAT]: { kind: 'single', scope: 'session' } } }
+              : entry, SideAskTab));
+            return withChild ? 'session' : 'plain';
+          } catch (error) {
+            sideAskBodyFailure = String(error?.message ?? error);
+            console.error('[dsh-session-enhance] side-ask body registration failed', key, error);
+            return 'failed';
+          }
+        };
+        if (typeof ctx.slots.inject === 'function') {
+          const injectDisposer = ctx.slots.inject('sidebar.right.pane.tab', () => {
+            const bodyModes = [registerSideAskBody(SIDEASK_TAB_ID, true), registerSideAskBody(SIDEASK_KIND, false)];
+            console.info('[dsh-session-enhance] side-ask tab body registered', {
+              tabId: SIDEASK_TAB_ID,
+              kind: SIDEASK_KIND,
+              bodyModes,
+              failure: sideAskBodyFailure
+            });
+            return () => {};
+          });
+          if (typeof injectDisposer === 'function') disposers.push(injectDisposer);
+        }
 
         add(ctx.sidebarRight.registerCloseHandler(SIDEASK_KIND, (sessionId, tab) => {
           const record = store.childOf(sessionId);

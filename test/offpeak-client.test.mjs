@@ -592,9 +592,9 @@ test('词典：offpeak.* 在 en/zh 键集一致，文案为「谷峰插件/高�
   assert.equal(env.zh['offpeak.phase.peak'], '高峰');
   assert.equal(env.zh['offpeak.phase.idle'], '空闲');
   assert.equal(env.zh['offpeak.chip.busy'], '…');
-  assert.equal(env.zh['offpeak.tipNormal'], '谷峰插件：普通会话');
+  assert.ok(env.zh['offpeak.tipNormal'].includes('普通会话'));
   assert.ok(env.zh['offpeak.tipSetIdle'].includes('空闲会话'));
-  assert.ok(env.zh['offpeak.tipPeak'].includes('谷峰插件'));
+  assert.ok(env.zh['offpeak.tipPeak'].includes('暂停'));
   assert.ok(env.zh['offpeak.tipResumeAt'].includes('{time}'));
   assert.ok(env.zh['offpeak.tipPauseAt'].includes('{time}'));
   assert.ok(env.zh['offpeak.readOnlyHint'].includes('继承自主会话'));
@@ -680,8 +680,9 @@ test('渲染：高峰 = 图标+「高峰」+倒计时，选中为浅灰款', asy
   assert.ok(String(peak.button.props.style.color).includes('--dsw-alias-state-warn'), '高峰内部橙色');
   assert.equal(peak.button.props.style.border, '1px solid #d0d3d8', '选中为浅灰边框');
   assert.ok(String(peak.button.props.style.background).includes('--dsw-alias-state-warn-tertiary'), '高峰背景为橙');
-  assert.ok(peak.label.includes('谷峰插件：高峰'), `高峰提示：${peak.label}`);
-  assert.ok(/切换为空闲/u.test(peak.label), `高峰提示应给切换时刻：${peak.label}`);
+  assert.ok(peak.label.includes('已暂停 AI 调用'), `高峰提示：${peak.label}`);
+  assert.ok(/进入空闲/u.test(peak.label), `高峰提示应给切换时刻：${peak.label}`);
+  assert.ok(peak.label.includes('点击可取消'), `高峰提示应说明点击行为：${peak.label}`);
   // 峰用太阳图标。
   assert.ok(collectNodes(peak.tree, (node) => node.type === 'circle').length >= 1, '高峰应是太阳');
 });
@@ -697,8 +698,8 @@ test('渲染：空闲 = 图标+「空闲」+倒计时，未选中为深色款', 
   assert.ok(String(idle.button.props.style.color).includes('--dsw-alias-state-success'), '空闲内部绿色');
   assert.equal(idle.button.props.style.border, '1px solid #d0d3d8', '选中为浅灰边框');
   assert.ok(String(idle.button.props.style.background).includes('--dsw-alias-state-success-tertiary'), '空闲背景为绿');
-  assert.ok(idle.label.includes('谷峰插件：空闲'), `空闲提示：${idle.label}`);
-  assert.ok(/切换为高峰/u.test(idle.label), `空闲提示应给切换时刻：${idle.label}`);
+  assert.ok(idle.label.includes('AI 调用正常运行'), `空闲提示：${idle.label}`);
+  assert.ok(/进入高峰/u.test(idle.label), `空闲提示应给切换时刻：${idle.label}`);
   // 谷用弯月+星（path）。
   assert.ok(collectNodes(idle.tree, (node) => node.type === 'path').length >= 2, '空闲应是月亮+星');
 
@@ -711,7 +712,7 @@ test('渲染：空闲 = 图标+「空闲」+倒计时，未选中为深色款', 
   assert.ok(String(plain.button.props.style.background).includes('--dsw-alias-state-success-tertiary'), '未选中背景仍按相位（空闲绿）');
   assert.ok(String(plain.button.props.style.color).includes('--dsw-alias-state-success'), '内部仍是空闲绿（不随选中变）');
   assert.ok(plain.label.includes('普通会话'), `未选中提示：${plain.label}`);
-  assert.ok(plain.label.includes('点击设为空闲会话'), `未选中提示应说明点击行为：${plain.label}`);
+  assert.ok(plain.label.includes('点击设为「空闲会话」'), `未选中提示应说明点击行为：${plain.label}`);
 });
 
 test('渲染：busy 显示「…」且禁用；失败 Toast 用 sequence 当 key', async (t) => {
@@ -862,7 +863,7 @@ test('新建页开关：峰/谷 + 倒计时；选中浅灰、未选中深色；�
   assert.equal(peak.button.props.style.border, '1px solid #d0d3d8', '选中为浅灰边框');
   assert.ok(String(peak.button.props.style.background).includes('--dsw-alias-state-warn-tertiary'), '高峰背景为橙');
   assert.ok(String(peak.button.props.style.color).includes('--dsw-alias-state-warn'), '高峰内部橙色');
-  assert.ok(peak.label.includes('谷峰插件：高峰'));
+  assert.ok(peak.label.includes('已暂停 AI 调用'));
   assert.ok(collectNodes(peak.tree, (node) => node.type === 'circle').length >= 1, '峰用太阳');
 
   const idle = renderHeroToggle(env.module, env.t, { view: 'idle' });
@@ -878,7 +879,7 @@ test('新建页开关：峰/谷 + 倒计时；选中浅灰、未选中深色；�
   assert.ok(String(plain.button.props.style.background).includes('--dsw-alias-state-success-tertiary'), '未选中背景仍按相位（空闲绿）');
   assert.ok(String(plain.button.props.style.color).includes('--dsw-alias-state-success'), '内部空闲绿不变');
   assert.ok(heroTextOf(plain.button).endsWith('3h05m'), '未选中也显示倒计时');
-  assert.ok(plain.label.includes('点击设为空闲会话'));
+  assert.ok(plain.label.includes('点击设为「空闲会话」'));
 });
 
 test('点击：只切换当前会话（不建会话、不导航、不弹提示）', async (t) => {

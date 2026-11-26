@@ -154,13 +154,14 @@ window.__ModuleLoader__.load({
       'offpeak.phase.peak': 'Peak',
       'offpeak.phase.idle': 'Idle',
       'offpeak.countdown.unknown': '--',
-      'offpeak.tipNormal': 'GuFeng: normal session',
-      'offpeak.tipSetIdle': 'Click to make this an idle session (runs only during idle windows).',
-      'offpeak.tipPeak': 'GuFeng: peak hours',
-      'offpeak.tipIdle': 'GuFeng: idle hours',
-      'offpeak.tipResumeAt': 'Switches to idle at {time}',
-      'offpeak.tipPauseAt': 'Switches to peak at {time}',
-      'offpeak.tipBusy': 'GuFeng: switching…',
+      'offpeak.tipNormal': 'Normal session: no GuFeng limit, AI calls run as usual',
+      'offpeak.tipSetIdle': 'Click to make it an "idle session": pauses at peak, runs when idle',
+      'offpeak.tipPeak': 'Peak hours: AI calls are paused (messages queue up)',
+      'offpeak.tipIdle': 'Idle hours: AI calls run normally',
+      'offpeak.tipResumeAt': 'Enters idle at {time} and resumes automatically',
+      'offpeak.tipPauseAt': 'Enters peak at {time} and pauses automatically',
+      'offpeak.tipCancel': 'Click to cancel the "idle session" setting',
+      'offpeak.tipBusy': 'Switching GuFeng state…',
 
       // 上下文用量 + 手动压缩
       'context.label': 'Context',
@@ -275,13 +276,14 @@ window.__ModuleLoader__.load({
       'offpeak.phase.peak': '高峰',
       'offpeak.phase.idle': '空闲',
       'offpeak.countdown.unknown': '--',
-      'offpeak.tipNormal': '谷峰插件：普通会话',
-      'offpeak.tipSetIdle': '点击设为空闲会话（仅空闲时段运行）。',
-      'offpeak.tipPeak': '谷峰插件：高峰',
-      'offpeak.tipIdle': '谷峰插件：空闲',
-      'offpeak.tipResumeAt': '将在 {time} 切换为空闲',
-      'offpeak.tipPauseAt': '将在 {time} 切换为高峰',
-      'offpeak.tipBusy': '谷峰插件：正在切换…',
+      'offpeak.tipNormal': '普通会话：不受谷峰限制，AI 调用照常',
+      'offpeak.tipSetIdle': '点击设为「空闲会话」：高峰暂停、空闲运行',
+      'offpeak.tipPeak': '高峰时段：已暂停 AI 调用（消息会排队）',
+      'offpeak.tipIdle': '空闲时段：AI 调用正常运行',
+      'offpeak.tipResumeAt': '将在 {time} 进入空闲，并自动恢复',
+      'offpeak.tipPauseAt': '将在 {time} 进入高峰，并自动暂停',
+      'offpeak.tipCancel': '点击可取消「空闲会话」',
+      'offpeak.tipBusy': '正在切换谷峰状态…',
 
       // 上下文用量 + 手动压缩
       'context.label': '上下文',
@@ -2240,19 +2242,20 @@ window.__ModuleLoader__.load({
         : '';
 
       if (!selected) {
-        // 未选中 = 普通会话：预告「点击设为空闲会话」后会发生什么。
-        return `${t('offpeak.tipNormal')}\n${t('offpeak.tipSetIdle')}${queued}`;
+        // 未选中 = 普通会话：说明「现在不受限 + 点击后会怎样」。
+        return `${t('offpeak.tipNormal')}\n${t('offpeak.tipSetIdle')}`;
       }
+      const cancel = `\n${t('offpeak.tipCancel')}`;
       if (phase === 'idle') {
         const head = nextAt === ''
           ? t('offpeak.tipIdle')
           : `${t('offpeak.tipIdle')}\n${t('offpeak.tipPauseAt', { time: nextAt })}`;
-        return `${head}${queued}`;
+        return `${head}${cancel}${queued}`;
       }
       const head = nextAt === ''
         ? t('offpeak.tipPeak')
         : `${t('offpeak.tipPeak')}\n${t('offpeak.tipResumeAt', { time: nextAt })}`;
-      return `${head}${queued}`;
+      return `${head}${cancel}${queued}`;
     }
     /**
      * 新建会话页的「梁谷」开关。

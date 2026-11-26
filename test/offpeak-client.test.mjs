@@ -774,7 +774,7 @@ test('新建页开关：失败时与 chip 一样弹 Toast（不再静默）', as
   assert.equal(collectNodes(quiet.tree, (node) => node.type === primitives.Toast).length, 0);
 });
 
-test('节庆 emoji：倒计时 ≤60s 加 🎉、≤10s 加 🎊（高峰/空闲都适用）', async (t) => {
+test('倒计时 emoji：高峰→空闲用 🎉/🎊，空闲→高峰用 ⏳/⏰（≤60s / ≤10s）', async (t) => {
   const env = await setup();
   t.after(env.restore);
   const peakAt = (countdownMs) =>
@@ -785,8 +785,8 @@ test('节庆 emoji：倒计时 ≤60s 加 🎉、≤10s 加 🎊（高峰/空闲
   assert.equal(chipTextOf(peakAt(37_000).button), '高峰 🎉 37s');
   assert.equal(chipTextOf(peakAt(9_000).button), '高峰 🎊 9s');
   assert.equal(chipTextOf(peakAt(61_000).button), '高峰 1m01s');
-  assert.equal(chipTextOf(idleAt(59_000).button), '空闲 🎉 59s');
-  assert.equal(chipTextOf(idleAt(1_000).button), '空闲 🎊 1s');
+  assert.equal(chipTextOf(idleAt(59_000).button), '空闲 ⏳ 59s');
+  assert.equal(chipTextOf(idleAt(1_000).button), '空闲 ⏰ 1s');
   // hero 同款。
   assert.equal(heroTextOf(renderHeroToggle(env.module, env.t, { view: 'paused', countdownMs: 37_000 }).button), '高峰 🎉 37s');
 });

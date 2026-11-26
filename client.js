@@ -2036,19 +2036,21 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 状态文字的「节庆 emoji」前缀（用户要求：像新年倒计时那样）。
-     *
-     * 剩余 ≤60s `🎉`、≤10s `🎊`；与相位/选中无关（高峰/空闲都适用）。
+     * 倒计时的 emoji 前缀（用户要求：体现「即将切换」的紧迫感）：
+     * - **高峰 → 空闲**（即将恢复）：≤60s `🎉`、≤10s `🎊`（节庆感）；
+     * - **空闲 → 高峰**（即将暂停）：≤60s `⏳`、≤10s `⏰`（紧迫感，最后 10 秒用闹钟）。
      *
      * @param {any} snapshot - 控制器快照。
+     * @param {'peak'|'idle'} phase - 当前相位（决定用哪套 emoji）。
      * @returns {string} emoji 或空串。
      */
-    function offpeakStateEmoji(snapshot) {
+    function offpeakStateEmoji(snapshot, phase) {
       const ms = snapshot === null || snapshot === undefined ? undefined : snapshot.countdownMs;
       if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return '';
-      if (ms <= OFFPEAK_FINAL_MS) return '🎊';
-      if (ms <= OFFPEAK_URGENT_MS) return '🎉';
-      return '';
+      const final = ms <= OFFPEAK_FINAL_MS;
+      if (ms > OFFPEAK_URGENT_MS) return '';
+      if (phase === 'idle') return final ? '⏰' : '⏳';
+      return final ? '🎊' : '🎉';
     }
 
     /**
@@ -2056,7 +2058,7 @@ window.__ModuleLoader__.load({
      *
      * @param {any} snapshot - 控制器快照。
      * @param {(key: string, params?: any) => string} t - 词典读取器。
-     * @returns {string} 例如 `3h05m` / `🎉 57s` / `…`。
+     * @returns {string} 例如 `3h05m` / `🎉 57s` / `⏳ 45s` / `…`。
      */
     function offpeakCountdownLabel(snapshot, t) {
       if (snapshot !== null && typeof snapshot === 'object' && snapshot.busy === true) return t('offpeak.chip.busy');
@@ -2065,7 +2067,7 @@ window.__ModuleLoader__.load({
         typeof countdown === 'number' && Number.isFinite(countdown)
           ? formatOffpeakCountdown(countdown)
           : t('offpeak.countdown.unknown');
-      const emoji = offpeakStateEmoji(snapshot);
+      const emoji = offpeakStateEmoji(snapshot, offpeakPhaseOf(snapshot));
       return emoji === '' ? text : `${emoji} ${text}`;
     }
 

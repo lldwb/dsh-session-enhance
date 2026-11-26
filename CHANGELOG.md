@@ -140,6 +140,33 @@ chip 与 hero 都是 `height 24px / radius 999px / font-size 12px / hasTitle=fal
 月亮 `path`、空闲「梁谷 空闲」、busy「梁谷 …」）；真实 UI 沙箱：关态截图「☀ 梁峰」、
 点击后「☾ 梁谷 1h12m」（琥珀 pill）、再点可关；`node --check`、locale/tool-names 门禁 ✓。
 
+## 6.7.0 — 2026-11-26
+
+### 法定节假日表自动更新（插件自己联网，不经过 AI）
+
+用户要求：节假日安排不要每次手动改代码/靠 AI 搜索，改成自动更新。
+
+- 新增 `lib/offpeak/holidays-fetch.mjs`：多源抓取 + 结构校验 + 本地缓存 + 合并规则；
+  - 源 1：[timor.tech](https://timor.tech/api/holiday) `/api/holiday/year/<年>/`（免费、无 key，
+    只取 `holiday: true` 的休息日，忽略调休补班）；
+  - 源 2/3：`holiday-cn`（GitHub `NateScarlet/holiday-cn`，每日抓国务院公告）的
+    jsDelivr / raw.githubusercontent 镜像（只取 `isOffDay: true`）；
+  - 每个源都校验「年份匹配 + 日期真实存在 + 天数在 10~60 之间」，全部失败返回 `null`
+    并保留内置/上次缓存（**失败不改变任何行为**）；
+- 缓存：`<DSH_HOME>/dsh-session-enhance/holidays-cache.json`（`{version, fetchedAt, source,
+  years}`，24 小时 TTL；损坏/版本不符自动忽略）；启动 3 秒后抓一次、之后每 6 小时复查；
+- 合并规则：`autoHolidays`（新配置，默认开）+ `holidays` 仍是内置默认值 → 内置表 ∪ 抓取结果；
+  用户**显式改过 `holidays`**（含空串 = 不豁免）→ 只用配置，自动更新不覆盖用户意图；
+- 抓取成功后 `controller.refresh()` 立即重算边界与 hold（跨年/节假日翻转当天即时生效）。
+
+**验证**：
+
+- 单测 **319/319**（新增 10 例：timor/holiday-cn 解析、补班日忽略、日期/天数校验、多源回退、
+  全失败返回 null、缓存往返与损坏容错、合并规则、HTTP 超时 abort 回退、源清单 HTTPS）；
+- 真实 headless 沙箱（`gufeng-auto`）：插件启动后自动抓取成功，缓存文件实际写出
+  `source: "timor"`、`2026: 33 天`、`2027: 29 天`（与内置表一致），任务正常运行（AUTO-OK）；
+- `node --check`、locale / 工具名门禁 ✓。
+
 ## 6.6.4 — 2026-11-26
 
 ### 节假日表补上 2027 年（国办发明电〔2026〕10号）

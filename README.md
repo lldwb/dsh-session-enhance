@@ -496,7 +496,8 @@ TIMEOUT / TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并有已准入的用户�
 - 2027（国办发明电〔2026〕10号，2026-11-05 发布）：元旦 01-01..01-03、春节 02-05..02-13、
   清明 04-03..04-05、劳动 05-01..05-05、端午 06-09、中秋 09-15、国庆 10-01..10-07（29 天）。
 
-跨年后请在配置页更新 `holidays`（或清空表示不豁免节假日）。
+跨年后不需要改代码：`autoHolidays`（默认开）会自动抓取次年安排并缓存；也可以手动在配置页
+更新 `holidays`（或清空表示不豁免节假日）。
 
 - **按钮长什么样**（`conversation.session.header.utilities` 槽位，order `-12`，落在分享 / 复制
   按钮左侧；官方 `Pill` + `Tooltip` 形制）：
@@ -544,12 +545,18 @@ TIMEOUT / TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并有已准入的用户�
   `origin: subagent`）不受影响，仍可自己设置。
 - **开关是即时的**：高峰打开 → 立刻暂停（必要时中断当前轮）；空闲打开 → 不暂停；关闭 →
   立刻释放，队列里压着的消息马上开始跑。
-- **配置**（设置 → 插件 → 会话增强 → 包含的组件 → 梁谷，四个字段都是 volatile，保存后热更新）：
+- **配置**（设置 → 插件 → 会话增强 → 包含的组件 → 梁谷，五个字段都是 volatile，保存后热更新）：
   - `peakWindows`：高峰时段，逗号分隔的 `HH:MM-HH:MM`（起点含、终点不含），默认
     `09:00-12:00,14:00-18:00`；
   - `timeZone`：默认 `Asia/Shanghai`；
-  - `holidays`：法定节假日日期（`YYYY-MM-DD`，逗号/空白分隔），默认 2026+2027 年表；
+  - `holidays`：法定节假日日期（`YYYY-MM-DD`，逗号/空白分隔），默认内置 2026+2027 年表；
     **空串 = 不享受节假日豁免**（只按周末 + 高峰窗口判断）；
+  - `autoHolidays`：**自动更新节假日表**（默认开）。开启且 `holidays` 仍是默认值时，插件启动
+    3 秒后、以及每 6 小时会自动抓当年 + 次年的官方安排（数据源：`timor.tech`，备用
+    `holiday-cn` 的 jsDelivr / GitHub 镜像），结果缓存在
+    `<DSH_HOME>/dsh-session-enhance/holidays-cache.json`（24 小时内不重复请求）。
+    抓取失败**不影响任何行为**（继续用内置/上次缓存）；用户**改过 `holidays`**（含空串）时
+    自动更新不再覆盖你的配置。整个过程在 Host 里完成，**不需要 AI、不需要联网搜索**；
   - `defaultEnabled`：新会话默认是否启用，默认关。
   非法值逐字段回退默认并只 warn 一次。
 - **持久化**：每个会话的开关状态写 `<DSH_HOME>/dsh-session-enhance/offpeak.json`（原子写、

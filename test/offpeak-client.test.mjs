@@ -340,8 +340,22 @@ function renderChip(module, t, snapshot, options = {}) {
     }
   };
   const tree = module.OffpeakButton(props);
-  const buttons = collectNodes(tree, (node) => node.type === 'button');
-  return { tree, button: buttons.length === 1 ? buttons[0] : undefined, buttons, toggles, dismissed };
+  // Tooltip（占位组件）的 children 是原生 span 锚点，里面才是官方 Pill。
+  const tooltip = collectNodes(tree, (node) => node.props !== undefined && typeof node.props.label === 'string')[0];
+  const pills = collectNodes(
+    tooltip === undefined ? null : tooltip.props.children,
+    (node) => node.props !== undefined && node.props['data-dsh-offpeak-button'] !== undefined
+  );
+  const button = pills.length === 1 ? pills[0] : undefined;
+  return {
+    tree,
+    button,
+    buttons: pills,
+    tooltip,
+    label: tooltip === undefined ? undefined : tooltip.props.label,
+    toggles,
+    dismissed
+  };
 }
 
 /**
@@ -397,12 +411,12 @@ function renderHeroToggle(module, t, options = {}) {
     }
   };
   const tree = module.LiangguHeroToggle(props);
-  // Tooltip 占位组件：node.props 里有 label，children 是按钮元素。
-  const tooltip = collectNodes(
-    tree,
-    (node) => node.props !== undefined && typeof node.props.label === 'string' && node.props.children?.type === 'button'
+  // Tooltip 的 children 是原生 span 锚点，Pill 在它的子树里。
+  const tooltip = collectNodes(tree, (node) => node.props !== undefined && typeof node.props.label === 'string')[0];
+  const button = collectNodes(
+    tooltip === undefined ? null : tooltip.props.children,
+    (node) => node.props !== undefined && node.props['data-dsh-lianggu-hero'] !== undefined
   )[0];
-  const button = tooltip === undefined ? undefined : tooltip.props.children;
   const buttons = button === undefined ? [] : [button];
   return { tree, tooltip, button, buttons, toggles, label: tooltip === undefined ? undefined : tooltip.props.label };
 }
@@ -650,7 +664,7 @@ test('formatOffpeakClock：按配置时区（含午夜 h23 口径）换算，非
 // #endregion
 
 // #region 组件渲染
-test('渲染：关闭态是 muted「梁谷」，title 写明高峰时段与点击开启', async (t) => {
+test('渲染：关闭态是 muted「梁谷」，官方 Tooltip 说明点击开启', async (t) => {
   const env = await setup();
   t.after(env.restore);
 
@@ -665,26 +679,21 @@ test('渲染：关闭态是 muted「梁谷」，title 写明高峰时段与点�
   assert.equal(off.button.props['data-offpeak-enabled'], 'false');
   assert.equal(off.button.props.disabled, false);
   assert.equal(chipTextOf(off.button), '梁谷');
-  const offTitle = off.button.props.title;
-  // 逐字钉住任务书的文案：off 必须包含标题 / 一句机制 / 由 schedule.peakWindows 拼的
-  // 高峰时段清单（含时区与节假日说明）/ 点击提示，四行、顺序固定。
+  // 不再用元素原生 title；提示走官方 Tooltip（短文案）。
+  assert.equal('title' in off.button.props, false, 'chip 不要用原生 title');
+  assert.equal(off.tooltip.props.side, 'bottom');
   assert.equal(
-    offTitle,
-    [
-      '梁谷：关闭',
-      '开启后，在高峰时段暂停本会话，空闲时段自动恢复运行。',
-      '高峰时段：周一至周五 09:00–12:00、14:00–18:00（Asia/Shanghai，法定节假日与周末除外）',
-      '点击开启。'
-    ].join('\n'),
-    `关闭态 title 不符合约定：${offTitle}`
+    off.label,
+    ['梁谷：关闭', '点击开启：开启后从这里新建的会话就是梁谷会话。'].join('\n'),
+    `关闭态提示不符合约定：${off.label}`
   );
-  // 还没读到状态时也要能渲染（title 用不带时段的那条）。
+  // 还没读到状态时也要能渲染。
   const unknown = renderChip(env.module, env.t, snapshotOf());
   assert.equal(unknown.button.props['data-offpeak-state'], 'off');
-  assert.ok(unknown.button.props.title.includes('梁谷：关闭'));
+  assert.ok(unknown.label.includes('梁谷：关闭'));
 });
 
-test('渲染：暂停态是 amber「梁谷 暂停 3h05m」，title 写明自动恢复与排队条数', async (t) => {
+test('渲染：暂停态是 amber「梁谷 3h05m」，提示写明自动恢复与排队条数', async (t) => {
   const env = await setup();
   t.after(env.restore);
 
@@ -697,24 +706,17 @@ test('渲染：暂停态是 amber「梁谷 暂停 3h05m」，title 写明自动�
   const paused = renderChip(env.module, env.t, snapshotOf({ status: pausedStatus, countdownMs: COUNTDOWN_MS }));
   assert.equal(paused.button.props['data-offpeak-state'], 'paused');
   assert.equal(paused.button.props['data-offpeak-enabled'], 'true');
-  assert.equal(chipTextOf(paused.button), '梁谷 暂停 3h05m');
-  const title = paused.button.props.title;
+  assert.equal(chipTextOf(paused.button), '梁谷 3h05m');
   assert.equal(
-    title,
-    [
-      '梁谷：已暂停',
-      '当前是高峰时段，不会发起任何 AI 调用。',
-      '高峰时段：周一至周五 09:00–12:00、14:00–18:00（Asia/Shanghai，法定节假日与周末除外）',
-      '将在 08:30 自动恢复',
-      '队列中 2 条消息，空闲时段开始后自动处理'
-    ].join('\n'),
-    `暂停态 title 不符合约定：${title}`
+    paused.label,
+    ['梁谷：高峰暂停', '将在 08:30 自动恢复', '队列中 2 条消息，空闲时段开始后自动处理'].join('\n'),
+    `暂停态提示不符合约定：${paused.label}`
   );
   // 颜色走主题 token（暂停 = warn），并带 fallback。
   assert.ok(String(paused.button.props.style.color).includes('--dsw-alias-state-warn'));
 });
 
-test('渲染：空闲时段是 green「梁谷 空闲」，title 写明自动暂停；busy 是「…」且禁用', async (t) => {
+test('渲染：空闲时段是 green「梁谷 空闲」，提示写明自动暂停；busy 是「梁谷 …」且禁用', async (t) => {
   const env = await setup();
   t.after(env.restore);
 
@@ -726,15 +728,10 @@ test('渲染：空闲时段是 green「梁谷 空闲」，title 写明自动暂�
   assert.equal(idle.button.props['data-offpeak-state'], 'idle');
   assert.equal(idle.button.props['data-offpeak-enabled'], 'true');
   assert.equal(chipTextOf(idle.button), '梁谷 空闲');
-  const idleTitle = idle.button.props.title;
   assert.equal(
-    idleTitle,
-    [
-      '梁谷：空闲时段运行中',
-      '当前不在高峰时段，调用正常进行。',
-      '将在 08:30 自动暂停'
-    ].join('\n'),
-    `空闲态 title 不符合约定：${idleTitle}`
+    idle.label,
+    ['梁谷：空闲', '将在 08:30 自动暂停'].join('\n'),
+    `空闲态提示不符合约定：${idle.label}`
   );
   assert.ok(String(idle.button.props.style.color).includes('--dsw-alias-state-success'));
 
@@ -745,7 +742,8 @@ test('渲染：空闲时段是 green「梁谷 空闲」，title 写明自动暂�
   );
   assert.equal(busy.button.props['data-offpeak-state'], 'busy');
   assert.equal(busy.button.props.disabled, true);
-  assert.equal(chipTextOf(busy.button), '…');
+  assert.equal(chipTextOf(busy.button), '梁谷 …');
+  assert.equal(busy.label, '梁谷：正在切换…');
   // 点一下会调控制器的 toggle（busy 时按钮被禁用，但 onClick 语义仍要连对）。
   busy.button.props.onClick();
   assert.deepEqual(busy.toggles, [true]);

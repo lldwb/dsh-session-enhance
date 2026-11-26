@@ -1552,29 +1552,59 @@ window.__ModuleLoader__.load({
     });
 
     /**
-     * 梁谷图标：一轮弯月 + 一点星光（「空闲时段」= 夜间/低峰，与「高峰时段」相对）。
+     * 梁谷状态图标（标题栏 chip 与新建页开关共用同一套）：
+     * **关 = 太阳**（未启用）；**开 = 弯月 + 右上角小星星**（梁谷）。
      *
-     * 与复制/分享/重试图标同样的自绘路线（不赌 primitives 的图标导出名），
-     * `currentColor` 描边、颜色由 chip 的 `color` 继承。
+     * primitives 里没有太阳/月亮导出，所以用内联 SVG（15px、currentColor、1.2 描边）。
      *
+     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @returns {any} 15×15 的 SVG 元素。
      */
-    function offpeakIcon() {
+    function offpeakStatusIcon(view) {
+      if (view === 'off') {
+        const rays = [];
+        for (let index = 0; index < 8; index += 1) {
+          const angle = (Math.PI / 4) * index;
+          rays.push(
+            jsx('line', {
+              x1: 8 + Math.cos(angle) * 5.6,
+              y1: 8 + Math.sin(angle) * 5.6,
+              x2: 8 + Math.cos(angle) * 7.2,
+              y2: 8 + Math.sin(angle) * 7.2,
+              stroke: 'currentColor',
+              strokeWidth: 1.2,
+              strokeLinecap: 'round'
+            })
+          );
+        }
+        return jsxs('svg', {
+          width: 15,
+          height: 15,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          'aria-hidden': 'true',
+          children: [jsx('circle', { cx: 8, cy: 8, r: 3.2, stroke: 'currentColor', strokeWidth: 1.2 }), ...rays]
+        });
+      }
+      // 弯月 + 右上角小星星（用户指定：月亮旁边有一颗四角星）。
       return jsxs('svg', {
         width: 15,
         height: 15,
         viewBox: '0 0 16 16',
         fill: 'none',
-        stroke: 'currentColor',
-        strokeWidth: 1.25,
-        strokeLinecap: 'round',
-        strokeLinejoin: 'round',
         'aria-hidden': 'true',
-        focusable: 'false',
-        style: { display: 'block' },
         children: [
-          jsx('path', { d: 'M13.4 9.9A5.9 5.9 0 0 1 6.1 2.6a6 6 0 1 0 7.3 7.3Z' }),
-          jsx('path', { d: 'M12.9 2.1v2M11.9 3.1h2' })
+          jsx('path', {
+            d: 'M10.9 9.6A4.9 4.9 0 0 1 5.5 4.2a4.9 4.9 0 1 0 5.4 5.4Z',
+            stroke: 'currentColor',
+            strokeWidth: 1.2,
+            strokeLinejoin: 'round'
+          }),
+          jsx('path', {
+            d: 'M12.5 3.1l.55 1.35 1.35.55-1.35.55-.55 1.35-.55-1.35-1.35-.55 1.35-.55z',
+            fill: 'currentColor',
+            stroke: 'none'
+          })
         ]
       });
     }
@@ -1971,54 +2001,26 @@ window.__ModuleLoader__.load({
      * @param {(key: string, params?: any) => string} t - 词典读取器。
      * @returns {string} 文案。
      */
-    function offpeakChipText(view, snapshot, t) {
-      if (view === 'busy') return t('offpeak.chip.busy');
-      if (view === 'paused') {
-        const countdown = snapshot === null || snapshot === undefined ? undefined : snapshot.countdownMs;
-        return typeof countdown === 'number' && Number.isFinite(countdown)
-          ? t('offpeak.chip.paused', { countdown: formatOffpeakCountdown(countdown) })
-          : t('offpeak.chip.pausedNoEta');
-      }
-      if (view === 'idle') return t('offpeak.chip.idle');
-      return t('offpeak.chip.off');
-    }
-
     /**
-     * chip 的悬停提示：把「高峰时段 / 下一次自动变化 / 排队条数」说全。
-     *
-     * 用户对「为什么这条消息没发出去」的疑问，全部在这段文字里回答：现在是高峰时段、
-     * 还有几条在队列、几点会自己恢复。时段文本由 Host 的 `status.schedule` 拼（客户端
-     * 不硬编码官方时段），恢复/暂停时刻按 `schedule.timeZone` 换算。
+     * chip 的文案（与新建页开关同一套命名）：关「梁谷」、暂停「梁谷 3h05m」、
+     * 空闲「梁谷 空闲」、busy「梁谷 …」。图标已表达状态，不再重复「暂停」二字。
      *
      * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @param {any} snapshot - 控制器快照。
      * @param {(key: string, params?: any) => string} t - 词典读取器。
-     * @returns {string} 多行 title 文本。
+     * @returns {string} 文案。
      */
-    function offpeakTitle(view, snapshot, t) {
-      if (view === 'busy') return t('offpeak.title.busy');
-      const status = snapshot === null || snapshot === undefined ? null : snapshot.status;
-      if (status === null || typeof status !== 'object') return t('offpeak.title.offNoWindow');
-      const schedule = status.schedule !== null && typeof status.schedule === 'object' ? status.schedule : {};
-      const timeZone =
-        typeof schedule.timeZone === 'string' && schedule.timeZone !== '' ? schedule.timeZone : 'Asia/Shanghai';
-      const windows = formatPeakWindowList(schedule.peakWindows, t('offpeak.windowJoiner'));
-      const peakHours = t('offpeak.peakHours', { windows, tz: timeZone });
-      const nextAt = formatOffpeakClock(status.nextChangeAt, timeZone);
+    function offpeakChipText(view, snapshot, t) {
+      const name = t('lianggu.heroName');
+      if (view === 'busy') return `${name} ${t('offpeak.chip.busy')}`;
       if (view === 'paused') {
-        const lines = [t('offpeak.title.paused'), t('offpeak.title.pausedBody'), peakHours];
-        if (nextAt !== '') lines.push(t('offpeak.resumeAt', { time: nextAt }));
-        const cover = status.cover !== null && typeof status.cover === 'object' ? status.cover : {};
-        const queued = typeof cover.queued === 'number' ? cover.queued : 0;
-        if (queued > 0) lines.push(t('offpeak.queued', { n: queued }));
-        return lines.join('\n');
+        const countdown = snapshot === null || snapshot === undefined ? undefined : snapshot.countdownMs;
+        return typeof countdown === 'number' && Number.isFinite(countdown)
+          ? `${name} ${formatOffpeakCountdown(countdown)}`
+          : `${name} ${t('offpeak.chip.pausedNoEta')}`;
       }
-      if (view === 'idle') {
-        const lines = [t('offpeak.title.idle'), t('offpeak.title.idleBody')];
-        if (nextAt !== '') lines.push(t('offpeak.pauseAt', { time: nextAt }));
-        return lines.join('\n');
-      }
-      return [t('offpeak.title.off'), t('offpeak.title.offBody'), peakHours, t('offpeak.clickToEnable')].join('\n');
+      if (view === 'idle') return `${name} ${t('lianggu.heroIdle')}`;
+      return name;
     }
 
     /**
@@ -2080,7 +2082,12 @@ window.__ModuleLoader__.load({
       const view = offpeakViewState(snapshot);
       const status = snapshot.status;
       const enabled = status !== null && typeof status === 'object' && status.enabled === true;
-      const title = offpeakTitle(view, snapshot, t);
+      const queued =
+        status !== null && typeof status === 'object' && status.cover !== null && typeof status.cover === 'object' &&
+        typeof status.cover.queued === 'number'
+          ? status.cover.queued
+          : undefined;
+      const label = offpeakStatusTooltip(view, snapshot, t, { queued });
       const toast =
         snapshot.notice === null || snapshot.notice === undefined
           ? null
@@ -2095,50 +2102,37 @@ window.__ModuleLoader__.load({
               },
               snapshot.notice.sequence
             );
+      // 官方 `Pill`（24px 胶囊、12px 字号）+ 官方 `Tooltip`（深色气泡）：
+      // 与新建页开关、以及 DSH 自己的 chip 完全同一套形制；语义色仍走主题 token。
+      const pill = jsx(P.Pill, {
+        active: enabled,
+        // 稳定测试钩子：自动化验证按这三个属性定位/断言，不依赖文案（文案随语言变，`data-*` 不会）。
+        'data-dsh-offpeak-button': '',
+        'data-offpeak-state': view,
+        'data-offpeak-enabled': enabled ? 'true' : 'false',
+        'aria-label': label.split('\n')[0],
+        disabled: view === 'busy',
+        onClick: () => {
+          void props.offpeak.toggle();
+        },
+        style: { ...offpeakChipPalette(view), flex: 'none', maxWidth: '200px' },
+        children: [
+          offpeakStatusIcon(view),
+          jsx('span', {
+            // `minWidth: 0` 是 flex 里让文本真正能被压缩的前提（默认 min-width:auto
+            // 会把按钮撑到内容宽度，`text-overflow` 就永远不生效）。
+            style: { overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, whiteSpace: 'nowrap' },
+            children: offpeakChipText(view, snapshot, t)
+          })
+        ]
+      });
+      // Tooltip 包一层原生 span 作锚点：`Pill` 是自定义组件，直接当锚点时
+      // Tooltip 的 ref / 指针事件不保证落到真实 DOM 按钮上（实测气泡不出来）。
+      const anchor = jsx('span', { style: { display: 'inline-flex' }, children: pill });
       return jsxs('span', {
         style: { display: 'inline-flex', alignItems: 'center' },
         children: [
-          jsxs('button', {
-            type: 'button',
-            // 稳定测试钩子：自动化验证按这三个属性定位/断言，不依赖文案（文案随语言变，
-            // `data-*` 不会）。
-            'data-dsh-offpeak-button': '',
-            'data-offpeak-state': view,
-            'data-offpeak-enabled': enabled ? 'true' : 'false',
-            title,
-            'aria-label': title,
-            disabled: view === 'busy',
-            onClick: () => {
-              void props.offpeak.toggle();
-            },
-            style: {
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '4px',
-              height: '24px',
-              maxWidth: '200px',
-              padding: '0 8px',
-              boxSizing: 'border-box',
-              flex: 'none',
-              border: 'none',
-              borderRadius: '999px',
-              fontFamily: 'inherit',
-              fontSize: '12px',
-              lineHeight: 1,
-              whiteSpace: 'nowrap',
-              cursor: view === 'busy' ? 'default' : 'pointer',
-              ...offpeakChipPalette(view)
-            },
-            children: [
-              offpeakIcon(),
-              jsx('span', {
-                // `minWidth: 0` 是 flex 里让文本真正能被压缩的前提（默认 min-width:auto
-                // 会把按钮撑到内容宽度，`text-overflow` 就永远不生效）。
-                style: { overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, whiteSpace: 'nowrap' },
-                children: offpeakChipText(view, snapshot, t)
-              })
-            ]
-          }),
+          jsx(P.Tooltip, { label, side: 'bottom', align: 'center', delayMs: 300, maxWidth: 320, children: anchor }),
           toast
         ]
       });
@@ -2146,64 +2140,6 @@ window.__ModuleLoader__.load({
     // #endregion
 
     // #region 新建会话页的「梁谷」开关（hero 行，预设右侧）
-    /**
-     * hero 开关的图标：**关（未启用）= 太阳；开（梁谷）= 月亮 + 小星星**。
-     *
-     * primitives 里没有太阳/月亮导出，所以用内联 SVG（15px、currentColor、1.2 描边），
-     * 月亮右上角的四角星按用户提供的样式画成实心小星。
-     *
-     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
-     * @returns {any} 图标元素。
-     */
-    function liangguHeroIcon(view) {
-      if (view === 'off') {
-        const rays = [];
-        for (let index = 0; index < 8; index += 1) {
-          const angle = (Math.PI / 4) * index;
-          rays.push(
-            jsx('line', {
-              x1: 8 + Math.cos(angle) * 5.6,
-              y1: 8 + Math.sin(angle) * 5.6,
-              x2: 8 + Math.cos(angle) * 7.2,
-              y2: 8 + Math.sin(angle) * 7.2,
-              stroke: 'currentColor',
-              strokeWidth: 1.2,
-              strokeLinecap: 'round'
-            })
-          );
-        }
-        return jsxs('svg', {
-          width: 15,
-          height: 15,
-          viewBox: '0 0 16 16',
-          fill: 'none',
-          'aria-hidden': 'true',
-          children: [jsx('circle', { cx: 8, cy: 8, r: 3.2, stroke: 'currentColor', strokeWidth: 1.2 }), ...rays]
-        });
-      }
-      // 月亮 + 右上角小星星（用户指定的样式：弯月 + 一颗四角星，深夜/睡眠语义）。
-      return jsxs('svg', {
-        width: 15,
-        height: 15,
-        viewBox: '0 0 16 16',
-        fill: 'none',
-        'aria-hidden': 'true',
-        children: [
-          jsx('path', {
-            d: 'M10.9 9.6A4.9 4.9 0 0 1 5.5 4.2a4.9 4.9 0 1 0 5.4 5.4Z',
-            stroke: 'currentColor',
-            strokeWidth: 1.2,
-            strokeLinejoin: 'round'
-          }),
-          jsx('path', {
-            d: 'M12.5 3.1l.55 1.35 1.35.55-1.35.55-.55 1.35-.55-1.35-1.35-.55 1.35-.55z',
-            fill: 'currentColor',
-            stroke: 'none'
-          })
-        ]
-      });
-    }
-
     /**
      * hero 开关的文案（**永远显示文字**，一眼能看出状态）：
      * 关 → 「梁峰」；开 → 「梁谷」+ 剩余时间 / 「梁谷 空闲」；busy → 「梁谷 …」。
@@ -2227,29 +2163,34 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * hero 开关的悬浮提示（官方 `Tooltip` 风格：短、1~2 行，不放整段时段说明）。
-     *
-     * 与标题栏 chip 的长 title 不同：这里只回答「现在是什么状态、点了会怎样、什么时候
-     * 自动变化」，完整高峰时段规则留给设置页/README。
+     * 梁谷状态的悬浮提示（标题栏 chip 与新建页开关共用，官方 `Tooltip` 风格）：
+     * 只回答「现在什么状态、点了会怎样、何时自动变化」，1~2 行；chip 额外带队列条数。
      *
      * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @param {any} snapshot - 控制器快照。
      * @param {(key: string, params?: any) => string} t - 词典读取器。
+     * @param {{ queued?: number }} [options] - chip 传队列条数；hero 开关不传。
      * @returns {string} 提示文本（多行用 \n，官方 tooltip 是 pre-line）。
      */
-    function liangguHeroTooltip(view, snapshot, t) {
+    function offpeakStatusTooltip(view, snapshot, t, options = {}) {
       if (view === 'busy') return t('lianggu.tipBusy');
       if (view === 'off') return `${t('lianggu.tipOff')}\n${t('lianggu.tipOffBody')}`;
       const status = snapshot === null || snapshot === undefined ? null : snapshot.status;
-      const schedule = status !== null && typeof status === 'object' && status.schedule !== null && typeof status.schedule === 'object'
-        ? status.schedule
-        : {};
-      const timeZone = typeof schedule.timeZone === 'string' && schedule.timeZone !== '' ? schedule.timeZone : 'Asia/Shanghai';
+      const schedule =
+        status !== null && typeof status === 'object' && status.schedule !== null && typeof status.schedule === 'object'
+          ? status.schedule
+          : {};
+      const timeZone =
+        typeof schedule.timeZone === 'string' && schedule.timeZone !== '' ? schedule.timeZone : 'Asia/Shanghai';
       const nextAt = status !== null && typeof status === 'object' ? formatOffpeakClock(status.nextChangeAt, timeZone) : '';
+      const queued = typeof options.queued === 'number' && options.queued > 0
+        ? `\n${t('offpeak.queued', { n: options.queued })}`
+        : '';
       if (view === 'paused') {
-        return nextAt === ''
+        const head = nextAt === ''
           ? t('lianggu.tipPaused')
           : `${t('lianggu.tipPaused')}\n${t('lianggu.tipResumeAt', { time: nextAt })}`;
+        return `${head}${queued}`;
       }
       return nextAt === ''
         ? t('lianggu.tipIdle')
@@ -2285,10 +2226,11 @@ window.__ModuleLoader__.load({
       const view = offpeakViewState(state);
       const enabled = view !== 'off';
       const text = liangguHeroText(view, state, t);
-      const label = liangguHeroTooltip(view, state, t);
+      const label = offpeakStatusTooltip(view, state, t);
       const palette = offpeakChipPalette(view);
-      const button = jsx('button', {
-        type: 'button',
+      // 与标题栏 chip 同一个官方 `Pill` + `Tooltip` 形制。
+      const pill = jsx(P.Pill, {
+        active: enabled,
         'data-dsh-lianggu-hero': '',
         'data-lianggu-state': view,
         'data-lianggu-enabled': enabled ? 'true' : 'false',
@@ -2297,43 +2239,23 @@ window.__ModuleLoader__.load({
         onClick: () => {
           void props.offpeak.toggle();
         },
-        style: {
-          display: 'inline-flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '4px',
-          height: '28px',
-          minWidth: '28px',
-          padding: '0 8px',
-          boxSizing: 'border-box',
-          flex: 'none',
-          border: 'none',
-          borderRadius: '999px',
-          fontFamily: 'inherit',
-          fontSize: '12px',
-          lineHeight: 1,
-          whiteSpace: 'nowrap',
-          cursor: view === 'busy' ? 'default' : 'pointer',
-          color: palette.color,
-          background: palette.background
-        },
+        style: { ...palette, flex: 'none', maxWidth: '180px' },
         children: [
-          liangguHeroIcon(view),
+          offpeakStatusIcon(view),
           jsx('span', {
-            style: { overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px', whiteSpace: 'nowrap' },
+            style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
             children: text
           })
         ]
       });
-      // 官方风格悬浮提示：用 primitives 的 Tooltip（与 Dojo 标题栏按钮同款气泡），
-      // 不用元素原生 `title`——原生提示是浏览器默认白底黑框，和 DSH 界面不一致。
+      // 同 chip：Tooltip 锚点用原生 span，不直接把自定义组件交给 Tooltip 克隆。
       return jsx(P.Tooltip, {
         label,
         side: 'bottom',
         align: 'center',
         delayMs: 350,
         maxWidth: 320,
-        children: button
+        children: jsx('span', { style: { display: 'inline-flex' }, children: pill })
       });
     }
 

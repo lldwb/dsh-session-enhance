@@ -140,6 +140,35 @@ chip 与 hero 都是 `height 24px / radius 999px / font-size 12px / hasTitle=fal
 月亮 `path`、空闲「梁谷 空闲」、busy「梁谷 …」）；真实 UI 沙箱：关态截图「☀ 梁峰」、
 点击后「☾ 梁谷 1h12m」（琥珀 pill）、再点可关；`node --check`、locale/tool-names 门禁 ✓。
 
+## 6.4.1 — 2026-11-26
+
+### 梁谷按钮宽度收紧到 105px；倒计时最后 60 秒带动效
+
+**宽度收紧（用户要求）**：在保证「梁谷 60m00s」这类最长文案不截断、不抖动的前提下，把固定
+宽度从 112px 收窄。做法是**实测**而不是估算：官方 Pill 字体 12px 下，最长文案
+「梁谷 60m00s」= **68.59px**，加图标 15 + gap 4 + 左右 padding 16 = **103.59px**；
+取 **105px**（约 1.4px 余量）。真实页面验证：`梁谷 5m18s` 的文本区 `scrollWidth =
+clientWidth = 70`，把文本临时改成「梁谷 60m00s」仍是 70px、`clipped=false`；按钮整体
+`105×24`。
+
+**倒计时紧迫感（用户要求）**：剩余 **≤60 秒** 时不再静态显示，而是出现「倒计时」的动效：
+
+- 新增 `data-offpeak-urgent` 钩子（两处开关共用）：`urgent`（≤60s）/ `final`（≤10s）；
+- 样式：`urgent` 用 1s 呼吸动画（内描边亮/暗 + 透明度 1→0.66 的节奏），`final` 加快到
+  0.45s 并加粗数字；数字用 `font-variant-numeric: tabular-nums`，每秒跳动时宽度不抖；
+- 只在**暂停态且剩余 > 0** 时生效；关/空闲/普通倒计时完全静态（不干扰）；
+- `prefers-reduced-motion: reduce` 下关闭动画，保留静态强调。
+
+**验证**：
+
+- 单测 **303/303**（新增固定尺寸断言改为 105px；新增紧迫级别用例：60s/59s→`urgent`、
+  10s/9s→`final`、0s/61s/120s→无钩子；hero 同样覆盖）；
+- 真实 UI 沙箱：`梁谷 5m18s` 时无钩子、宽度 `105×24`；等到 `梁谷 0m37s` 时
+  `data-offpeak-urgent="urgent"`、`animationName=dsh-offpeak-urgent-throb`、
+  `animationDuration=1s`，宽度仍 `105×24`；`final` 级别由单测覆盖（真实窗口只抓到 urgent，
+  如实说明）；
+- `node --check`、locale / 工具名门禁 ✓。
+
 ## 6.4.0 — 2026-11-26
 
 ### 侧边提问的界面统一为 DSH 官方风格

@@ -174,7 +174,13 @@ window.__ModuleLoader__.load({
       'lianggu.heroName': 'Lianggu',
       'lianggu.heroIdle': 'Idle',
       'lianggu.heroAria': 'Lianggu switch (new sessions become Lianggu sessions when on)',
-      'lianggu.heroNewSessionHint': 'New sessions created here become Lianggu sessions while this switch is on.',
+      'lianggu.tipOff': 'Lianggu: off',
+      'lianggu.tipOffBody': 'Click to enable: new sessions from here become Lianggu sessions.',
+      'lianggu.tipPaused': 'Lianggu: paused at peak',
+      'lianggu.tipIdle': 'Lianggu: idle',
+      'lianggu.tipResumeAt': 'Resumes automatically at {time}',
+      'lianggu.tipPauseAt': 'Pauses automatically at {time}',
+      'lianggu.tipBusy': 'Lianggu: switching…',
 
       // 上下文用量 + 手动压缩
       'context.label': 'Context',
@@ -307,7 +313,13 @@ window.__ModuleLoader__.load({
       'lianggu.heroName': '梁谷',
       'lianggu.heroIdle': '空闲',
       'lianggu.heroAria': '梁谷开关（开启后新建的会话就是梁谷会话）',
-      'lianggu.heroNewSessionHint': '开关打开时，这里新建出来的会话就是梁谷会话。',
+      'lianggu.tipOff': '梁谷：关闭',
+      'lianggu.tipOffBody': '点击开启：开启后从这里新建的会话就是梁谷会话。',
+      'lianggu.tipPaused': '梁谷：高峰暂停',
+      'lianggu.tipIdle': '梁谷：空闲',
+      'lianggu.tipResumeAt': '将在 {time} 自动恢复',
+      'lianggu.tipPauseAt': '将在 {time} 自动暂停',
+      'lianggu.tipBusy': '梁谷：正在切换…',
 
       // 上下文用量 + 手动压缩
       'context.label': '上下文',
@@ -2209,6 +2221,35 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * hero 开关的悬浮提示（官方 `Tooltip` 风格：短、1~2 行，不放整段时段说明）。
+     *
+     * 与标题栏 chip 的长 title 不同：这里只回答「现在是什么状态、点了会怎样、什么时候
+     * 自动变化」，完整高峰时段规则留给设置页/README。
+     *
+     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
+     * @param {any} snapshot - 控制器快照。
+     * @param {(key: string, params?: any) => string} t - 词典读取器。
+     * @returns {string} 提示文本（多行用 \n，官方 tooltip 是 pre-line）。
+     */
+    function liangguHeroTooltip(view, snapshot, t) {
+      if (view === 'busy') return t('lianggu.tipBusy');
+      if (view === 'off') return `${t('lianggu.tipOff')}\n${t('lianggu.tipOffBody')}`;
+      const status = snapshot === null || snapshot === undefined ? null : snapshot.status;
+      const schedule = status !== null && typeof status === 'object' && status.schedule !== null && typeof status.schedule === 'object'
+        ? status.schedule
+        : {};
+      const timeZone = typeof schedule.timeZone === 'string' && schedule.timeZone !== '' ? schedule.timeZone : 'Asia/Shanghai';
+      const nextAt = status !== null && typeof status === 'object' ? formatOffpeakClock(status.nextChangeAt, timeZone) : '';
+      if (view === 'paused') {
+        return nextAt === ''
+          ? t('lianggu.tipPaused')
+          : `${t('lianggu.tipPaused')}\n${t('lianggu.tipResumeAt', { time: nextAt })}`;
+      }
+      return nextAt === ''
+        ? t('lianggu.tipIdle')
+        : `${t('lianggu.tipIdle')}\n${t('lianggu.tipPauseAt', { time: nextAt })}`;
+    }
+    /**
      * 新建会话页的「梁谷」开关。
      *
      * 与标题栏右上角的「梁谷」chip **同一个控制器、同一套行为**：点击只切换当前会话的
@@ -2238,15 +2279,13 @@ window.__ModuleLoader__.load({
       const view = offpeakViewState(state);
       const enabled = view !== 'off';
       const text = liangguHeroText(view, state, t);
-      const baseTitle = offpeakTitle(view, state, t);
-      const title = view === 'off' ? `${baseTitle}\n${t('lianggu.heroNewSessionHint')}` : baseTitle;
+      const label = liangguHeroTooltip(view, state, t);
       const palette = offpeakChipPalette(view);
-      return jsx('button', {
+      const button = jsx('button', {
         type: 'button',
         'data-dsh-lianggu-hero': '',
         'data-lianggu-state': view,
         'data-lianggu-enabled': enabled ? 'true' : 'false',
-        title,
         'aria-label': t('lianggu.heroAria'),
         disabled: view === 'busy',
         onClick: () => {
@@ -2279,6 +2318,16 @@ window.__ModuleLoader__.load({
             children: text
           })
         ]
+      });
+      // 官方风格悬浮提示：用 primitives 的 Tooltip（与 Dojo 标题栏按钮同款气泡），
+      // 不用元素原生 `title`——原生提示是浏览器默认白底黑框，和 DSH 界面不一致。
+      return jsx(P.Tooltip, {
+        label,
+        side: 'bottom',
+        align: 'center',
+        delayMs: 350,
+        maxWidth: 320,
+        children: button
       });
     }
 

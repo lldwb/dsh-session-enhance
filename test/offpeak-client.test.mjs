@@ -367,10 +367,13 @@ function heroTextOf(button) {
 /**
  * 渲染新建会话页的「梁谷」开关。
  *
+ * 组件用 primitives 的 `Tooltip` 包裹按钮，所以测试要从 Tooltip 的 props 里取按钮与 label
+ * （占位组件不会渲染 children）。
+ *
  * @param {any} module - 已加载的浏览器半模块。
  * @param {(key: string, params?: any) => string} t - 词典。
  * @param {{ view?: 'off'|'paused'|'idle'|'busy', capability?: boolean, sessionId?: string }} [options] - 夹具。
- * @returns {any} `{ tree, button, buttons, toggles }`。
+ * @returns {any} `{ tree, tooltip, button, buttons, toggles, label }`。
  */
 function renderHeroToggle(module, t, options = {}) {
   const toggles = [];
@@ -394,8 +397,14 @@ function renderHeroToggle(module, t, options = {}) {
     }
   };
   const tree = module.LiangguHeroToggle(props);
-  const buttons = collectNodes(tree, (node) => node.type === 'button');
-  return { tree, button: buttons.length === 1 ? buttons[0] : undefined, buttons, toggles };
+  // Tooltip 占位组件：node.props 里有 label，children 是按钮元素。
+  const tooltip = collectNodes(
+    tree,
+    (node) => node.props !== undefined && typeof node.props.label === 'string' && node.props.children?.type === 'button'
+  )[0];
+  const button = tooltip === undefined ? undefined : tooltip.props.children;
+  const buttons = button === undefined ? [] : [button];
+  return { tree, tooltip, button, buttons, toggles, label: tooltip === undefined ? undefined : tooltip.props.label };
 }
 // #endregion
 
@@ -575,8 +584,11 @@ test('词典：offpeak.* 在 en/zh 键集一致，中文文案是「梁谷/空�
   assert.equal(env.zh['lianggu.heroOff'], '梁峰');
   assert.equal(env.zh['lianggu.heroName'], '梁谷');
   assert.equal(env.zh['lianggu.heroIdle'], '空闲');
+  assert.ok(env.zh['lianggu.tipOff'].includes('梁谷'));
+  assert.ok(env.zh['lianggu.tipOffBody'].includes('梁谷会话'));
+  assert.ok(env.zh['lianggu.tipResumeAt'].includes('{time}'));
+  assert.ok(env.zh['lianggu.tipPauseAt'].includes('{time}'));
   assert.ok(env.zh['lianggu.heroAria'].includes('梁谷'));
-  assert.ok(env.zh['lianggu.heroNewSessionHint'].includes('梁谷会话'));
 });
 // #endregion
 
@@ -792,23 +804,32 @@ test('渲染：关=太阳+「梁峰」；开=月亮+「梁谷」+倒计时/空�
     '开关必须渲染图标（primitives 图标或内联 svg）'
   );
   assert.ok(collectNodes(off.tree, (node) => node.type === 'circle').length >= 1, '关态应是太阳（circle + 光芒）');
-  assert.ok(off.button.props.title.includes('新建'), `关态 title 应说明新建会话语义：${off.button.props.title}`);
+  // 提示改用官方 Tooltip（primitives），不要元素原生 title——原生 title 是系统白底黑框。
+  assert.equal('title' in off.button.props, false, '开关不要用原生 title');
+  assert.ok(off.tooltip !== undefined, '开关应包在官方 Tooltip 里');
+  assert.equal(off.tooltip.props.side, 'bottom');
+  assert.ok(off.label.includes('梁谷'), `关态提示应出现「梁谷」：${off.label}`);
+  assert.ok(off.label.includes('点击开启'), `关态提示应说明点击开启：${off.label}`);
 
   const paused = renderHeroToggle(env.module, env.t, { view: 'paused' });
   assert.equal(paused.button.props['data-lianggu-state'], 'paused');
   assert.equal(paused.button.props['data-lianggu-enabled'], 'true');
   assert.equal(heroTextOf(paused.button), '梁谷 3h05m');
-  assert.ok(paused.button.props.title.includes('已暂停'));
+  assert.ok(paused.label.includes('高峰暂停'), `暂停态提示：${paused.label}`);
+  assert.ok(/将在 \d{2}:\d{2} 自动恢复/.test(paused.label), `暂停态应给恢复时刻：${paused.label}`);
   assert.ok(collectNodes(paused.tree, (node) => node.type === 'path').length >= 1, '开态应是月亮（path）');
 
   const idle = renderHeroToggle(env.module, env.t, { view: 'idle' });
   assert.equal(idle.button.props['data-lianggu-state'], 'idle');
   assert.equal(idle.button.props['data-lianggu-enabled'], 'true');
   assert.equal(heroTextOf(idle.button), '梁谷 空闲');
+  assert.ok(idle.label.includes('空闲'), `空闲态提示：${idle.label}`);
+  assert.ok(/将在 \d{2}:\d{2} 自动暂停/.test(idle.label), `空闲态应给暂停时刻：${idle.label}`);
 
   const busy = renderHeroToggle(env.module, env.t, { view: 'busy' });
   assert.equal(busy.button.props.disabled, true);
   assert.equal(heroTextOf(busy.button), '梁谷 …');
+  assert.ok(busy.label.includes('切换'), `busy 提示：${busy.label}`);
 });
 
 test('点击：只切换当前会话的梁谷开关（不建会话、不导航、不弹提示）', async (t) => {

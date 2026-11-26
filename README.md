@@ -41,6 +41,16 @@
 > 加载方式是 DSH 插件开发的**必答项**（工作区约定 §10.0）：按需的必须有 skill 入口与
 > `onDemand: false` 退路，常驻的必须写理由。这条标记行供人工审阅与将来做门禁。
 
+## 生效方式（桌面应用没有刷新按钮）
+
+- **Host 半改动**（`index.js` / `lib/**` / Loader 行结构）：**重启 DSH**（桌面版完全退出后重开；
+  `dsh web` 场景重启服务）。
+- **浏览器半改动**（`client.js`）：桌面应用**没有「刷新页面」入口**——宿主没有注册 Ctrl+R /
+  重载命令，官方只在「Host 版本变化」时给一次「刷新以加载新版本」。所以必须**完全退出应用
+  再重开**（托盘常驻时注意彻底退出，别只关窗口）；`dsh web` 场景刷新页面即可，但装/卸插件的
+  client 清单是服务器启动快照，仍需重启服务。
+- 只改文档/词典等纯数据：桌面版重开应用后生效。**别按“浏览器刷新页面”验收桌面版。**
+
 ## 五个组件
 
 | 组件（界面显示名） | Loader 行 | 提供什么 |
@@ -49,7 +59,7 @@
 | 会话分享 | `dsh-session-enhance/share` | 标题栏分享按钮 + 工具 `session_share` + 免登录只读页 `/share/<token>` |
 | 中断重试 | `dsh-session-enhance/retry`（行 id `dsh-session-enhance-retry`） | 用户主动停止后 composer 右侧的「重试」按钮 + RPC `/dsh-session-enhance-retry`；只补官方「继续生成」不覆盖的中断场景（失败仍交给官方） |
 | 侧边提问 | `dsh-session-enhance/sideask`（行 id `dsh-session-enhance-sideask`） | 右侧栏标签（页面型 + guide 入口）、标题栏入口、选中文字的「引用文本 / 侧边提问」合并弹层 + RPC `/dsh-session-enhance-sideask`（probe / create / setPreset / restore / forget）；侧边会话是**新开的只读会话**，按会话 id 查询原会话来回答 |
-| 梁谷 | `dsh-session-enhance/offpeak`（行 id `dsh-session-enhance-offpeak`） | 标题栏右上角的「梁谷」开关 + 新建会话行「新建梁谷会话」按钮 + Host 的 Agent hold 控制器 + RPC `/dsh-session-enhance-offpeak`（status / setEnabled / createLiangguSession / diag）；高峰时段暂停模型调用、输入留在队列，空闲时段自动恢复 |
+| 梁谷 | `dsh-session-enhance/offpeak`（行 id `dsh-session-enhance-offpeak`） | 标题栏右上角的「梁谷」开关 + 新建会话页的「梁谷」开关（太阳+梁峰 / 月亮+梁谷+剩余时间，6.3.3）+ Host 的 Agent hold 控制器 + RPC `/dsh-session-enhance-offpeak`（status / setEnabled / diag）；高峰时段暂停模型调用、输入留在队列，空闲时段自动恢复 |
 
 > **为什么第一个组件叫「会话增强」而不是「会话 ID / 会话检视」**：浏览器半（四块界面）只能挂在
 > **精确包名**那一行上——`@deepseek-ai/dsh-client-modules` 的 `locatePkgJson()` 只接受
@@ -143,7 +153,7 @@
 1. 从 profile 的 `dsh.profile.bundles` 与 `dependencies` 里删掉旧包 `dsh-session-inspect`
    （或更旧的 `dsh-session-id`），删掉 `profiles/<profile>/plugins/<旧包名>/`；
 2. 用新包重新 `dsh plugin add dsh-session-enhance`（或本地目录 link），执行 `pnpm install`；
-3. 重启 DSH（client 清单是服务器启动时的快照，刷新页面不够）。
+3. 重启 DSH（桌面版完全退出后重开；client 清单是服务器启动时的快照）。
 
 > 4.0.0 时还有第 3 条「如果你曾停用『失败重试』组件，把 `- id: <旧包名>-retry` 改成
 > `- id: dsh-session-enhance-retry`」。**5.0.0 起该行被移除，这条不再适用**；而 **5.2.0 起同名行
@@ -206,7 +216,7 @@ DSH 0.2.2-rc.2 已内置失败恢复。
    5.0.0 时这个 Loader 行不存在，应**整条删掉**（不是改名）。**5.2.0 起同 id 行重新用于
    「中断重试」**：删掉这一行 = 启用新组件；保留 `disabled: true` = 停用中断重试。
 2. 升级包本身（`dsh plugin add` / 更新本地 link）并执行 `pnpm install`；
-3. **重启 DSH**（client 清单是服务器启动时的快照，刷新页面不够）。重启后
+3. **重启 DSH**（桌面版完全退出后重开；client 清单是服务器启动时的快照）。重启后
    「设置 → 插件 → 会话增强 → 包含的组件」在 5.0.0 时是 **2 个**（会话增强 / 会话分享）；
    **5.2.0 起是 3 个**（多一个「中断重试」）。
 
@@ -244,7 +254,7 @@ DSH 0.2.2-rc.2 已内置失败恢复。
   不渲染 `data-dsh-offpeak-button`），Host 释放该会话的 hold，会话立即恢复正常运行；
 - 停用**会话增强**（第一行）→ 四块界面（分享 / 复制 / 中断重试 / 梁谷开关）随 client 半一起消失，
   `session_lookup` 也不可用；
-- 重新启用后刷新页面，按钮自动回来（探测只做一次，不写任何持久缓存）。
+- 重新启用后（桌面版重开应用 / 浏览器版刷新页面），按钮自动回来（探测只做一次，不写任何持久缓存）。
 
 ## 安装
 
@@ -261,10 +271,10 @@ dsh plugin add .
 设置页里只有一个「自动压缩」开关（默认关）。**梁谷默认关闭**；它的高峰时段 / 时区 /
 法定节假日 /「新会话默认启用」在「设置 → 插件 → 会话增强 → 包含的组件 → 梁谷」的配置页里
 可改（默认高峰周一到周五 09:00–12:00、14:00–18:00，`Asia/Shanghai`，内置 2026 年
-法定节假日；保存后热更新）。装好后刷新页面即可看到按钮；新会话里即可调用工具。
+法定节假日；保存后热更新）。装好后（桌面版重开应用 / 浏览器版刷新页面）即可看到按钮；新会话里即可调用工具。
 
 > **新增 Loader 行（5.7.0 的第四个组件）需要重启 DSH 才会进入 Loader 树**：Loader 树在进程
-> 启动时按 profile + 各 bundle 的 patch 合成，运行期只允许「已有行」热更新；刷新页面只能更新
+> 启动时按 profile + 各 bundle 的 patch 合成，运行期只允许「已有行」热更新；重开应用（桌面）或刷新页面（浏览器）只能更新
 > 已加载行对应的 client 半。重启后「包含的组件」是 4 个、右上角出现「梁谷」开关。
 > **6.0.0 的配置字段变了**：旧的 `offPeakStart` / `offPeakEnd` 已删除，profile 补丁层里
 > 如果给这一行写过它们，请改成 `peakWindows` / `timeZone` / `holidays` / `defaultEnabled`。
@@ -447,7 +457,7 @@ origin；两者都拿不到时创建会明确报错，而不是给一个打不�
   回退到 `agent.followup()` 发一条中性的 user 消息
   （「上一轮被用户中断。请从中断处继续完成，不要复述已完成的部分。」）。两条都失败才向界面
   返回错误码。历史里若出现那条中性消息，说明走的是回退路径；
-- **30 分钟 TTL**：中断后没人点，记录 30 分钟后过期；期间切到别的会话、刷新页面再回来仍能点；
+- **30 分钟 TTL**：中断后没人点，记录 30 分钟后过期；期间切到别的会话、重开应用再回来仍能点；
 - **边界：Host 重启后记录丢失**：记录只存在内存里（不落盘），DSH 重启后要重新触发一次「停止」
   才会再出现按钮；
 - **可单独启停**：停用 `dsh-session-enhance-retry` 行后，浏览器半的能力探测拿到 405，按钮换成
@@ -457,7 +467,7 @@ origin；两者都拿不到时创建会明确报错，而不是给一个打不�
 TIMEOUT / TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并有已准入的用户工作）；本组件 = 中断
 （`aborted` 且是用户主动停止）。两者**互斥**，不会对同一轮同时出现；失败永远交给官方。
 
-> 无需改配置，升级后**重启 DSH** 生效（client 清单是服务器启动时的快照，刷新页面不够）。
+> 无需改配置，升级后**重启 DSH** 生效（桌面版完全退出后重开；client 清单是服务器启动时的快照，浏览器版刷新页面也不够）。
 
 ### 梁谷（6.0.0 起）
 
@@ -502,7 +512,7 @@ TIMEOUT / TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并有已准入的用户�
   continuation 优先，官方不可用才用「中断重试」的空 retry 消息，历史里可能多一条紧凑的
   「已请求继续生成」）；若仍在高峰则继续暂停。
 - **高峰发消息会怎样**：消息被 Host 接收并进入**官方 durable 队列**（暂停中先显示为「待发送」
-  气泡；刷新页面后出现在 composer 上方的队列条——和平时「会话忙时排队」是同一个 UI，可编辑/
+  气泡；重开应用后出现在 composer 上方的队列条——和平时「会话忙时排队」是同一个 UI，可编辑/
   删除），但**不会开始任何模型调用**；空闲时段开始后按队列顺序逐条执行。
 - **高峰开始的那一刻正在跑的一轮**：会被中断（`agent.cancel({kind:'hook'})`，保留队列），
   所以不会继续在高峰烧 token；这一轮在空闲时段会**自动续跑**——聊天里会出现一条紧凑的
@@ -533,7 +543,7 @@ TIMEOUT / TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并有已准入的用户�
 > **从 5.7.0 升级（破坏性）**：组件名「谷峰会话」→「梁谷」；Config 字段
 > `offPeakStart` / `offPeakEnd` 删除，改为 `peakWindows` / `timeZone` / `holidays` /
 > `defaultEnabled`；`status` 里的 `window` / `offPeak` 改为 `schedule` / `idle`。
-> 升级包后重启 DSH（新代码与新配置字段要重新加载），再刷新页面。
+> 升级包后**完全退出应用再重开**（桌面版没有刷新按钮；新代码与新配置字段都要重新加载）。
 
 ### 手动压缩：注入官方「上下文已用」面板（4.2 起；4.3 起走官方 `/compact` 命令）
 

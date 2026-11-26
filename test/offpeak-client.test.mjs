@@ -402,7 +402,7 @@ function renderHeroToggle(module, t, options = {}) {
       ...(options.readOnly === true ? { readOnly: true, enabledSource: 'parent', inheritedFrom: 'parent' } : {})
     }),
     busy: view === 'busy',
-    countdownMs: options.countdownMs === undefined ? (view === 'paused' ? COUNTDOWN_MS : null) : options.countdownMs,
+    countdownMs: options.countdownMs === undefined ? COUNTDOWN_MS : options.countdownMs,
     notice: options.notice === undefined ? null : options.notice
   });
   const props = {
@@ -576,53 +576,29 @@ test('能力探测：梁谷通道 200 → capability.offpeak=true；405 → fals
   assert.equal(missingStore.hooks.capability.getSnapshot().retry, true);
 });
 
-test('词典：offpeak.* 在 en/zh 键集一致，中文文案是「梁谷/空闲时段/高峰时段」', async (t) => {
+test('词典：offpeak.* 在 en/zh 键集一致，文案为「谷峰插件/高峰/空闲」且无旧名', async (t) => {
   const env = await setup();
   t.after(env.restore);
 
   const zhKeys = Object.keys(env.zh).filter((key) => key.startsWith('offpeak.'));
   const enKeys = Object.keys(env.en).filter((key) => key.startsWith('offpeak.'));
-  assert.ok(zhKeys.length >= 10, `offpeak 词条太少：${zhKeys.length}`);
   assert.deepEqual(zhKeys.slice().sort(), enKeys.slice().sort(), 'en/zh 的 offpeak 键必须一一对应');
-
-  // 命名纠正的硬门禁：旧名「谷峰」「谷时」一个残留都不能有。
   for (const key of zhKeys) {
-    assert.ok(!env.zh[key].includes('谷峰'), `词条 ${key} 仍含旧名谷峰：${env.zh[key]}`);
-    assert.ok(!env.zh[key].includes('谷时'), `词条 ${key} 仍含旧名谷时：${env.zh[key]}`);
+    assert.ok(!env.zh[key].includes('梁谷'), `词条 ${key} 仍含旧名「梁谷」：${env.zh[key]}`);
+    assert.ok(!/Lianggu/i.test(env.en[key]), `词条 ${key} 仍含旧名 Lianggu`);
+    assert.ok(env.zh[key].length > 0 && env.en[key].length > 0, `词条 ${key} 不能为空`);
   }
 
-  assert.equal(env.zh['offpeak.chip.off'], '梁谷');
-  assert.equal(env.zh['offpeak.chip.paused'], '梁谷 暂停 {countdown}');
-  assert.equal(env.zh['offpeak.chip.idle'], '梁谷 空闲');
+  assert.equal(env.zh['offpeak.phase.peak'], '高峰');
+  assert.equal(env.zh['offpeak.phase.idle'], '空闲');
   assert.equal(env.zh['offpeak.chip.busy'], '…');
-  assert.equal(env.zh['offpeak.title.paused'], '梁谷：已暂停');
-  assert.ok(env.zh['offpeak.title.pausedBody'].includes('不会发起任何 AI 调用'));
-  assert.ok(env.zh['offpeak.peakHours'].includes('高峰时段'));
-  assert.ok(env.zh['offpeak.peakHours'].includes('周一至周五'));
-  assert.ok(env.zh['offpeak.peakHours'].includes('法定节假日'));
-  assert.ok(env.zh['offpeak.resumeAt'].includes('自动恢复'));
-  assert.ok(env.zh['offpeak.pauseAt'].includes('自动暂停'));
-  assert.ok(env.zh['offpeak.queued'].includes('{n}'));
-  assert.equal(env.zh['offpeak.windowJoiner'], '、');
-  for (const key of zhKeys) {
-    assert.ok(env.en[key].length > 0, `en 词条 ${key} 不能为空`);
-  }
-
-  // 6.3.0 hero 开关词条：键集一致、中文文案齐全。
-  const zhNewKeys = Object.keys(env.zh).filter((key) => key.startsWith('lianggu.'));
-  const enNewKeys = Object.keys(env.en).filter((key) => key.startsWith('lianggu.'));
-  assert.ok(zhNewKeys.length >= 3, `lianggu 词条太少：${zhNewKeys.length}`);
-  assert.deepEqual(zhNewKeys.slice().sort(), enNewKeys.slice().sort(), 'en/zh 的 lianggu 键必须一一对应');
-  assert.equal(env.zh['lianggu.heroOff'], '梁峰');
-  assert.equal(env.zh['lianggu.heroName'], '梁谷');
-  assert.equal(env.zh['lianggu.heroIdle'], '空闲');
-  assert.ok(env.zh['lianggu.tipOff'].includes('梁谷'));
-  assert.ok(env.zh['lianggu.tipOffBody'].includes('梁谷会话'));
-  assert.ok(env.zh['lianggu.tipResumeAt'].includes('{time}'));
-  assert.ok(env.zh['lianggu.tipPauseAt'].includes('{time}'));
-  assert.ok(env.zh['lianggu.heroAria'].includes('梁谷'));
+  assert.equal(env.zh['offpeak.tipNormal'], '谷峰插件：普通会话');
+  assert.ok(env.zh['offpeak.tipSetIdle'].includes('空闲会话'));
+  assert.ok(env.zh['offpeak.tipPeak'].includes('谷峰插件'));
+  assert.ok(env.zh['offpeak.tipResumeAt'].includes('{time}'));
+  assert.ok(env.zh['offpeak.tipPauseAt'].includes('{time}'));
+  assert.ok(env.zh['offpeak.readOnlyHint'].includes('继承自主会话'));
 });
-// #endregion
 
 // #region 纯函数
 test('formatOffpeakCountdown：>1h 小时分钟；1min~1h 分钟秒；<1min 只显示秒', () => {
@@ -684,100 +660,88 @@ test('formatOffpeakClock：按配置时区（含午夜 h23 口径）换算，非
 });
 // #endregion
 
-// #region 组件渲染
-test('渲染：关闭态是 muted「梁谷」，官方 Tooltip 说明点击开启', async (t) => {
-  const env = await setup();
-  t.after(env.restore);
-
-  const off = renderChip(
-    env.module,
-    env.t,
-    snapshotOf({ status: statusOf({ enabled: false, paused: false, idle: true }) })
-  );
-  assert.notEqual(off.button, undefined);
-  assert.equal(off.button.props['data-dsh-offpeak-button'], '');
-  assert.equal(off.button.props['data-offpeak-state'], 'off');
-  assert.equal(off.button.props['data-offpeak-enabled'], 'false');
-  assert.equal(off.button.props.disabled, false);
-  assert.equal(chipTextOf(off.button), '梁谷');
-  // 不再用元素原生 title；提示走官方 Tooltip（短文案）。
-  assert.equal('title' in off.button.props, false, 'chip 不要用原生 title');
-  assert.equal(off.tooltip.props.side, 'bottom');
-  assert.equal(
-    off.label,
-    ['梁谷：关闭', '点击开启：开启后从这里新建的会话就是梁谷会话。'].join('\n'),
-    `关闭态提示不符合约定：${off.label}`
-  );
-  // 还没读到状态时也要能渲染。
-  const unknown = renderChip(env.module, env.t, snapshotOf());
-  assert.equal(unknown.button.props['data-offpeak-state'], 'off');
-  assert.ok(unknown.label.includes('梁谷：关闭'));
-});
-
-test('渲染：暂停态是 amber「梁谷 3h05m」，提示写明自动恢复与排队条数', async (t) => {
+// #region 组件渲染（谷峰插件：峰/谷 + 倒计时 + 黑白款）
+test('渲染：高峰 = 图标+「高峰」+倒计时，选中态为黑款', async (t) => {
   const env = await setup();
   t.after(env.restore);
 
   const pausedStatus = statusOf({
+    enabled: true,
     paused: true,
     idle: false,
     nextChangeKind: 'resume',
     cover: { agent: true, running: false, held: true, interrupted: false, queued: 2 }
   });
-  const paused = renderChip(env.module, env.t, snapshotOf({ status: pausedStatus, countdownMs: COUNTDOWN_MS }));
-  assert.equal(paused.button.props['data-offpeak-state'], 'paused');
-  assert.equal(paused.button.props['data-offpeak-enabled'], 'true');
-  assert.equal(chipTextOf(paused.button), '梁谷 3h05m');
-  assert.equal(
-    paused.label,
-    ['梁谷：高峰暂停', '将在 08:30 自动恢复', '队列中 2 条消息，空闲时段开始后自动处理'].join('\n'),
-    `暂停态提示不符合约定：${paused.label}`
-  );
-  // 颜色走主题 token（暂停 = warn），并带 fallback。
-  assert.ok(String(paused.button.props.style.color).includes('--dsw-alias-state-warn'));
+  const peak = renderChip(env.module, env.t, snapshotOf({ status: pausedStatus, countdownMs: COUNTDOWN_MS }));
+  assert.equal(peak.button.props['data-offpeak-state'], 'paused');
+  assert.equal(peak.button.props['data-offpeak-enabled'], 'true');
+  assert.equal(chipTextOf(peak.button), '高峰 3h05m');
+  // 内部高峰橙、框为选中黑款。
+  assert.ok(String(peak.button.props.style.color).includes('--dsw-alias-state-warn'), '高峰内部橙色');
+  assert.equal(peak.button.props.style.border, '1.5px solid #14171a', '选中黑款边框');
+  assert.ok(peak.label.includes('谷峰插件：高峰'), `高峰提示：${peak.label}`);
+  assert.ok(/切换为空闲/u.test(peak.label), `高峰提示应给切换时刻：${peak.label}`);
+  // 峰用太阳图标。
+  assert.ok(collectNodes(peak.tree, (node) => node.type === 'circle').length >= 1, '高峰应是太阳');
 });
 
-test('渲染：空闲时段是 green「梁谷 空闲」，提示写明自动暂停；busy 是「梁谷 …」且禁用', async (t) => {
+test('渲染：空闲 = 图标+「空闲」+倒计时，未选中为白款', async (t) => {
   const env = await setup();
   t.after(env.restore);
 
-  const idle = renderChip(
-    env.module,
-    env.t,
-    snapshotOf({ status: statusOf({ paused: false, idle: true }), countdownMs: COUNTDOWN_MS })
-  );
+  const idleStatus = statusOf({ enabled: true, paused: false, idle: true, nextChangeKind: 'pause' });
+  const idle = renderChip(env.module, env.t, snapshotOf({ status: idleStatus, countdownMs: COUNTDOWN_MS }));
   assert.equal(idle.button.props['data-offpeak-state'], 'idle');
-  assert.equal(idle.button.props['data-offpeak-enabled'], 'true');
-  assert.equal(chipTextOf(idle.button), '梁谷 空闲');
-  assert.equal(
-    idle.label,
-    ['梁谷：空闲', '将在 08:30 自动暂停'].join('\n'),
-    `空闲态提示不符合约定：${idle.label}`
-  );
-  assert.ok(String(idle.button.props.style.color).includes('--dsw-alias-state-success'));
+  assert.equal(chipTextOf(idle.button), '空闲 3h05m');
+  assert.ok(String(idle.button.props.style.color).includes('--dsw-alias-state-success'), '空闲内部绿色');
+  assert.equal(idle.button.props.style.border, '1.5px solid #14171a', '选中黑款边框');
+  assert.ok(idle.label.includes('谷峰插件：空闲'), `空闲提示：${idle.label}`);
+  assert.ok(/切换为高峰/u.test(idle.label), `空闲提示应给切换时刻：${idle.label}`);
+  // 谷用弯月+星（path）。
+  assert.ok(collectNodes(idle.tree, (node) => node.type === 'path').length >= 2, '空闲应是月亮+星');
+
+  // 未选中（普通会话）= 白款，但内部同样显示「空闲 + 倒计时」。
+  const plainStatus = statusOf({ enabled: false, paused: false, idle: true });
+  const plain = renderChip(env.module, env.t, snapshotOf({ status: plainStatus, countdownMs: COUNTDOWN_MS }));
+  assert.equal(plain.button.props['data-offpeak-enabled'], 'false');
+  assert.equal(chipTextOf(plain.button), '空闲 3h05m', '未选中也显示相位+倒计时');
+  assert.ok(String(plain.button.props.style.border).includes('--dsw-alias-border-l2'), '未选中应为白款边框');
+  assert.ok(String(plain.button.props.style.color).includes('--dsw-alias-state-success'), '内部仍是空闲绿（不随选中变）');
+  assert.ok(plain.label.includes('普通会话'), `未选中提示：${plain.label}`);
+  assert.ok(plain.label.includes('点击设为空闲会话'), `未选中提示应说明点击行为：${plain.label}`);
+});
+
+test('渲染：busy 显示「…」且禁用；失败 Toast 用 sequence 当 key', async (t) => {
+  const env = await setup();
+  t.after(env.restore);
 
   const busy = renderChip(
     env.module,
     env.t,
-    snapshotOf({ status: statusOf({ paused: true, idle: false }), busy: true, countdownMs: COUNTDOWN_MS })
+    snapshotOf({ status: statusOf({ enabled: true, paused: true }), busy: true, countdownMs: COUNTDOWN_MS })
   );
   assert.equal(busy.button.props['data-offpeak-state'], 'busy');
   assert.equal(busy.button.props.disabled, true);
-  assert.equal(chipTextOf(busy.button), '梁谷 …');
-  assert.equal(busy.label, '梁谷：正在切换…');
-  // 点一下会调控制器的 toggle（busy 时按钮被禁用，但 onClick 语义仍要连对）。
-  busy.button.props.onClick();
-  assert.deepEqual(busy.toggles, [true]);
+  assert.equal(chipTextOf(busy.button), '高峰 …');
+
+  const notice = { text: '切换谷峰插件失败（BAD_REQUEST）', sequence: 7 };
+  const rendered = renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: false }), notice }));
+  const toasts = collectNodes(rendered.tree, (node) => node.type === primitives.Toast);
+  assert.equal(toasts.length, 1);
+  assert.equal(toasts[0].props.text, notice.text);
+  assert.equal(toasts[0].key, 7);
+  toasts[0].props.onDone();
+  assert.deepEqual(rendered.dismissed, [7]);
 });
 
-test('固定尺寸：chip 与 hero 在四种状态下宽高都不变（106 × 24）', async (t) => {
+test('固定尺寸：chip 与 hero 在高峰/空闲/未选中/切换中都是 106 × 24', async (t) => {
   const env = await setup();
   t.after(env.restore);
   const states = [
-    ['off', snapshotOf({ status: statusOf({ enabled: false, paused: false }) }), 'off'],
-    ['paused', snapshotOf({ status: statusOf({ enabled: true, paused: true }), countdownMs: COUNTDOWN_MS }), 'paused'],
+    ['peak', snapshotOf({ status: statusOf({ enabled: true, paused: true }), countdownMs: COUNTDOWN_MS }), 'paused'],
     ['idle', snapshotOf({ status: statusOf({ enabled: true, paused: false }), countdownMs: COUNTDOWN_MS }), 'idle'],
-    ['busy', snapshotOf({ status: statusOf({ enabled: true, paused: true }), busy: true, countdownMs: COUNTDOWN_MS }), 'busy']
+    ['off', snapshotOf({ status: statusOf({ enabled: false, paused: false }), countdownMs: COUNTDOWN_MS }), 'off'],
+    ['busy', snapshotOf({ status: statusOf({ enabled: true, paused: true }), busy: true }), 'busy']
   ];
   for (const [name, snapshot, view] of states) {
     const chip = renderChip(env.module, env.t, snapshot);
@@ -787,148 +751,86 @@ test('固定尺寸：chip 与 hero 在四种状态下宽高都不变（106 × 24
     const hero = renderHeroToggle(env.module, env.t, { view });
     assert.equal(hero.button.props.style.width, '106px', `hero ${name} 宽固定`);
     assert.equal(hero.button.props.style.height, '24px', `hero ${name} 高固定`);
-    assert.equal(hero.button.props['data-lianggu-state'], view);
   }
 });
 
 test('新建页开关：失败时与 chip 一样弹 Toast（不再静默）', async (t) => {
   const env = await setup();
   t.after(env.restore);
-  const notice = { text: '切换梁谷失败（READ_ONLY_INHERITED）', sequence: 9 };
+  const notice = { text: '切换谷峰插件失败（READ_ONLY_INHERITED）', sequence: 9 };
   const rendered = renderHeroToggle(env.module, env.t, { view: 'paused', notice });
   const toasts = collectNodes(rendered.tree, (node) => node.type === primitives.Toast);
   assert.equal(toasts.length, 1, 'hero 开关失败时必须渲染 Toast');
   assert.equal(toasts[0].props.text, notice.text);
-  assert.equal(toasts[0].key, 9, 'Toast 以 sequence 为 key');
+  assert.equal(toasts[0].key, 9);
   toasts[0].props.onDone();
-  assert.deepEqual(rendered.dismissed, [9], 'onDone 清对应 notice');
+  assert.deepEqual(rendered.dismissed, [9]);
 
   const quiet = renderHeroToggle(env.module, env.t, { view: 'paused' });
   assert.equal(collectNodes(quiet.tree, (node) => node.type === primitives.Toast).length, 0);
 });
 
-test('节庆 emoji：暂停倒计时 ≤60s 加 🎉、≤10s 加 🎊，其余状态不加', async (t) => {
+test('节庆 emoji：倒计时 ≤60s 加 🎉、≤10s 加 🎊（高峰/空闲都适用）', async (t) => {
   const env = await setup();
   t.after(env.restore);
-  const pausedAt = (countdownMs) =>
+  const peakAt = (countdownMs) =>
     renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: true, paused: true }), countdownMs }));
+  const idleAt = (countdownMs) =>
+    renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: true, paused: false }), countdownMs }));
 
-  assert.equal(heroTextOf(pausedAt(37_000).button), '梁谷 🎉 37s');
-  assert.equal(heroTextOf(pausedAt(59_000).button), '梁谷 🎉 59s');
-  assert.equal(heroTextOf(pausedAt(9_000).button), '梁谷 🎊 9s');
-  assert.equal(heroTextOf(pausedAt(1_000).button), '梁谷 🎊 1s');
-  assert.equal(heroTextOf(pausedAt(61_000).button), '梁谷 1m01s');
-  // 空闲/关/busy 不加 emoji。
-  assert.equal(
-    heroTextOf(renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: true, paused: false }) })).button),
-    '梁谷 空闲'
-  );
-  assert.equal(heroTextOf(renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: false }) })).button), '梁谷');
-  assert.equal(
-    heroTextOf(
-      renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: true, paused: true }), busy: true })).button
-    ),
-    '梁谷 …'
-  );
-
-  // hero 开关同一套 emoji。
-  assert.equal(heroTextOf(renderHeroToggle(env.module, env.t, { view: 'paused', countdownMs: 37_000 }).button), '梁谷 🎉 37s');
-  assert.equal(heroTextOf(renderHeroToggle(env.module, env.t, { view: 'paused', countdownMs: 9_000 }).button), '梁谷 🎊 9s');
+  assert.equal(chipTextOf(peakAt(37_000).button), '高峰 🎉 37s');
+  assert.equal(chipTextOf(peakAt(9_000).button), '高峰 🎊 9s');
+  assert.equal(chipTextOf(peakAt(61_000).button), '高峰 1m01s');
+  assert.equal(chipTextOf(idleAt(59_000).button), '空闲 🎉 59s');
+  assert.equal(chipTextOf(idleAt(1_000).button), '空闲 🎊 1s');
+  // hero 同款。
+  assert.equal(heroTextOf(renderHeroToggle(env.module, env.t, { view: 'paused', countdownMs: 37_000 }).button), '高峰 🎉 37s');
 });
 
-test('三段布局：图标 + 固定宽名称 + 状态，名称位置不随状态变化', async (t) => {
+test('三段布局：图标 + 固定宽相位 + 倒计时，相位位置不随状态变化', async (t) => {
   const env = await setup();
   t.after(env.restore);
-  const states = [
-    ['off', snapshotOf({ status: statusOf({ enabled: false }) }), 'off'],
-    ['paused', snapshotOf({ status: statusOf({ enabled: true, paused: true }), countdownMs: COUNTDOWN_MS }), 'paused'],
-    ['idle', snapshotOf({ status: statusOf({ enabled: true, paused: false }) }), 'idle'],
-    ['busy', snapshotOf({ status: statusOf({ enabled: true, paused: true }), busy: true }), 'busy']
-  ];
-  for (const [label, snapshot, view] of states) {
+
+  for (const [snapshot, expectedPhase] of [
+    [snapshotOf({ status: statusOf({ enabled: true, paused: true }), countdownMs: COUNTDOWN_MS }), '高峰'],
+    [snapshotOf({ status: statusOf({ enabled: true, paused: false }), countdownMs: COUNTDOWN_MS }), '空闲'],
+    [snapshotOf({ status: statusOf({ enabled: false, paused: false }), countdownMs: COUNTDOWN_MS }), '空闲']
+  ]) {
     const chip = renderChip(env.module, env.t, snapshot);
     const children = chip.button.props.children;
-    assert.equal(children.length, 3, `${label}: 三段（图标/名称/状态）`);
-    assert.equal(children[0].type, 'svg', `${label}: 第一段是图标`);
-    assert.equal(children[1].props.style.width, '24px', `${label}: 名称固定 24px`);
-    assert.equal(children[1].props.style.flex, 'none', `${label}: 名称不参与伸缩`);
-    assert.equal(children[2].props.style.flex, '1 1 auto', `${label}: 状态段占固定起点后的余量`);
-    assert.equal(children[2].props.style.textAlign, 'left');
-    assert.equal(chip.button.props['data-offpeak-state'], view);
-
-    const hero = renderHeroToggle(env.module, env.t, { view });
-    const heroChildren = hero.button.props.children;
-    assert.equal(heroChildren.length, 3);
-    assert.equal(heroChildren[1].props.style.width, '24px', `hero ${label}: 名称固定 24px`);
-    assert.equal(heroChildren[2].props.style.flex, '1 1 auto');
+    assert.equal(children.length, 3, '三段：图标 / 相位 / 倒计时');
+    assert.equal(children[1].props.style.width, '24px');
+    assert.equal(children[1].props.style.flex, 'none');
+    assert.equal(children[1].props.children, expectedPhase, '相位段位置固定、只换文字');
+    assert.equal(children[2].props.style.flex, '1 1 auto');
   }
-  // 名称段在两种状态间是同一个固定元素（位置不变），只有状态段文字变化。
-  const offName = renderChip(env.module, env.t, states[0][1]).button.props.children[1].props.children;
-  const pausedName = renderChip(env.module, env.t, states[1][1]).button.props.children[1].props.children;
-  assert.equal(offName, pausedName, 'chip 名称段不随状态变化');
-  const heroOffName = renderHeroToggle(env.module, env.t, { view: 'off' }).button.props.children[1].props.children;
-  const heroOnName = renderHeroToggle(env.module, env.t, { view: 'paused' }).button.props.children[1].props.children;
-  assert.equal(heroOffName, '梁峰');
-  assert.equal(heroOnName, '梁谷');
+
+  // hero 同结构。
+  const hero = renderHeroToggle(env.module, env.t, { view: 'paused' });
+  const heroChildren = hero.button.props.children;
+  assert.equal(heroChildren.length, 3);
+  assert.equal(heroChildren[1].props.style.width, '24px');
+  assert.equal(heroChildren[1].props.children, '高峰');
 });
 
-test('倒计时紧迫感：剩余 ≤60s 标 urgent、≤10s 标 final，其余状态不带动效钩子', async (t) => {
+test('倒计时紧迫感：按剩余时间给 urgent/final，未选中也生效', async (t) => {
   const env = await setup();
   t.after(env.restore);
-  const pausedAt = (countdownMs) =>
-    snapshotOf({ status: statusOf({ enabled: true, paused: true }), countdownMs });
-
-  // chip 与 hero 都要有同一套钩子。
-  for (const countdownMs of [120_000, 61_000]) {
-    assert.equal(renderChip(env.module, env.t, pausedAt(countdownMs)).button.props['data-offpeak-urgent'], undefined);
-    assert.equal(
-      renderHeroToggle(env.module, env.t, { view: 'paused', countdownMs }).button.props['data-offpeak-urgent'],
-      undefined,
-      `hero ${countdownMs}ms 不应有 urgent 钩子`
+  const at = (countdownMs, enabled = true) =>
+    renderChip(
+      env.module,
+      env.t,
+      snapshotOf({ status: statusOf({ enabled, paused: enabled }), countdownMs })
     );
-  }
-  assert.equal(renderChip(env.module, env.t, pausedAt(60_000)).button.props['data-offpeak-urgent'], 'urgent');
-  assert.equal(renderChip(env.module, env.t, pausedAt(59_000)).button.props['data-offpeak-urgent'], 'urgent');
-  assert.equal(renderChip(env.module, env.t, pausedAt(10_000)).button.props['data-offpeak-urgent'], 'final');
-  assert.equal(renderChip(env.module, env.t, pausedAt(9_000)).button.props['data-offpeak-urgent'], 'final');
-  assert.equal(renderChip(env.module, env.t, pausedAt(0)).button.props['data-offpeak-urgent'], undefined);
-  // hero 同一套判定。
-  assert.equal(
-    renderHeroToggle(env.module, env.t, { view: 'paused', countdownMs: 45_000 }).button.props['data-offpeak-urgent'],
-    'urgent'
-  );
-  assert.equal(
-    renderHeroToggle(env.module, env.t, { view: 'paused', countdownMs: 5_000 }).button.props['data-offpeak-urgent'],
-    'final'
-  );
-
-  // 非暂停态（关/空闲）不带钩子。
-  assert.equal(
-    renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: false }) })).button.props['data-offpeak-urgent'],
-    undefined
-  );
-  assert.equal(
-    renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: true, paused: false }), countdownMs: 5_000 }))
-      .button.props['data-offpeak-urgent'],
-    undefined
-  );
-});
-
-test('渲染：失败 Toast 用 sequence 当 key，onDone 只清对应那条', async (t) => {
-  const env = await setup();
-  t.after(env.restore);
-
-  const notice = { text: '切换梁谷失败（BAD_REQUEST）', sequence: 7 };
-  const rendered = renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: false }), notice }));
-  const toasts = collectNodes(rendered.tree, (node) => node.type === primitives.Toast);
-  assert.equal(toasts.length, 1);
-  assert.equal(toasts[0].props.text, notice.text);
-  assert.equal(toasts[0].key, 7, 'Toast 必须以 sequence 当 React key，连续点击才会重播动画');
-  toasts[0].props.onDone();
-  assert.deepEqual(rendered.dismissed, [7]);
-  // 没有 notice 时不渲染 Toast。
-  const quiet = renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: false }) }));
-  assert.equal(collectNodes(quiet.tree, (node) => node.type === primitives.Toast).length, 0);
+  assert.equal(at(120_000).button.props['data-offpeak-urgent'], undefined);
+  assert.equal(at(61_000).button.props['data-offpeak-urgent'], undefined);
+  assert.equal(at(60_000).button.props['data-offpeak-urgent'], 'urgent');
+  assert.equal(at(37_000).button.props['data-offpeak-urgent'], 'urgent');
+  assert.equal(at(10_000).button.props['data-offpeak-urgent'], 'final');
+  assert.equal(at(9_000).button.props['data-offpeak-urgent'], 'final');
+  assert.equal(at(0).button.props['data-offpeak-urgent'], undefined);
+  // 未选中（普通会话）也显示倒计时与紧迫动效。
+  assert.equal(at(15_000, false).button.props['data-offpeak-urgent'], 'urgent');
 });
 
 test('渲染：能力探测 false / 无 sessionId 都返回隐藏占位（保持订阅，不返回 null）', async (t) => {
@@ -939,9 +841,7 @@ test('渲染：能力探测 false / 无 sessionId 都返回隐藏占位（保持
     capability: false
   });
   assert.equal(disabled.buttons.length, 0);
-  const disabledPlaceholders = collectNodes(disabled.tree, (node) => node.props['data-offpeak-hidden'] === 'disabled');
-  assert.equal(disabledPlaceholders.length, 1);
-  assert.equal(disabledPlaceholders[0].props.style.display, 'none');
+  assert.equal(collectNodes(disabled.tree, (node) => node.props['data-offpeak-hidden'] === 'disabled').length, 1);
 
   const noSession = renderChip(env.module, env.t, snapshotOf(), { sessionId: '' });
   assert.equal(noSession.buttons.length, 0);
@@ -949,72 +849,43 @@ test('渲染：能力探测 false / 无 sessionId 都返回隐藏占位（保持
 });
 // #endregion
 
-// #region 新建会话页的「梁谷」开关
-test('渲染：关=太阳+「梁峰」；开=月亮+「梁谷」+倒计时/空闲；busy 禁用', async (t) => {
+// #region 新建会话页的「谷峰插件」开关
+test('新建页开关：峰/谷 + 倒计时；选中黑款、未选中白款；内容不随选中变化', async (t) => {
   const env = await setup();
   t.after(env.restore);
 
-  const off = renderHeroToggle(env.module, env.t);
-  assert.equal(off.buttons.length, 1);
-  assert.equal(off.button.props['data-dsh-lianggu-hero'], '');
-  assert.equal(off.button.props['data-lianggu-state'], 'off');
-  assert.equal(off.button.props['data-lianggu-enabled'], 'false');
-  assert.equal(off.button.props.disabled, false);
-  // 关：太阳 + 「梁峰」。
-  assert.equal(heroTextOf(off.button), '梁峰');
-  assert.ok(
-    collectNodes(off.tree, (node) => node.type === 'svg' || typeof node.type === 'function').length >= 1,
-    '开关必须渲染图标（primitives 图标或内联 svg）'
-  );
-  assert.ok(collectNodes(off.tree, (node) => node.type === 'circle').length >= 1, '关态应是太阳（circle + 光芒）');
-  // 提示改用官方 Tooltip（primitives），不要元素原生 title——原生 title 是系统白底黑框。
-  assert.equal('title' in off.button.props, false, '开关不要用原生 title');
-  assert.ok(off.tooltip !== undefined, '开关应包在官方 Tooltip 里');
-  assert.equal(off.tooltip.props.side, 'bottom');
-  assert.ok(off.label.includes('梁谷'), `关态提示应出现「梁谷」：${off.label}`);
-  assert.ok(off.label.includes('点击开启'), `关态提示应说明点击开启：${off.label}`);
-
-  const paused = renderHeroToggle(env.module, env.t, { view: 'paused' });
-  assert.equal(paused.button.props['data-lianggu-state'], 'paused');
-  assert.equal(paused.button.props['data-lianggu-enabled'], 'true');
-  assert.equal(heroTextOf(paused.button), '梁谷 3h05m');
-  assert.ok(paused.label.includes('高峰暂停'), `暂停态提示：${paused.label}`);
-  assert.ok(/将在 \d{2}:\d{2} 自动恢复/.test(paused.label), `暂停态应给恢复时刻：${paused.label}`);
-  assert.ok(
-    collectNodes(paused.tree, (node) => node.type === 'path').length >= 2,
-    '开态应是月亮 + 小星星（两个 path）'
-  );
-  assert.ok(
-    collectNodes(paused.tree, (node) => node.type === 'path' && node.props.fill === 'currentColor').length >= 1,
-    '星星应是实心（fill=currentColor）'
-  );
+  const peak = renderHeroToggle(env.module, env.t, { view: 'paused' });
+  assert.equal(heroTextOf(peak.button), '高峰 3h05m');
+  assert.equal(peak.button.props.style.border, '1.5px solid #14171a', '选中黑款边框');
+  assert.ok(String(peak.button.props.style.color).includes('--dsw-alias-state-warn'), '高峰内部橙色');
+  assert.ok(peak.label.includes('谷峰插件：高峰'));
+  assert.ok(collectNodes(peak.tree, (node) => node.type === 'circle').length >= 1, '峰用太阳');
 
   const idle = renderHeroToggle(env.module, env.t, { view: 'idle' });
-  assert.equal(idle.button.props['data-lianggu-state'], 'idle');
-  assert.equal(idle.button.props['data-lianggu-enabled'], 'true');
-  assert.equal(heroTextOf(idle.button), '梁谷 空闲');
-  assert.ok(idle.label.includes('空闲'), `空闲态提示：${idle.label}`);
-  assert.ok(/将在 \d{2}:\d{2} 自动暂停/.test(idle.label), `空闲态应给暂停时刻：${idle.label}`);
+  assert.equal(heroTextOf(idle.button), '空闲 3h05m');
+  assert.equal(idle.button.props.style.border, '1.5px solid #14171a', '选中黑款边框');
+  assert.ok(collectNodes(idle.tree, (node) => node.type === 'path').length >= 2, '谷用月亮+星');
 
-  const busy = renderHeroToggle(env.module, env.t, { view: 'busy' });
-  assert.equal(busy.button.props.disabled, true);
-  assert.equal(heroTextOf(busy.button), '梁谷 …');
-  assert.ok(busy.label.includes('切换'), `busy 提示：${busy.label}`);
+  // 未选中：白款，但内部依旧是「相位 + 倒计时」（同一份显示）。
+  const plain = renderHeroToggle(env.module, env.t, { view: 'off' });
+  assert.equal(plain.button.props['data-lianggu-enabled'], 'false');
+  assert.ok(String(plain.button.props.style.border).includes('--dsw-alias-border-l2'), '未选中白款边框');
+  assert.ok(String(plain.button.props.style.color).includes('--dsw-alias-state-success'), '内部空闲绿不变');
+  assert.ok(heroTextOf(plain.button).endsWith('3h05m'), '未选中也显示倒计时');
+  assert.ok(plain.label.includes('点击设为空闲会话'));
 });
 
-test('点击：只切换当前会话的梁谷开关（不建会话、不导航、不弹提示）', async (t) => {
+test('点击：只切换当前会话（不建会话、不导航、不弹提示）', async (t) => {
   const env = await setup();
   t.after(env.restore);
   const rendered = renderHeroToggle(env.module, env.t, { view: 'idle' });
   rendered.button.props.onClick();
   assert.deepEqual(rendered.toggles, [true]);
-  // 不渲染 Toast：树里没有带 onDone 的 P.Toast 元素。
   assert.equal(
     collectNodes(rendered.tree, (node) => node.props !== undefined && typeof node.props.onDone === 'function').length,
     0
   );
 
-  // 真实控制器：toggle 只发 setEnabled，不发任何“创建会话”请求。
   const { connection, calls } = createConnection();
   const env2 = await setup({ connection });
   t.after(env2.restore);

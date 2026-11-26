@@ -142,46 +142,25 @@ window.__ModuleLoader__.load({
       'retry.busy': 'Retrying…',
       'retry.failed': 'Retry did not take effect ({code})',
 
-      // 梁谷（标题栏 chip）
-      'offpeak.chip.off': 'Lianggu',
-      'offpeak.chip.paused': 'Lianggu paused {countdown}',
-      'offpeak.chip.pausedNoEta': 'Lianggu paused',
-      'offpeak.chip.idle': 'Lianggu idle',
+      // 谷峰插件（标题栏 chip）：相位 + 倒计时 + 提示
       'offpeak.chip.busy': '…',
-      'offpeak.title.off': 'Lianggu: off',
-      'offpeak.title.offBody':
-        'When on, this session pauses during peak hours and resumes automatically the rest of the time.',
-      'offpeak.title.offNoWindow':
-        'Lianggu: off\nWhen on, this session pauses during peak hours and resumes automatically the rest of the time.\nClick to enable (the schedule is still loading).',
-      'offpeak.title.paused': 'Lianggu: paused',
-      'offpeak.title.pausedBody': 'It is peak hours now, so no AI call will start.',
-      'offpeak.title.idle': 'Lianggu: running in the idle window',
-      'offpeak.title.idleBody': 'It is not peak hours now, so AI calls run normally.',
-      'offpeak.title.busy': 'Switching Lianggu…',
-      'offpeak.peakHours': 'Peak hours: Mon–Fri {windows} ({tz}; public holidays and weekends excluded)',
-      'offpeak.windowJoiner': ', ',
-      'offpeak.clickToEnable': 'Click to enable.',
-      'offpeak.resumeAt': 'Resumes automatically at {time}',
-      'offpeak.pauseAt': 'Pauses automatically at {time}',
       'offpeak.queued': '{n} message(s) queued; they start when the idle window begins',
-      'offpeak.toast.failed': 'Could not switch Lianggu ({code})',
-      'offpeak.toast.notPersisted':
-        'Lianggu changed, but the setting could not be saved; it may reset after a restart',
-      'offpeak.toast.noConnection': 'Not connected to the host; Lianggu did not change',
+      'offpeak.toast.failed': 'Could not switch GuFeng ({code})',
+      'offpeak.toast.notPersisted': 'GuFeng changed, but the setting could not be saved; it may reset after a restart',
+      'offpeak.toast.noConnection': 'Not connected to the host; GuFeng did not change',
       'offpeak.readOnlyHint': 'Inherited from the parent session; it cannot be changed in a subagent session.',
 
-      // 新建会话页的「梁谷」开关（hero 行）
-      'lianggu.heroOff': 'Liang Peak',
-      'lianggu.heroName': 'Lianggu',
-      'lianggu.heroIdle': 'Idle',
-      'lianggu.heroAria': 'Lianggu switch (new sessions become Lianggu sessions when on)',
-      'lianggu.tipOff': 'Lianggu: off',
-      'lianggu.tipOffBody': 'Click to enable: new sessions from here become Lianggu sessions.',
-      'lianggu.tipPaused': 'Lianggu: paused at peak',
-      'lianggu.tipIdle': 'Lianggu: idle',
-      'lianggu.tipResumeAt': 'Resumes automatically at {time}',
-      'lianggu.tipPauseAt': 'Pauses automatically at {time}',
-      'lianggu.tipBusy': 'Lianggu: switching…',
+      // 谷峰插件：相位 / 倒计时 / 悬浮提示（标题栏 chip 与新建页开关共用）
+      'offpeak.phase.peak': 'Peak',
+      'offpeak.phase.idle': 'Idle',
+      'offpeak.countdown.unknown': '--',
+      'offpeak.tipNormal': 'GuFeng: normal session',
+      'offpeak.tipSetIdle': 'Click to make this an idle session (runs only during idle windows).',
+      'offpeak.tipPeak': 'GuFeng: peak hours',
+      'offpeak.tipIdle': 'GuFeng: idle hours',
+      'offpeak.tipResumeAt': 'Switches to idle at {time}',
+      'offpeak.tipPauseAt': 'Switches to peak at {time}',
+      'offpeak.tipBusy': 'GuFeng: switching…',
 
       // 上下文用量 + 手动压缩
       'context.label': 'Context',
@@ -284,44 +263,25 @@ window.__ModuleLoader__.load({
       'retry.busy': '正在重试…',
       'retry.failed': '重试未生效（{code}）',
 
-      // 梁谷（标题栏 chip）
-      'offpeak.chip.off': '梁谷',
-      'offpeak.chip.paused': '梁谷 暂停 {countdown}',
-      'offpeak.chip.pausedNoEta': '梁谷 暂停',
-      'offpeak.chip.idle': '梁谷 空闲',
+      // 谷峰插件（标题栏 chip）：相位 + 倒计时 + 提示
       'offpeak.chip.busy': '…',
-      'offpeak.title.off': '梁谷：关闭',
-      'offpeak.title.offBody': '开启后，在高峰时段暂停本会话，空闲时段自动恢复运行。',
-      'offpeak.title.offNoWindow':
-        '梁谷：关闭\n开启后，在高峰时段暂停本会话，空闲时段自动恢复运行。\n点击开启（时段读取中，稍后显示）。',
-      'offpeak.title.paused': '梁谷：已暂停',
-      'offpeak.title.pausedBody': '当前是高峰时段，不会发起任何 AI 调用。',
-      'offpeak.title.idle': '梁谷：空闲时段运行中',
-      'offpeak.title.idleBody': '当前不在高峰时段，调用正常进行。',
-      'offpeak.title.busy': '正在切换梁谷…',
-      'offpeak.peakHours': '高峰时段：周一至周五 {windows}（{tz}，法定节假日与周末除外）',
-      'offpeak.windowJoiner': '、',
-      'offpeak.clickToEnable': '点击开启。',
-      'offpeak.resumeAt': '将在 {time} 自动恢复',
-      'offpeak.pauseAt': '将在 {time} 自动暂停',
       'offpeak.queued': '队列中 {n} 条消息，空闲时段开始后自动处理',
-      'offpeak.toast.failed': '切换梁谷失败（{code}）',
-      'offpeak.toast.notPersisted': '已切换梁谷，但状态没能写入磁盘，重启后可能回落',
-      'offpeak.toast.noConnection': '未连接到 Host，无法切换梁谷',
+      'offpeak.toast.failed': '切换谷峰插件失败（{code}）',
+      'offpeak.toast.notPersisted': '已切换谷峰插件，但状态没能写入磁盘，重启后可能回落',
+      'offpeak.toast.noConnection': '未连接到 Host，无法切换谷峰插件',
       'offpeak.readOnlyHint': '状态继承自主会话，在子智能体会话里不能修改。',
 
-      // 新建会话页的「梁谷」开关（hero 行）
-      'lianggu.heroOff': '梁峰',
-      'lianggu.heroName': '梁谷',
-      'lianggu.heroIdle': '空闲',
-      'lianggu.heroAria': '梁谷开关（开启后新建的会话就是梁谷会话）',
-      'lianggu.tipOff': '梁谷：关闭',
-      'lianggu.tipOffBody': '点击开启：开启后从这里新建的会话就是梁谷会话。',
-      'lianggu.tipPaused': '梁谷：高峰暂停',
-      'lianggu.tipIdle': '梁谷：空闲',
-      'lianggu.tipResumeAt': '将在 {time} 自动恢复',
-      'lianggu.tipPauseAt': '将在 {time} 自动暂停',
-      'lianggu.tipBusy': '梁谷：正在切换…',
+      // 谷峰插件：相位 / 倒计时 / 悬浮提示（标题栏 chip 与新建页开关共用）
+      'offpeak.phase.peak': '高峰',
+      'offpeak.phase.idle': '空闲',
+      'offpeak.countdown.unknown': '--',
+      'offpeak.tipNormal': '谷峰插件：普通会话',
+      'offpeak.tipSetIdle': '点击设为空闲会话（仅空闲时段运行）。',
+      'offpeak.tipPeak': '谷峰插件：高峰',
+      'offpeak.tipIdle': '谷峰插件：空闲',
+      'offpeak.tipResumeAt': '将在 {time} 切换为空闲',
+      'offpeak.tipPauseAt': '将在 {time} 切换为高峰',
+      'offpeak.tipBusy': '谷峰插件：正在切换…',
 
       // 上下文用量 + 手动压缩
       'context.label': '上下文',
@@ -1569,16 +1529,15 @@ window.__ModuleLoader__.load({
     });
 
     /**
-     * 梁谷状态图标（标题栏 chip 与新建页开关共用同一套）：
-     * **关 = 太阳**（未启用）；**开 = 弯月 + 右上角小星星**（梁谷）。
+     * 相位图标（标题栏 chip 与新建页开关共用）：**高峰 = 太阳；空闲 = 弯月 + 小星星**。
      *
      * primitives 里没有太阳/月亮导出，所以用内联 SVG（15px、currentColor、1.2 描边）。
      *
-     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
+     * @param {'peak'|'idle'} phase - 相位。
      * @returns {any} 15×15 的 SVG 元素。
      */
-    function offpeakStatusIcon(view) {
-      if (view === 'off') {
+    function offpeakStatusIcon(phase) {
+      if (phase !== 'idle') {
         const rays = [];
         for (let index = 0; index < 8; index += 1) {
           const angle = (Math.PI / 4) * index;
@@ -1651,18 +1610,12 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 倒计时的「紧迫级别」：暂停态且剩余 ≤ 60s 时给 Pill 加动效钩子。
+     * 倒计时的「紧迫级别」：剩余 ≤60s 起给 Pill 加动效钩子（高峰/空闲、选中/未选中都生效）。
      *
-     * - `'urgent'`：剩余 ≤ 60s（开始有节奏地呼吸/描边）；
-     * - `'final'`：剩余 ≤ 10s（更快、更醒目的最后冲刺）；
-     * - `''`：普通静态（平时不闪，避免干扰）。
-     *
-     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @param {any} snapshot - 控制器快照。
      * @returns {''|'urgent'|'final'} 级别。
      */
-    function offpeakUrgency(view, snapshot) {
-      if (view !== 'paused') return '';
+    function offpeakUrgency(snapshot) {
       const ms = snapshot === null || snapshot === undefined ? undefined : snapshot.countdownMs;
       if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return '';
       if (ms <= OFFPEAK_FINAL_MS) return 'final';
@@ -1683,7 +1636,7 @@ window.__ModuleLoader__.load({
       style.setAttribute('data-dsh-enhance-offpeak-motion', '');
       style.textContent = [
         '[data-offpeak-urgent]{font-variant-numeric:tabular-nums;}',
-        '@keyframes dsh-offpeak-urgent-throb{0%,100%{box-shadow:inset 0 0 0 1px var(--dsw-alias-state-warn-label,#b45309);opacity:1;}50%{box-shadow:inset 0 0 0 1px rgba(0,0,0,0);opacity:.66;}}',
+        '@keyframes dsh-offpeak-urgent-throb{0%,100%{box-shadow:inset 0 0 0 1px currentColor;opacity:1;}50%{box-shadow:inset 0 0 0 1px transparent;opacity:.66;}}',
         '[data-offpeak-urgent="urgent"]{animation:dsh-offpeak-urgent-throb 1s ease-in-out infinite;}',
         '[data-offpeak-urgent="final"]{animation:dsh-offpeak-urgent-throb .45s ease-in-out infinite;font-weight:600;}',
         '@media (prefers-reduced-motion: reduce){[data-offpeak-urgent]{animation:none;}}'
@@ -1940,9 +1893,10 @@ window.__ModuleLoader__.load({
       };
 
       /**
-       * 每秒 tick：暂停中更新倒计时；到点立刻向 Host 对齐（不等下一次 15 秒轮询）。
+       * 每秒 tick：更新「到下一次相位切换」的倒计时；到点立刻向 Host 对齐。
        *
-       * 只有「已启用」时才做事：关闭状态下 chip 不显示倒计时，没什么可 tick 的。
+       * 现在高峰/空闲两个状态都显示倒计时，且**未选中（普通会话）也照常显示**当前相位，
+       * 所以 tick 不再以 `enabled` 为前提。
        *
        * @returns {void}
        */
@@ -1950,9 +1904,9 @@ window.__ModuleLoader__.load({
         if (disposed) return;
         const current = base.getSnapshot();
         const status = current.status;
-        if (status === null || typeof status !== 'object' || status.enabled !== true) return;
+        if (status === null || typeof status !== 'object') return;
         const remaining = offpeakCountdownOf(status, receivedAt, Date.now());
-        if (status.paused === true && remaining !== null) {
+        if (remaining !== null) {
           const display = displayCountdown(remaining);
           if (display !== current.countdownMs) {
             base.update((state) => ({ ...state, countdownMs: display }));
@@ -2055,35 +2009,39 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * chip 上显示的字。短是硬要求：标题栏还要放标题与「⋯」，chip 只给一眼。
+     * 当前相位：`'peak'`（高峰）或 `'idle'`（空闲）。状态未加载时按高峰处理，避免闪「空闲」。
      *
-     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @param {any} snapshot - 控制器快照。
-     * @param {(key: string, params?: any) => string} t - 词典读取器。
-     * @returns {string} 文案。
+     * @returns {'peak'|'idle'} 相位。
      */
+    function offpeakPhaseOf(snapshot) {
+      const status = snapshot === null || snapshot === undefined ? null : snapshot.status;
+      if (status === null || typeof status !== 'object') return 'peak';
+      // `paused`（= 高峰时暂停）比 `idle` 更权威：两者同时为 true 的夹具/边界时刻按高峰算。
+      if (status.paused === true) return 'peak';
+      return status.idle === true ? 'idle' : 'peak';
+    }
+
     /**
-     * chip 的**名称段**（固定宽 24px，位置不随状态变化）：会话级开关未启用时也叫「梁谷」。
+     * 相位名称（高峰 / 空闲）。
      *
+     * @param {'peak'|'idle'} phase - 相位。
      * @param {(key: string, params?: any) => string} t - 词典读取器。
      * @returns {string} 名称。
      */
-    function offpeakChipName(t) {
-      return t('lianggu.heroName');
+    function offpeakPhaseLabel(phase, t) {
+      return phase === 'idle' ? t('offpeak.phase.idle') : t('offpeak.phase.peak');
     }
 
     /**
      * 状态文字的「节庆 emoji」前缀（用户要求：像新年倒计时那样）。
      *
-     * 只在暂停态且剩余 ≤60s 时出现：≤60s `🎉`、≤10s `🎊`；其余状态一律无 emoji。
-     * 实测状态区 43px 下 `🎉 57s` = 37.79px，无需加宽按钮。
+     * 剩余 ≤60s `🎉`、≤10s `🎊`；与相位/选中无关（高峰/空闲都适用）。
      *
-     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @param {any} snapshot - 控制器快照。
      * @returns {string} emoji 或空串。
      */
-    function offpeakStateEmoji(view, snapshot) {
-      if (view !== 'paused') return '';
+    function offpeakStateEmoji(snapshot) {
       const ms = snapshot === null || snapshot === undefined ? undefined : snapshot.countdownMs;
       if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return '';
       if (ms <= OFFPEAK_FINAL_MS) return '🎊';
@@ -2092,54 +2050,43 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * chip 的**状态段**（固定起点、左对齐）：暂停=倒计时、空闲=「空闲」、busy=「…」、关=空串；
-     * 倒计时最后 60 秒会带节庆 emoji（`🎉 57s` / `🎊 8s`）。
+     * 倒计时文字（到下一次相位切换）。高峰/空闲、选中/未选中都显示。
      *
-     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @param {any} snapshot - 控制器快照。
      * @param {(key: string, params?: any) => string} t - 词典读取器。
-     * @returns {string} 状态文字。
+     * @returns {string} 例如 `3h05m` / `🎉 57s` / `…`。
      */
-    function offpeakChipState(view, snapshot, t) {
-      if (view === 'busy') return t('offpeak.chip.busy');
-      const emoji = offpeakStateEmoji(view, snapshot);
-      if (view === 'paused') {
-        const countdown = snapshot === null || snapshot === undefined ? undefined : snapshot.countdownMs;
-        const text = typeof countdown === 'number' && Number.isFinite(countdown)
+    function offpeakCountdownLabel(snapshot, t) {
+      if (snapshot !== null && typeof snapshot === 'object' && snapshot.busy === true) return t('offpeak.chip.busy');
+      const countdown = snapshot === null || snapshot === undefined ? undefined : snapshot.countdownMs;
+      const text =
+        typeof countdown === 'number' && Number.isFinite(countdown)
           ? formatOffpeakCountdown(countdown)
-          : t('offpeak.chip.pausedNoEta');
-        return emoji === '' ? text : `${emoji} ${text}`;
-      }
-      if (view === 'idle') return t('lianggu.heroIdle');
-      // 关：名称段已经是「梁谷」，状态段留空（保持三段固定布局）。
-      return '';
+          : t('offpeak.countdown.unknown');
+      const emoji = offpeakStateEmoji(snapshot);
+      return emoji === '' ? text : `${emoji} ${text}`;
     }
 
     /**
-     * chip 的状态色：关闭 = 次要文字色（muted），暂停 = 琥珀（warn token），
-     * 空闲时段 = 绿色（success token）；busy 用关闭色但由 `:disabled` 降透明度。
+     * 按钮配色（用户明确）：
+     * - **内部**（图标 + 高峰/空闲 + 倒计时）颜色只看相位：**高峰橙、空闲绿**，与选中无关；
+     * - **框**（按钮边框）只切黑白款：选中 = 黑款（深色边框），未选中 = 白款（浅色边框）；
+     * - 背景透明，避免黑底影响内部橙/绿的可读性。
      *
-     * token 都带 fallback：拿得到主题 token 时跟着主题走，拿不到时仍是可读的语义色。
-     *
-     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
-     * @returns {{ color: string, background: string }} 颜色。
+     * @param {'peak'|'idle'} phase - 相位。
+     * @param {boolean} selected - 是否选中（已设为空闲会话）。
+     * @returns {{ color: string, background: string, border: string }} 配色。
      */
-    function offpeakChipPalette(view) {
-      if (view === 'paused') {
-        return {
-          color: 'var(--dsw-alias-state-warn-label, #b45309)',
-          background: 'var(--dsw-alias-state-warn-tertiary, rgba(245, 158, 11, 0.14))'
-        };
-      }
-      if (view === 'idle') {
-        return {
-          color: 'var(--dsw-alias-state-success-primary, #067647)',
-          background: 'var(--dsw-alias-state-success-tertiary, rgba(6, 118, 71, 0.12))'
-        };
-      }
+    function offpeakPillPalette(phase, selected) {
+      const color = phase === 'idle'
+        ? 'var(--dsw-alias-state-success-primary, #067647)'
+        : 'var(--dsw-alias-state-warn-label, #b45309)';
       return {
-        color: 'var(--dsw-alias-label-secondary, currentColor)',
-        background: 'transparent'
+        color,
+        background: 'transparent',
+        border: selected
+          ? '1.5px solid #14171a'
+          : '1px solid var(--dsw-alias-border-l2, rgba(16, 20, 24, 0.16))'
       };
     }
 
@@ -2179,8 +2126,9 @@ window.__ModuleLoader__.load({
         typeof status.cover.queued === 'number'
           ? status.cover.queued
           : undefined;
-      const label = offpeakStatusTooltip(view, snapshot, t, { queued });
-      const urgency = offpeakUrgency(view, snapshot);
+      const label = offpeakStatusTooltip(snapshot, t, { queued });
+      const urgency = offpeakUrgency(snapshot);
+      const phase = offpeakPhaseOf(snapshot);
       const readOnly = status !== null && typeof status === 'object' && status.readOnly === true;
       const toast =
         snapshot.notice === null || snapshot.notice === undefined
@@ -2215,7 +2163,7 @@ window.__ModuleLoader__.load({
           void props.offpeak.toggle();
         },
         style: {
-          ...offpeakChipPalette(view),
+          ...offpeakPillPalette(phase, enabled),
           flex: 'none',
           width: OFFPEAK_PILL_WIDTH,
           height: OFFPEAK_PILL_HEIGHT,
@@ -2224,8 +2172,8 @@ window.__ModuleLoader__.load({
           justifyContent: 'center'
         },
         children: [
-          offpeakStatusIcon(view),
-          // 名称段：固定 24px（图标与名称的位置不随状态变化）。
+          offpeakStatusIcon(phase),
+          // 相位段（高峰/空闲）：固定 24px，位置不随状态变化。
           jsx('span', {
             style: {
               width: OFFPEAK_NAME_WIDTH,
@@ -2235,9 +2183,9 @@ window.__ModuleLoader__.load({
               textAlign: 'left',
               whiteSpace: 'nowrap'
             },
-            children: offpeakChipName(t)
+            children: offpeakPhaseLabel(phase, t)
           }),
-          // 状态段：从固定位置开始，内容变化只在右侧延伸/收缩。
+          // 倒计时段：从固定位置开始，数字变化只在右侧。
           jsx('span', {
             style: {
               overflow: 'hidden',
@@ -2248,7 +2196,7 @@ window.__ModuleLoader__.load({
               fontVariantNumeric: 'tabular-nums',
               whiteSpace: 'nowrap'
             },
-            children: offpeakChipState(view, snapshot, t)
+            children: offpeakCountdownLabel(snapshot, t)
           })
         ]
       });
@@ -2267,32 +2215,19 @@ window.__ModuleLoader__.load({
 
     // #region 新建会话页的「梁谷」开关（hero 行，预设右侧）
     /**
-     * hero 开关的文案（**永远显示文字**，一眼能看出状态）：
-     * 关 → 「梁峰」；开 → 「梁谷」+ 剩余时间 / 「梁谷 空闲」；busy → 「梁谷 …」。
+     * 谷峰插件的悬浮提示（标题栏 chip 与新建页开关共用，官方 `Tooltip` 风格）：
+     * 回答「当前相位 / 点击会怎样 / 何时自动切换」，1~2 行；chip 额外带队列条数。
      *
-     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
-     * @param {any} snapshot - 控制器快照。
-     * @param {(key: string, params?: any) => string} t - 词典读取器。
-     * @returns {string} 名称。
-     */
-    function liangguHeroName(view, t) {
-      return view === 'off' ? t('lianggu.heroOff') : t('lianggu.heroName');
-    }
-
-    /**
-     * 梁谷状态的悬浮提示（标题栏 chip 与新建页开关共用，官方 `Tooltip` 风格）：
-     * 只回答「现在什么状态、点了会怎样、何时自动变化」，1~2 行；chip 额外带队列条数。
-     *
-     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @param {any} snapshot - 控制器快照。
      * @param {(key: string, params?: any) => string} t - 词典读取器。
      * @param {{ queued?: number }} [options] - chip 传队列条数；hero 开关不传。
      * @returns {string} 提示文本（多行用 \n，官方 tooltip 是 pre-line）。
      */
-    function offpeakStatusTooltip(view, snapshot, t, options = {}) {
-      if (view === 'busy') return t('lianggu.tipBusy');
-      if (view === 'off') return `${t('lianggu.tipOff')}\n${t('lianggu.tipOffBody')}`;
+    function offpeakStatusTooltip(snapshot, t, options = {}) {
+      if (snapshot !== null && typeof snapshot === 'object' && snapshot.busy === true) return t('offpeak.tipBusy');
       const status = snapshot === null || snapshot === undefined ? null : snapshot.status;
+      const selected = status !== null && typeof status === 'object' && status.enabled === true;
+      const phase = offpeakPhaseOf(snapshot);
       const schedule =
         status !== null && typeof status === 'object' && status.schedule !== null && typeof status.schedule === 'object'
           ? status.schedule
@@ -2303,15 +2238,21 @@ window.__ModuleLoader__.load({
       const queued = typeof options.queued === 'number' && options.queued > 0
         ? `\n${t('offpeak.queued', { n: options.queued })}`
         : '';
-      if (view === 'paused') {
+
+      if (!selected) {
+        // 未选中 = 普通会话：预告「点击设为空闲会话」后会发生什么。
+        return `${t('offpeak.tipNormal')}\n${t('offpeak.tipSetIdle')}${queued}`;
+      }
+      if (phase === 'idle') {
         const head = nextAt === ''
-          ? t('lianggu.tipPaused')
-          : `${t('lianggu.tipPaused')}\n${t('lianggu.tipResumeAt', { time: nextAt })}`;
+          ? t('offpeak.tipIdle')
+          : `${t('offpeak.tipIdle')}\n${t('offpeak.tipPauseAt', { time: nextAt })}`;
         return `${head}${queued}`;
       }
-      return nextAt === ''
-        ? t('lianggu.tipIdle')
-        : `${t('lianggu.tipIdle')}\n${t('lianggu.tipPauseAt', { time: nextAt })}`;
+      const head = nextAt === ''
+        ? t('offpeak.tipPeak')
+        : `${t('offpeak.tipPeak')}\n${t('offpeak.tipResumeAt', { time: nextAt })}`;
+      return `${head}${queued}`;
     }
     /**
      * 新建会话页的「梁谷」开关。
@@ -2346,12 +2287,12 @@ window.__ModuleLoader__.load({
       }
       const view = offpeakViewState(state);
       const enabled = view !== 'off';
-      const name = liangguHeroName(view, t);
-      const stateText = offpeakChipState(view, state, t);
-      const label = offpeakStatusTooltip(view, state, t);
-      const urgency = offpeakUrgency(view, state);
+      const phase = offpeakPhaseOf(state);
+      const label = offpeakStatusTooltip(state, t);
+      const urgency = offpeakUrgency(state);
       const readOnly = state.status !== null && typeof state.status === 'object' && state.status.readOnly === true;
-      const palette = offpeakChipPalette(view);
+      // 选中 = 黑款边框；未选中 = 白款边框。内部颜色只看相位（高峰橙/空闲绿），两款一致。
+      const palette = offpeakPillPalette(phase, enabled);
       // 与标题栏 chip 同一个官方 `Pill` + `Tooltip` 形制。
       const pill = jsx(P.Pill, {
         active: enabled,
@@ -2359,7 +2300,6 @@ window.__ModuleLoader__.load({
         'data-lianggu-state': view,
         'data-lianggu-enabled': enabled ? 'true' : 'false',
         ...(urgency === '' ? {} : { 'data-offpeak-urgent': urgency }),
-        // 与 chip 一致：无障碍名称取提示文案首行（如「梁谷：关闭 / 梁谷：高峰暂停」）。
         'aria-label': label.split('\n')[0],
         disabled: view === 'busy' || readOnly,
         onClick: () => {
@@ -2376,8 +2316,8 @@ window.__ModuleLoader__.load({
           justifyContent: 'center'
         },
         children: [
-          offpeakStatusIcon(view),
-          // 名称段固定 24px：图标与名称位置不随状态变化。
+          offpeakStatusIcon(phase),
+          // 相位段（高峰/空闲）固定 24px：图标与相位位置不随选中/相位变化。
           jsx('span', {
             style: {
               width: OFFPEAK_NAME_WIDTH,
@@ -2387,9 +2327,9 @@ window.__ModuleLoader__.load({
               textAlign: 'left',
               whiteSpace: 'nowrap'
             },
-            children: name
+            children: offpeakPhaseLabel(phase, t)
           }),
-          // 状态段固定起点，倒计时/空闲只在右侧变化。
+          // 倒计时段固定起点。
           jsx('span', {
             style: {
               overflow: 'hidden',
@@ -2400,7 +2340,7 @@ window.__ModuleLoader__.load({
               fontVariantNumeric: 'tabular-nums',
               whiteSpace: 'nowrap'
             },
-            children: stateText
+            children: offpeakCountdownLabel(state, t)
           })
         ]
       });

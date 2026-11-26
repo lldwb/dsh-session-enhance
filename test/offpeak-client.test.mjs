@@ -661,7 +661,7 @@ test('formatOffpeakClock：按配置时区（含午夜 h23 口径）换算，非
 // #endregion
 
 // #region 组件渲染（谷峰插件：峰/谷 + 倒计时 + 黑白款）
-test('渲染：高峰 = 图标+「高峰」+倒计时，选中态为黑款', async (t) => {
+test('渲染：高峰 = 图标+「高峰」+倒计时，选中为浅灰款', async (t) => {
   const env = await setup();
   t.after(env.restore);
 
@@ -678,14 +678,15 @@ test('渲染：高峰 = 图标+「高峰」+倒计时，选中态为黑款', asy
   assert.equal(chipTextOf(peak.button), '高峰 3h05m');
   // 内部高峰橙、框为选中黑款。
   assert.ok(String(peak.button.props.style.color).includes('--dsw-alias-state-warn'), '高峰内部橙色');
-  assert.equal(peak.button.props.style.border, '1.5px solid #14171a', '选中黑款边框');
+  assert.equal(peak.button.props.style.border, '1px solid #d0d3d8', '选中为浅灰边框');
+  assert.ok(String(peak.button.props.style.background).includes('--dsw-alias-state-warn-tertiary'), '高峰背景为橙');
   assert.ok(peak.label.includes('谷峰插件：高峰'), `高峰提示：${peak.label}`);
   assert.ok(/切换为空闲/u.test(peak.label), `高峰提示应给切换时刻：${peak.label}`);
   // 峰用太阳图标。
   assert.ok(collectNodes(peak.tree, (node) => node.type === 'circle').length >= 1, '高峰应是太阳');
 });
 
-test('渲染：空闲 = 图标+「空闲」+倒计时，未选中为白款', async (t) => {
+test('渲染：空闲 = 图标+「空闲」+倒计时，未选中为深色款', async (t) => {
   const env = await setup();
   t.after(env.restore);
 
@@ -694,7 +695,8 @@ test('渲染：空闲 = 图标+「空闲」+倒计时，未选中为白款', asy
   assert.equal(idle.button.props['data-offpeak-state'], 'idle');
   assert.equal(chipTextOf(idle.button), '空闲 3h05m');
   assert.ok(String(idle.button.props.style.color).includes('--dsw-alias-state-success'), '空闲内部绿色');
-  assert.equal(idle.button.props.style.border, '1.5px solid #14171a', '选中黑款边框');
+  assert.equal(idle.button.props.style.border, '1px solid #d0d3d8', '选中为浅灰边框');
+  assert.ok(String(idle.button.props.style.background).includes('--dsw-alias-state-success-tertiary'), '空闲背景为绿');
   assert.ok(idle.label.includes('谷峰插件：空闲'), `空闲提示：${idle.label}`);
   assert.ok(/切换为高峰/u.test(idle.label), `空闲提示应给切换时刻：${idle.label}`);
   // 谷用弯月+星（path）。
@@ -705,7 +707,8 @@ test('渲染：空闲 = 图标+「空闲」+倒计时，未选中为白款', asy
   const plain = renderChip(env.module, env.t, snapshotOf({ status: plainStatus, countdownMs: COUNTDOWN_MS }));
   assert.equal(plain.button.props['data-offpeak-enabled'], 'false');
   assert.equal(chipTextOf(plain.button), '空闲 3h05m', '未选中也显示相位+倒计时');
-  assert.ok(String(plain.button.props.style.border).includes('--dsw-alias-border-l2'), '未选中应为白款边框');
+  assert.equal(plain.button.props.style.border, '1px solid #ffffff', '未选中为白色边框');
+  assert.ok(String(plain.button.props.style.background).includes('--dsw-alias-state-success-tertiary'), '未选中背景仍按相位（空闲绿）');
   assert.ok(String(plain.button.props.style.color).includes('--dsw-alias-state-success'), '内部仍是空闲绿（不随选中变）');
   assert.ok(plain.label.includes('普通会话'), `未选中提示：${plain.label}`);
   assert.ok(plain.label.includes('点击设为空闲会话'), `未选中提示应说明点击行为：${plain.label}`);
@@ -850,26 +853,29 @@ test('渲染：能力探测 false / 无 sessionId 都返回隐藏占位（保持
 // #endregion
 
 // #region 新建会话页的「谷峰插件」开关
-test('新建页开关：峰/谷 + 倒计时；选中黑款、未选中白款；内容不随选中变化', async (t) => {
+test('新建页开关：峰/谷 + 倒计时；选中浅灰、未选中深色；内容不随选中变化', async (t) => {
   const env = await setup();
   t.after(env.restore);
 
   const peak = renderHeroToggle(env.module, env.t, { view: 'paused' });
   assert.equal(heroTextOf(peak.button), '高峰 3h05m');
-  assert.equal(peak.button.props.style.border, '1.5px solid #14171a', '选中黑款边框');
+  assert.equal(peak.button.props.style.border, '1px solid #d0d3d8', '选中为浅灰边框');
+  assert.ok(String(peak.button.props.style.background).includes('--dsw-alias-state-warn-tertiary'), '高峰背景为橙');
   assert.ok(String(peak.button.props.style.color).includes('--dsw-alias-state-warn'), '高峰内部橙色');
   assert.ok(peak.label.includes('谷峰插件：高峰'));
   assert.ok(collectNodes(peak.tree, (node) => node.type === 'circle').length >= 1, '峰用太阳');
 
   const idle = renderHeroToggle(env.module, env.t, { view: 'idle' });
   assert.equal(heroTextOf(idle.button), '空闲 3h05m');
-  assert.equal(idle.button.props.style.border, '1.5px solid #14171a', '选中黑款边框');
+  assert.equal(idle.button.props.style.border, '1px solid #d0d3d8', '选中为浅灰边框');
+  assert.ok(String(idle.button.props.style.background).includes('--dsw-alias-state-success-tertiary'), '空闲背景为绿');
   assert.ok(collectNodes(idle.tree, (node) => node.type === 'path').length >= 2, '谷用月亮+星');
 
   // 未选中：白款，但内部依旧是「相位 + 倒计时」（同一份显示）。
   const plain = renderHeroToggle(env.module, env.t, { view: 'off' });
   assert.equal(plain.button.props['data-lianggu-enabled'], 'false');
-  assert.ok(String(plain.button.props.style.border).includes('--dsw-alias-border-l2'), '未选中白款边框');
+  assert.equal(plain.button.props.style.border, '1px solid #ffffff', '未选中为白色边框');
+  assert.ok(String(plain.button.props.style.background).includes('--dsw-alias-state-success-tertiary'), '未选中背景仍按相位（空闲绿）');
   assert.ok(String(plain.button.props.style.color).includes('--dsw-alias-state-success'), '内部空闲绿不变');
   assert.ok(heroTextOf(plain.button).endsWith('3h05m'), '未选中也显示倒计时');
   assert.ok(plain.label.includes('点击设为空闲会话'));

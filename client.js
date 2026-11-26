@@ -1773,7 +1773,7 @@ window.__ModuleLoader__.load({
      */
     function offpeakCountdownOf(status, receivedAt, now) {
       if (status === null || typeof status !== 'object') return null;
-      if (status.enabled !== true) return null;
+      // 未选中（普通会话）也要显示相位倒计时，所以这里不再要求 enabled。
       const nextChangeAt = status.nextChangeAt;
       const serverNow = status.serverNow;
       if (typeof nextChangeAt !== 'number' || !Number.isFinite(nextChangeAt)) return null;
@@ -2068,25 +2068,25 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 按钮配色（用户明确）：
-     * - **内部**（图标 + 高峰/空闲 + 倒计时）颜色只看相位：**高峰橙、空闲绿**，与选中无关；
-     * - **框**（按钮边框）只切黑白款：选中 = 黑款（深色边框），未选中 = 白款（浅色边框）；
-     * - 背景透明，避免黑底影响内部橙/绿的可读性。
+     * 按钮配色（用户最终口径）：
+     * - **背景**按相位着色：**高峰橙**（warn tertiary）、**空闲绿**（success tertiary）；
+     * - **边框**只切黑白款：**选中 = 浅灰边框**，**未选中 = 白色边框**；
+     * - **内部**图标/文字颜色沿用原来的语义色（高峰橙、空闲绿），与选中无关。
      *
      * @param {'peak'|'idle'} phase - 相位。
      * @param {boolean} selected - 是否选中（已设为空闲会话）。
      * @returns {{ color: string, background: string, border: string }} 配色。
      */
     function offpeakPillPalette(phase, selected) {
-      const color = phase === 'idle'
-        ? 'var(--dsw-alias-state-success-primary, #067647)'
-        : 'var(--dsw-alias-state-warn-label, #b45309)';
+      const idle = phase === 'idle';
       return {
-        color,
-        background: 'transparent',
-        border: selected
-          ? '1.5px solid #14171a'
-          : '1px solid var(--dsw-alias-border-l2, rgba(16, 20, 24, 0.16))'
+        color: idle
+          ? 'var(--dsw-alias-state-success-primary, #067647)'
+          : 'var(--dsw-alias-state-warn-label, #b45309)',
+        background: idle
+          ? 'var(--dsw-alias-state-success-tertiary, rgba(6, 118, 71, 0.12))'
+          : 'var(--dsw-alias-state-warn-tertiary, rgba(245, 158, 11, 0.14))',
+        border: selected ? '1px solid #d0d3d8' : '1px solid #ffffff'
       };
     }
 

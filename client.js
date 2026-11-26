@@ -170,6 +170,8 @@ window.__ModuleLoader__.load({
       'offpeak.toast.noConnection': 'Not connected to the host; Lianggu did not change',
 
       // 新建会话页的「梁谷」开关（hero 行）
+      'lianggu.heroOff': 'Liang Peak',
+      'lianggu.heroName': 'Lianggu',
       'lianggu.heroIdle': 'Idle',
       'lianggu.heroAria': 'Lianggu switch (new sessions become Lianggu sessions when on)',
       'lianggu.heroNewSessionHint': 'New sessions created here become Lianggu sessions while this switch is on.',
@@ -301,6 +303,8 @@ window.__ModuleLoader__.load({
       'offpeak.toast.noConnection': '未连接到 Host，无法切换梁谷',
 
       // 新建会话页的「梁谷」开关（hero 行）
+      'lianggu.heroOff': '梁峰',
+      'lianggu.heroName': '梁谷',
       'lianggu.heroIdle': '空闲',
       'lianggu.heroAria': '梁谷开关（开启后新建的会话就是梁谷会话）',
       'lianggu.heroNewSessionHint': '开关打开时，这里新建出来的会话就是梁谷会话。',
@@ -2131,32 +2135,60 @@ window.__ModuleLoader__.load({
 
     // #region 新建会话页的「梁谷」开关（hero 行，预设右侧）
     /**
-     * hero 开关的图标：与页面右上角方形按钮一致的**镜像**面板图标
-     * （官方 `ExpandButton.module.css` 用 `scaleX(-1)`；内联 SVG 兜底也一起镜像）。
+     * hero 开关的图标：**关（未启用）= 太阳；开（梁谷）= 月亮**。
      *
+     * primitives 里没有太阳/月亮导出，所以用内联 SVG（15px、currentColor、1.2 描边），
+     * 与官方小图标的视觉尺寸对齐。
+     *
+     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @returns {any} 图标元素。
      */
-    function liangguHeroIcon() {
-      const Icon = P.IconPanelLeftOutlineRegular;
-      const glyph =
-        typeof Icon === 'function'
-          ? jsx(Icon, { size: 15 })
-          : jsxs('svg', {
-              width: 15,
-              height: 15,
-              viewBox: '0 0 16 16',
-              fill: 'none',
-              'aria-hidden': 'true',
-              children: [
-                jsx('rect', { x: 2, y: 3, width: 12, height: 10, rx: 2, stroke: 'currentColor', strokeWidth: 1.2 }),
-                jsx('line', { x1: 9.5, y1: 3, x2: 9.5, y2: 13, stroke: 'currentColor', strokeWidth: 1.2 })
-              ]
-            });
-      return jsx('span', { style: { display: 'inline-flex', transform: 'scaleX(-1)' }, children: glyph });
+    function liangguHeroIcon(view) {
+      if (view === 'off') {
+        const rays = [];
+        for (let index = 0; index < 8; index += 1) {
+          const angle = (Math.PI / 4) * index;
+          rays.push(
+            jsx('line', {
+              x1: 8 + Math.cos(angle) * 5.6,
+              y1: 8 + Math.sin(angle) * 5.6,
+              x2: 8 + Math.cos(angle) * 7.2,
+              y2: 8 + Math.sin(angle) * 7.2,
+              stroke: 'currentColor',
+              strokeWidth: 1.2,
+              strokeLinecap: 'round'
+            })
+          );
+        }
+        return jsxs('svg', {
+          width: 15,
+          height: 15,
+          viewBox: '0 0 16 16',
+          fill: 'none',
+          'aria-hidden': 'true',
+          children: [jsx('circle', { cx: 8, cy: 8, r: 3.2, stroke: 'currentColor', strokeWidth: 1.2 }), ...rays]
+        });
+      }
+      return jsxs('svg', {
+        width: 15,
+        height: 15,
+        viewBox: '0 0 16 16',
+        fill: 'none',
+        'aria-hidden': 'true',
+        children: [
+          jsx('path', {
+            d: 'M12.6 9.8A5.6 5.6 0 0 1 6.2 3.4a5.6 5.6 0 1 0 6.4 6.4Z',
+            stroke: 'currentColor',
+            strokeWidth: 1.2,
+            strokeLinejoin: 'round'
+          })
+        ]
+      });
     }
 
     /**
-     * hero 开关的文案：关 → 空串（只显示图标）；暂停 → 剩余时间；空闲 → 「空闲」；busy → 「…」。
+     * hero 开关的文案（**永远显示文字**，一眼能看出状态）：
+     * 关 → 「梁峰」；开 → 「梁谷」+ 剩余时间 / 「梁谷 空闲」；busy → 「梁谷 …」。
      *
      * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @param {any} snapshot - 控制器快照。
@@ -2164,15 +2196,16 @@ window.__ModuleLoader__.load({
      * @returns {string} 文案。
      */
     function liangguHeroText(view, snapshot, t) {
+      const name = t('lianggu.heroName');
+      if (view === 'off') return t('lianggu.heroOff');
       if (view === 'paused') {
         const countdown = snapshot === null || snapshot === undefined ? undefined : snapshot.countdownMs;
         return typeof countdown === 'number' && Number.isFinite(countdown)
-          ? formatOffpeakCountdown(countdown)
-          : t('offpeak.chip.pausedNoEta');
+          ? `${name} ${formatOffpeakCountdown(countdown)}`
+          : `${name} ${t('offpeak.chip.pausedNoEta')}`;
       }
-      if (view === 'idle') return t('lianggu.heroIdle');
-      if (view === 'busy') return t('offpeak.chip.busy');
-      return '';
+      if (view === 'idle') return `${name} ${t('lianggu.heroIdle')}`;
+      return `${name} ${t('offpeak.chip.busy')}`;
     }
 
     /**
@@ -2180,8 +2213,8 @@ window.__ModuleLoader__.load({
      *
      * 与标题栏右上角的「梁谷」chip **同一个控制器、同一套行为**：点击只切换当前会话的
      * 梁谷开关——不创建会话、不导航、不弹 Toast。新建页上的空白会话就是即将创建的会话，
-     * 因此开关打开时，**新建出来的会话一定是梁谷会话**；开关打开期间按钮上显示剩余时间
-     * 或「空闲」，关闭时只显示图标。
+     * 因此开关打开时，**新建出来的会话一定是梁谷会话**；按钮始终显示名称与状态：
+     * 关 = 太阳 +「梁峰」；开 = 月亮 +「梁谷」+ 剩余时间/「空闲」。
      *
      * @param {any} props - 槽位注入的 props。
      * @returns {any} 开关（或隐藏占位）。
@@ -2226,11 +2259,11 @@ window.__ModuleLoader__.load({
           gap: '4px',
           height: '28px',
           minWidth: '28px',
-          padding: text === '' ? 0 : '0 8px',
+          padding: '0 8px',
           boxSizing: 'border-box',
           flex: 'none',
           border: 'none',
-          borderRadius: text === '' ? '6px' : '999px',
+          borderRadius: '999px',
           fontFamily: 'inherit',
           fontSize: '12px',
           lineHeight: 1,
@@ -2240,13 +2273,11 @@ window.__ModuleLoader__.load({
           background: palette.background
         },
         children: [
-          liangguHeroIcon(),
-          text === ''
-            ? null
-            : jsx('span', {
-                style: { overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px', whiteSpace: 'nowrap' },
-                children: text
-              })
+          liangguHeroIcon(view),
+          jsx('span', {
+            style: { overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px', whiteSpace: 'nowrap' },
+            children: text
+          })
         ]
       });
     }

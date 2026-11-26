@@ -572,6 +572,8 @@ test('词典：offpeak.* 在 en/zh 键集一致，中文文案是「梁谷/空�
   const enNewKeys = Object.keys(env.en).filter((key) => key.startsWith('lianggu.'));
   assert.ok(zhNewKeys.length >= 3, `lianggu 词条太少：${zhNewKeys.length}`);
   assert.deepEqual(zhNewKeys.slice().sort(), enNewKeys.slice().sort(), 'en/zh 的 lianggu 键必须一一对应');
+  assert.equal(env.zh['lianggu.heroOff'], '梁峰');
+  assert.equal(env.zh['lianggu.heroName'], '梁谷');
   assert.equal(env.zh['lianggu.heroIdle'], '空闲');
   assert.ok(env.zh['lianggu.heroAria'].includes('梁谷'));
   assert.ok(env.zh['lianggu.heroNewSessionHint'].includes('梁谷会话'));
@@ -773,7 +775,7 @@ test('渲染：能力探测 false / 无 sessionId 都返回隐藏占位（保持
 // #endregion
 
 // #region 新建会话页的「梁谷」开关
-test('渲染：关 → 只有镜像图标；开 → 显示倒计时/空闲；busy 禁用', async (t) => {
+test('渲染：关=太阳+「梁峰」；开=月亮+「梁谷」+倒计时/空闲；busy 禁用', async (t) => {
   const env = await setup();
   t.after(env.restore);
 
@@ -783,32 +785,30 @@ test('渲染：关 → 只有镜像图标；开 → 显示倒计时/空闲；bus
   assert.equal(off.button.props['data-lianggu-state'], 'off');
   assert.equal(off.button.props['data-lianggu-enabled'], 'false');
   assert.equal(off.button.props.disabled, false);
-  // 关：只显示图标，不显示文字；图标与右上角按钮一样镜像。
-  assert.equal(heroTextOf(off.button), '');
+  // 关：太阳 + 「梁峰」。
+  assert.equal(heroTextOf(off.button), '梁峰');
   assert.ok(
     collectNodes(off.tree, (node) => node.type === 'svg' || typeof node.type === 'function').length >= 1,
     '开关必须渲染图标（primitives 图标或内联 svg）'
   );
-  assert.ok(
-    collectNodes(off.tree, (node) => String(node.props?.style?.transform ?? '') === 'scaleX(-1)').length >= 1,
-    '开关图标必须镜像（与右上角按钮一致）'
-  );
+  assert.ok(collectNodes(off.tree, (node) => node.type === 'circle').length >= 1, '关态应是太阳（circle + 光芒）');
   assert.ok(off.button.props.title.includes('新建'), `关态 title 应说明新建会话语义：${off.button.props.title}`);
 
   const paused = renderHeroToggle(env.module, env.t, { view: 'paused' });
   assert.equal(paused.button.props['data-lianggu-state'], 'paused');
   assert.equal(paused.button.props['data-lianggu-enabled'], 'true');
-  assert.equal(heroTextOf(paused.button), '3h05m');
+  assert.equal(heroTextOf(paused.button), '梁谷 3h05m');
   assert.ok(paused.button.props.title.includes('已暂停'));
+  assert.ok(collectNodes(paused.tree, (node) => node.type === 'path').length >= 1, '开态应是月亮（path）');
 
   const idle = renderHeroToggle(env.module, env.t, { view: 'idle' });
   assert.equal(idle.button.props['data-lianggu-state'], 'idle');
   assert.equal(idle.button.props['data-lianggu-enabled'], 'true');
-  assert.equal(heroTextOf(idle.button), '空闲');
+  assert.equal(heroTextOf(idle.button), '梁谷 空闲');
 
   const busy = renderHeroToggle(env.module, env.t, { view: 'busy' });
   assert.equal(busy.button.props.disabled, true);
-  assert.equal(heroTextOf(busy.button), '…');
+  assert.equal(heroTextOf(busy.button), '梁谷 …');
 });
 
 test('点击：只切换当前会话的梁谷开关（不建会话、不导航、不弹提示）', async (t) => {

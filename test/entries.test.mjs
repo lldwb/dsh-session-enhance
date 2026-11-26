@@ -267,7 +267,7 @@ test('梁谷行不注册工具，挂 agent 生命周期事件、配置热更新�
   }
 });
 
-test('梁谷配置：四个字段都 volatile、默认值正确（设置页可热更新）', () => {
+test('梁谷配置：五个字段都 volatile、默认值正确（设置页可热更新）', () => {
   const parsed = new offpeakEntry.Config({});
   for (const [key, expected] of [
     ['peakWindows', '09:00-12:00,14:00-18:00'],
@@ -290,6 +290,13 @@ test('梁谷配置：四个字段都 volatile、默认值正确（设置页可�
   assert.ok(holidaysText.includes('2026-10-07'));
   assert.ok(holidaysText.includes('2027-02-05'), '默认表应带上 2027 春节');
   assert.ok(holidaysText.includes('2027-10-07'), '默认表应带上 2027 国庆最后一天');
+
+  // 自动更新节假日：默认开启（插件自己拉公开数据源，不经过 AI）。
+  const autoField = offpeakEntry.Config.dict.autoHolidays;
+  assert.equal(autoField.type, 'boolean');
+  assert.equal(autoField.meta.volatile, true, 'autoHolidays 必须 volatile');
+  assert.equal(autoField.meta.default, true, '默认开启自动更新');
+  assert.equal(parsed.autoHolidays.get(), true);
 
   const defaultField = offpeakEntry.Config.dict.defaultEnabled;
   assert.equal(defaultField.type, 'boolean');

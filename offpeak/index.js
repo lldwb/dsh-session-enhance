@@ -57,6 +57,14 @@ import { BUILD } from '../lib/build.mjs';
 import { readOption } from '../lib/compact/options.mjs';
 import { resolveDshHome } from '../lib/shares.mjs';
 import { createOffpeakController } from '../lib/offpeak/controller.mjs';
+import {
+  fetchHolidayYear,
+  holidayCacheFilePath,
+  loadHolidayCache,
+  resolveHolidaysText,
+  saveHolidayCache,
+  HOLIDAY_CACHE_TTL_MS,
+} from '../lib/offpeak/holidays-fetch.mjs';
 import { createOffpeakHandler, installOffpeakChannel } from '../lib/offpeak/rpc.mjs';
 import { createOffpeakStore, offpeakStateFilePath } from '../lib/offpeak/store.mjs';
 import {
@@ -65,6 +73,8 @@ import {
   DEFAULT_PEAK_WINDOWS,
   DEFAULT_TIME_ZONE,
   normalizeSchedule,
+  parseHolidays,
+  zonedParts,
 } from '../lib/offpeak/window.mjs';
 
 /** Cordis 插件名：与 Loader 行的 `name` 一致。 */
@@ -85,6 +95,7 @@ export const Config = z.object({
   peakWindows: z.string().default(DEFAULT_PEAK_WINDOWS).volatile(),
   timeZone: z.string().default(DEFAULT_TIME_ZONE).volatile(),
   holidays: z.string().default(DEFAULT_HOLIDAYS_TEXT).volatile(),
+  autoHolidays: z.boolean().default(true).volatile(),
   defaultEnabled: z.boolean().default(DEFAULT_ENABLED).volatile(),
 });
 
@@ -99,8 +110,33 @@ export function apply(ctx, config) {
   /** 非法配置只 warn 一次（配置错会持续存在，逐次告警只会刷屏）。 */
   let warnedInvalidConfig = false;
 
+  // ---- 法定节假日自动更新（不经过 AI：插件自己拉公开数据源）----
+  const dshHome = resolveDshHome();
+  const holidayCacheFile = holidayCacheFilePath(dshHome);
+  const cachedHolidays = loadHolidayCache(holidayCacheFile);
+  /** @type {Map<number, string[]>} 自动抓取到的年份 → 休息日日期。 */
+  const autoYears = cachedHolidays.years;
+  let autoFetchedAt = cachedHolidays.fetchedAt;
+  /** 自动数据版本号：变化后让 readSchedule 的缓存失效。 */
+  let autoRevision = 0;
+  /** 最近一次成功抓取的来源（写进缓存，便于诊断）。 */
+  let autoSource = cachedHolidays.source;
+  let refreshing = false;
+
+  /** 当前时区的年份。 */
+  const currentYearOf = (timeZone) => {
+    try {
+      return zonedParts(Date.now(), timeZone).year;
+    } catch {
+      return new Date().getFullYear();
+    }
+  };
+
   /**
-   * 读一份归一化配置；按原始值缓存，volatile 字段一变就重新归一化。
+   * 读一份归一化配置；按原始值 + 自动数据版本缓存，字段一变就重新归一化。
+   *
+   * 节假日优先级：用户显式改过 `holidays` → 以配置为准；否则内置表 ∪ 自动抓取结果
+   * （抓取结果对同一年覆盖内置）。
    *
    * @returns {any} 归一化配置（`normalizeSchedule` 的返回值）。
    */
@@ -108,15 +144,20 @@ export function apply(ctx, config) {
   /** @type {any} */
   let cachedValue = null;
   const readSchedule = () => {
-    const raw = {
-      peakWindows: readOption(config, 'peakWindows', DEFAULT_PEAK_WINDOWS),
-      timeZone: readOption(config, 'timeZone', DEFAULT_TIME_ZONE),
-      holidays: readOption(config, 'holidays', DEFAULT_HOLIDAYS_TEXT),
-      defaultEnabled: readOption(config, 'defaultEnabled', DEFAULT_ENABLED),
-    };
-    const key = JSON.stringify(raw);
+    const peakWindows = readOption(config, 'peakWindows', DEFAULT_PEAK_WINDOWS);
+    const timeZone = readOption(config, 'timeZone', DEFAULT_TIME_ZONE);
+    const defaultEnabled = readOption(config, 'defaultEnabled', DEFAULT_ENABLED);
+    const autoHolidays = readOption(config, 'autoHolidays', true) === true;
+    // 先归一化配置里的文本（去空白/非法项、排序），再与自动数据合并。
+    const configHolidaysText = parseHolidays(readOption(config, 'holidays', DEFAULT_HOLIDAYS_TEXT)).text;
+    const resolved = resolveHolidaysText({ configText: configHolidaysText, autoHolidays, autoYears });
+
+    const key = JSON.stringify({ peakWindows, timeZone, holidaysText: resolved.text, defaultEnabled, autoRevision });
     if (key === cachedKey && cachedValue !== null) return cachedValue;
-    const value = normalizeSchedule(raw);
+    const value = normalizeSchedule({ peakWindows, timeZone, holidays: resolved.text, defaultEnabled });
+    value.holidaysAuto = resolved.auto;
+    value.holidaysFetchedAt = resolved.auto ? autoFetchedAt : 0;
+    value.holidaysSource = resolved.auto ? cachedHolidays.source : null;
     if (value.issues.length > 0 && !warnedInvalidConfig) {
       warnedInvalidConfig = true;
       try {
@@ -131,7 +172,7 @@ export function apply(ctx, config) {
   };
 
   // 状态文件与 shares.json 同目录：<DSH_HOME>/dsh-session-enhance/offpeak.json
-  const store = createOffpeakStore({ storeFile: offpeakStateFilePath(resolveDshHome()) });
+  const store = createOffpeakStore({ storeFile: offpeakStateFilePath(dshHome) });
 
   const controller = createOffpeakController({
     // agents 是软依赖：某些部署（headless、未挂 agent-loop）没有这个服务。
@@ -142,11 +183,98 @@ export function apply(ctx, config) {
     build: BUILD,
   });
 
+  /**
+   * 抓当年 + 次年节假日；失败保留内置/上次缓存（只记 debug，不打扰用户）。
+   *
+   * @param {boolean} [force] - true 时忽略 24 小时 TTL（配置更新/手动触发）。
+   * @returns {Promise<void>} 完成。
+   */
+  const refreshHolidays = async (force = false) => {
+    if (refreshing) return;
+    const schedule = readSchedule();
+    // 用户关掉自动更新、或显式改过 holidays（含空串 = 不豁免）→ 不再抓取，避免覆盖用户意图。
+    const autoHolidays = readOption(config, 'autoHolidays', true) === true;
+    const customized = parseHolidays(readOption(config, 'holidays', DEFAULT_HOLIDAYS_TEXT)).text !== DEFAULT_HOLIDAYS_TEXT;
+    if (!autoHolidays || customized) return;
+    const year = currentYearOf(schedule.timeZone);
+    const years = [year, year + 1];
+    const stale =
+      force === true ||
+      autoFetchedAt === 0 ||
+      Date.now() - autoFetchedAt > HOLIDAY_CACHE_TTL_MS ||
+      !autoYears.has(year);
+    if (!stale) return;
+
+    refreshing = true;
+    let changed = false;
+    try {
+      for (const targetYear of years) {
+        const result = await fetchHolidayYear(targetYear, { logger: ctx.logger });
+        if (result === null) continue;
+        const previous = autoYears.get(targetYear);
+        if (previous !== undefined && previous.join(',') === result.dates.join(',')) continue;
+        autoYears.set(targetYear, result.dates);
+        autoSource = result.source;
+        changed = true;
+        ctx.logger?.info?.(
+          `dsh-session-enhance/offpeak: 节假日表已更新 ${targetYear}（${result.dates.length} 天，来源 ${result.source}）`
+        );
+      }
+      if (changed || autoFetchedAt === 0) {
+        autoFetchedAt = Date.now();
+        autoRevision += 1;
+        saveHolidayCache(holidayCacheFile, { fetchedAt: autoFetchedAt, source: autoSource, years: autoYears });
+        cachedKey = null;
+        cachedValue = null;
+        // 用新表重新对账：可能刚好处在"节假日/工作日"翻转的那天。
+        controller.refresh();
+      }
+    } catch (error) {
+      ctx.logger?.debug?.(
+        `[dsh-session-enhance/offpeak] holiday refresh failed: ${error instanceof Error ? error.message : String(error)}`
+      );
+    } finally {
+      refreshing = false;
+    }
+  };
+
   installOffpeakChannel(ctx, createOffpeakHandler({ controller }));
 
   // 控制器自己挂 agent/created · agent/status · agent/disposed 与配置热更新事件，
   // 返回的 dispose 交给 ctx.effect（组件停用即释放全部 hold、清定时器）。
   ctx.effect(() => controller.attach(ctx), 'dsh-session-enhance: 梁谷 hold controller');
+
+  // 自动更新：启动 3 秒后抓一次（不阻塞激活），之后每 6 小时复查；组件停用即清定时器。
+  ctx.effect(() => {
+    /** @type {any} */
+    let timer;
+    const kickoff = setTimeout(() => {
+      void refreshHolidays(false);
+    }, 3_000);
+    const interval = setInterval(() => {
+      void refreshHolidays(false);
+    }, 6 * 60 * 60 * 1000);
+    timer = { kickoff, interval };
+    if (typeof kickoff?.unref === 'function') kickoff.unref();
+    if (typeof interval?.unref === 'function') interval.unref();
+    // 配置热更新（例如刚打开「自动更新节假日」）时立刻补一次。
+    const off = typeof ctx?.on === 'function'
+      ? ctx.on('app-boot/config-reload', () => {
+          cachedKey = null;
+          cachedValue = null;
+          void refreshHolidays(false);
+        })
+      : undefined;
+    return () => {
+      clearTimeout(timer.kickoff);
+      clearInterval(timer.interval);
+      try {
+        if (typeof off === 'function') off();
+      } catch {
+        // 卸载阶段忽略。
+      }
+    };
+  }, 'dsh-session-enhance: 节假日自动更新');
 
   ctx.logger?.info?.(`dsh-session-enhance/offpeak: ready (hold controller + rpc, build=${BUILD})`);
 }

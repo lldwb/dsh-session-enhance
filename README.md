@@ -508,6 +508,9 @@ TIMEOUT / TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并有已准入的用户�
     直接写开关即可，不再由界面代建会话）；
   - 显示（6.3.3）：**关 = 太阳 +「梁峰」**（次要文字色）；**开 = 月亮 +「梁谷」+ 剩余时间
     （如 `1h12m`）或「空闲」**（暂停琥珀、空闲绿）；两种状态都始终显示文字；
+  - 悬浮提示（6.3.6）：用官方 `Tooltip`（深色气泡、`role="tooltip"`），**不用元素原生
+    `title`**（那是系统白底黑框）；文案 1~2 行：关=「梁谷：关闭 / 点击开启…」，暂停=「梁谷：
+    高峰暂停 / 将在 HH:MM 自动恢复」，空闲=「梁谷：空闲 / 将在 HH:MM 自动暂停」；
   - 关掉开关后再从这里开始的会话按普通会话处理。
 - **重启/关闭应用后自动恢复**（6.3.0 起）：梁谷会话在高峰暂停期间排队（官方 durable inbox）
   的消息，在应用重启、会话重新打开后——若已到空闲时段且队列里有消息，会被**延迟 1.2 秒复查**
@@ -861,6 +864,7 @@ token 本身（24 字节 / 192 bit 随机、不可枚举、可撤销），不靠
 
 | 层 | 内容 | 结果 |
 |---|---|---|
+| 6.3.6 悬浮提示改用官方 Tooltip / DSH 0.2.2-rc.5 | 单测 **301/301**（client 23：按钮无 `title`、`Tooltip` 存在且 `side='bottom'`、四态 label 与「自动恢复/暂停 HH:MM」）；真实 UI 沙箱：hover 出现 `role="tooltip"` 深色气泡（关态「梁谷：关闭 / 点击开启…」、开启态「梁谷：高峰暂停 / 将在 12:00 自动恢复」），`button.hasAttribute('title') === false`；截图与官方风格一致；locale/tool-names 门禁 ✓ | 通过 |
 | 6.3.3 新建页开关显示重做 / DSH 0.2.2-rc.5 | 单测 **301/301**（client 23：关态文字「梁峰」+ 太阳 `circle`、开态「梁谷 3h05m」+ 月亮 `path`、空闲「梁谷 空闲」、busy「梁谷 …」、点击只 toggle、不弹 Toast）；真实 UI 沙箱：关态「☀ 梁峰」（次要文字色）、点击后「☾ 梁谷 1h12m」（琥珀 pill）、再点可关；`check-plugin-locale.mjs` / `check-tool-names.mjs` ✓ | 通过 |
 | 6.3.0 新建页开关语义 / 重启恢复 / 中断重试官方优先 / DSH 0.2.2-rc.5 | 单测 **301/301**（client 23：开关四态、点击只 toggle、不建会话/不导航/不弹 Toast、隐藏占位、图标镜像 `scaleX(-1)`；controller 29：重启延迟复查两例、高峰只 hold、打断场景官方优先/官方忙回退/去重；retry host 14：官方优先/回退/双失败）；真实 UI 沙箱：关=仅图标无文字无 Toast → 点开=`paused` **`9m57s`**（≤1h 分钟秒格式）→ 点关 → 点开；右上角原按钮保留；高峰发消息排队（`paused 暂停 9m45s` 无回复）；关闭服务器→过高峰→重启：延迟 1.2s 复查后注入唤醒，`02:18:27.236Z` 空 retry、`02:18:27.238Z turn/start`、原排队消息被 claim、`02:18:32.9Z` 回复 **RESUME2-OK**；已有历史会话实测官方自己续跑（延迟复查因此不再重复注入）；走 followup 兜底时可能多一条紧凑「已请求继续生成」空 turn（消息不丢，已在文档说明）；`check-plugin-locale.mjs` / `check-tool-names.mjs` ✓ | 通过 |
 | 6.2.3 图标镜像 + 成功反馈 / DSH 0.2.2-rc.5 | 单测 **302/302**（新增图标镜像断言：图标容器 `style.transform === 'scaleX(-1)'`；成功提示断言：创建成功后 notice 含「已创建梁谷会话」）；真实 UI 沙箱（真实 Chrome + 真实 `deepseek-flash`）：按钮存在且图标容器带 `scaleX(-1)`（与右上角「打开右侧边栏」按钮一致）、右上角原按钮保留；点击后 **300ms 内**弹出「已创建梁谷会话，正在打开…」且按钮 busy，随后会话行从旧空白会话切到新 `session-49a1801c…`；`workspace.json` 的 default-workspace `sessionIds` 出现该 id；`offpeak.json` 写入 `enabled:true`；在新会话发「按钮最终验证：只回复 FINAL-OK」→ assistant 回复 FINAL-OK、chip「梁谷 空闲」（旧空白会话 0 条消息） | 通过 |

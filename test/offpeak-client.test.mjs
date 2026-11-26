@@ -749,6 +749,27 @@ test('渲染：空闲时段是 green「梁谷 空闲」，提示写明自动暂�
   assert.deepEqual(busy.toggles, [true]);
 });
 
+test('固定尺寸：chip 与 hero 在四种状态下宽高都不变（112 × 24）', async (t) => {
+  const env = await setup();
+  t.after(env.restore);
+  const states = [
+    ['off', snapshotOf({ status: statusOf({ enabled: false, paused: false }) }), 'off'],
+    ['paused', snapshotOf({ status: statusOf({ enabled: true, paused: true }), countdownMs: COUNTDOWN_MS }), 'paused'],
+    ['idle', snapshotOf({ status: statusOf({ enabled: true, paused: false }), countdownMs: COUNTDOWN_MS }), 'idle'],
+    ['busy', snapshotOf({ status: statusOf({ enabled: true, paused: true }), busy: true, countdownMs: COUNTDOWN_MS }), 'busy']
+  ];
+  for (const [name, snapshot, view] of states) {
+    const chip = renderChip(env.module, env.t, snapshot);
+    assert.equal(chip.button.props.style.width, '112px', `chip ${name} 宽固定`);
+    assert.equal(chip.button.props.style.height, '24px', `chip ${name} 高固定`);
+    assert.equal(chip.button.props['data-offpeak-state'], view);
+    const hero = renderHeroToggle(env.module, env.t, { view });
+    assert.equal(hero.button.props.style.width, '112px', `hero ${name} 宽固定`);
+    assert.equal(hero.button.props.style.height, '24px', `hero ${name} 高固定`);
+    assert.equal(hero.button.props['data-lianggu-state'], view);
+  }
+});
+
 test('渲染：失败 Toast 用 sequence 当 key，onDone 只清对应那条', async (t) => {
   const env = await setup();
   t.after(env.restore);

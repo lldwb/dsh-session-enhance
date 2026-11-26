@@ -458,6 +458,15 @@ window.__ModuleLoader__.load({
     const LIANGGU_NEW_SLOT_ORDER = 0;
 
     /**
+     * 两处梁谷开关的固定尺寸（用户要求：无论开关/状态/文案/倒计时怎么变，宽高都不变）。
+     *
+     * 宽度按最长文案留出余量：图标 15 + gap 4 + 左右 padding 16 + 「梁谷 60m00s」
+     * （2 个中文字 + 空格 + 6 个数字，12px 字号约 68）≈ 103px；取 112px 留安全余量。
+     */
+    const OFFPEAK_PILL_WIDTH = '112px';
+    const OFFPEAK_PILL_HEIGHT = '24px';
+
+    /**
      * 中断重试按钮的槽位名：官方 composer 右侧、主发送按钮之前。
      *
      * 这是官方 `conversation.input.right` slot（session scope，按会话注入），所以按钮
@@ -2115,13 +2124,27 @@ window.__ModuleLoader__.load({
         onClick: () => {
           void props.offpeak.toggle();
         },
-        style: { ...offpeakChipPalette(view), flex: 'none', maxWidth: '200px' },
+        style: {
+          ...offpeakChipPalette(view),
+          flex: 'none',
+          width: OFFPEAK_PILL_WIDTH,
+          height: OFFPEAK_PILL_HEIGHT,
+          maxWidth: 'none',
+          boxSizing: 'border-box',
+          justifyContent: 'center'
+        },
         children: [
           offpeakStatusIcon(view),
           jsx('span', {
-            // `minWidth: 0` 是 flex 里让文本真正能被压缩的前提（默认 min-width:auto
-            // 会把按钮撑到内容宽度，`text-overflow` 就永远不生效）。
-            style: { overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0, whiteSpace: 'nowrap' },
+            // 固定宽度下文本居中、超长才省略；`minWidth:0` 是 flex 压缩的前提。
+            style: {
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              minWidth: 0,
+              flex: '1 1 auto',
+              textAlign: 'center',
+              whiteSpace: 'nowrap'
+            },
             children: offpeakChipText(view, snapshot, t)
           })
         ]
@@ -2239,11 +2262,26 @@ window.__ModuleLoader__.load({
         onClick: () => {
           void props.offpeak.toggle();
         },
-        style: { ...palette, flex: 'none', maxWidth: '180px' },
+        style: {
+          ...palette,
+          flex: 'none',
+          width: OFFPEAK_PILL_WIDTH,
+          height: OFFPEAK_PILL_HEIGHT,
+          maxWidth: 'none',
+          boxSizing: 'border-box',
+          justifyContent: 'center'
+        },
         children: [
           offpeakStatusIcon(view),
           jsx('span', {
-            style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+            style: {
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              minWidth: 0,
+              flex: '1 1 auto',
+              textAlign: 'center',
+              whiteSpace: 'nowrap'
+            },
             children: text
           })
         ]

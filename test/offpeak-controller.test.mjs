@@ -81,10 +81,10 @@ function createFakeStore(initial = {}) {
  * 假 Agent：相位模型与真实 `ReactLoopAgent` 对齐的关键点——
  * maintenance 期间公开 `status` 仍是 `idle`，`runMaintenance` 在非 true-idle 时同步抛错。
  *
- * @param {{ id: string, parentSession?: string, openTurnStartSeq?: number | null }} options - 身份。
+ * @param {{ id: string, parentSession?: string, origin?: 'subagent', openTurnStartSeq?: number | null }} options - 身份。
  * @returns {{ agent: any, state: any }} Agent 与内部状态。
  */
-function createFakeAgent({ id, parentSession, openTurnStartSeq = null }) {
+function createFakeAgent({ id, parentSession, origin, openTurnStartSeq = null }) {
   const state = {
     id,
     phase: 'idle',
@@ -97,9 +97,12 @@ function createFakeAgent({ id, parentSession, openTurnStartSeq = null }) {
     openTurnStartSeq,
     maintenanceAbort: null,
   };
+  const header = {};
+  if (parentSession !== undefined) header.parentSession = parentSession;
+  if (origin !== undefined) header.origin = origin;
   const agent = {
     id,
-    session: { id, header: parentSession === undefined ? {} : { parentSession } },
+    session: { id, header },
     get status() {
       return state.phase === 'running' ? 'running' : 'idle';
     },
@@ -640,6 +643,55 @@ test('子代理范围：父会话没有 live Agent 但开关仍是启用 → 子
   assert.equal(harness.controller.diag().sessions.find((entry) => entry.sessionId === 'child-idle').covered, false);
 });
 
+test('子智能体只读：状态同步主会话，忽略自己的记录且不能修改', async () => {
+  const harness = createHarness();
+  harness.store.setEnabled('parent', true);
+  const { state } = harness.addAgent({ id: 'child', parentSession: 'parent', origin: 'subagent' });
+  harness.attach();
+  await harness.flush();
+
+  const inherited = harness.controller.status('child');
+  assert.equal(inherited.enabled, true, '子智能体同步主会话的启用状态');
+  assert.equal(inherited.enabledSource, 'parent');
+  assert.equal(inherited.readOnly, true);
+  assert.equal(inherited.inheritedFrom, 'parent');
+  assert.equal(inherited.paused, true, '高峰时段子智能体也显示暂停');
+
+  // 子智能体自己的记录被忽略（即使显式关掉自己）。
+  harness.store.setEnabled('child', false);
+  assert.equal(harness.controller.status('child').enabled, true, '子智能体自己的记录不生效');
+
+  // 修改被拒绝：不写 store、返回 applied:false / readOnly:true。
+  const rejected = harness.controller.setEnabled('child', false);
+  assert.equal(rejected.readOnly, true);
+  assert.equal(rejected.applied, false);
+  assert.equal(harness.store.isEnabled('child', false), false, '子会话记录保持原样');
+  assert.equal(harness.controller.status('child').enabled, true, '主会话仍启用');
+
+  // 主会话关掉 → 子智能体同步为关闭，但仍然只读。
+  harness.controller.setEnabled('parent', false);
+  await harness.flush();
+  const off = harness.controller.status('child');
+  assert.equal(off.enabled, false);
+  assert.equal(off.readOnly, true);
+  assert.equal(off.paused, false);
+  void state;
+});
+
+test('子智能体只读：无 origin 的普通 fork 不受影响（仍可自己设置）', async () => {
+  const harness = createHarness();
+  const fork = harness.addAgent({ id: 'fork', parentSession: 'parent' });
+  harness.attach();
+  await harness.flush();
+  const status = harness.controller.status('fork');
+  assert.equal(status.readOnly, false, '普通 fork 不是子智能体，不锁只读');
+
+  const applied = harness.controller.setEnabled('fork', true);
+  assert.notEqual(applied.applied, false, '普通 fork 可以自己设置');
+  assert.equal(harness.controller.status('fork').enabled, true);
+  void fork;
+});
+
 test('子代理范围（负向）：父会话既不在线也没有启用记录 → 子代理不 hold', async () => {
   const harness = createHarness();
   const { state } = harness.addAgent({ id: 'child', parentSession: 'ghost-parent' });
@@ -1026,15 +1078,19 @@ test('status 契约字段齐全且禁用时仍给下一次切换', async () => {
     'enabled',
     'enabledSource',
     'idle',
+    'inheritedFrom',
     'nextChangeAt',
     'nextChangeKind',
     'paused',
     'persisted',
+    'readOnly',
     'schedule',
     'serverNow',
   ]);
   assert.equal(status.enabled, false);
   assert.equal(status.enabledSource, 'default');
+  assert.equal(status.readOnly, false, '普通会话不是只读');
+  assert.equal(status.inheritedFrom, null);
   assert.equal(status.paused, false);
   assert.equal(status.idle, false, '周二 10:00 是高峰时段');
   // 2026-11-24 周二 10:00 高峰中 → 下一次 12:00 午休。

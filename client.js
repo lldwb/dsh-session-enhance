@@ -168,6 +168,7 @@ window.__ModuleLoader__.load({
       'offpeak.toast.notPersisted':
         'Lianggu changed, but the setting could not be saved; it may reset after a restart',
       'offpeak.toast.noConnection': 'Not connected to the host; Lianggu did not change',
+      'offpeak.readOnlyHint': 'Inherited from the parent session; it cannot be changed in a subagent session.',
 
       // 新建会话页的「梁谷」开关（hero 行）
       'lianggu.heroOff': 'Liang Peak',
@@ -307,6 +308,7 @@ window.__ModuleLoader__.load({
       'offpeak.toast.failed': '切换梁谷失败（{code}）',
       'offpeak.toast.notPersisted': '已切换梁谷，但状态没能写入磁盘，重启后可能回落',
       'offpeak.toast.noConnection': '未连接到 Host，无法切换梁谷',
+      'offpeak.readOnlyHint': '状态继承自主会话，在子智能体会话里不能修改。',
 
       // 新建会话页的「梁谷」开关（hero 行）
       'lianggu.heroOff': '梁峰',
@@ -1696,10 +1698,9 @@ window.__ModuleLoader__.load({
      *
      * 口径（用户指定）：
      * - 剩余 **> 1 小时** → `3h05m`（小时 + 两位分钟）；
-     * - 剩余 **≤ 1 小时** → `12m34s`（分钟 + 两位秒）；不足 1 分钟也是 `0m42s`，
-     *   1 小时整点则是 `60m00s`（严格按「不超过 1 小时 = 分钟秒」）。
-     * 负数与非法值一律按 0 处理 —— 服务端时钟刚过界时宁可显示 `0m00s`，也不要让用户
-     * 看到 `-1s`。
+     * - 1 分钟 ~ 1 小时 → `12m34s`（分钟 + 两位秒）；1 小时整点是 `60m00s`；
+     * - 不足 1 分钟 → `37s`（**省略 `0m`**，用户 2026-11-26 明确要求）。
+     * 负数与非法值一律按 0 处理（显示 `0s`），服务端时钟刚过界时宁可显示 `0s`。
      *
      * @param {unknown} ms - 剩余毫秒。
      * @returns {string} 例如 `3h05m` / `12m34s` / `0m42s` / `0m00s`。
@@ -1711,7 +1712,8 @@ window.__ModuleLoader__.load({
       const minutes = Math.floor((totalSeconds % 3600) / 60);
       const seconds = totalSeconds % 60;
       if (totalSeconds > 3600) return `${hours}h${pad(minutes)}m`;
-      // ≤ 1 小时按「分钟秒」：分钟取总分钟（1 小时整点因此是 60m00s）。
+      // ≤ 1 小时按「分钟秒」；不足 1 分钟时省略「0m」，直接显示 `37s`。
+      if (totalSeconds < 60) return `${seconds}s`;
       return `${Math.floor(totalSeconds / 60)}m${pad(seconds)}s`;
     }
 
@@ -2147,6 +2149,7 @@ window.__ModuleLoader__.load({
           : undefined;
       const label = offpeakStatusTooltip(view, snapshot, t, { queued });
       const urgency = offpeakUrgency(view, snapshot);
+      const readOnly = status !== null && typeof status === 'object' && status.readOnly === true;
       const toast =
         snapshot.notice === null || snapshot.notice === undefined
           ? null
@@ -2163,16 +2166,20 @@ window.__ModuleLoader__.load({
             );
       // 官方 `Pill`（24px 胶囊、12px 字号）+ 官方 `Tooltip`（深色气泡）：
       // 与新建页开关、以及 DSH 自己的 chip 完全同一套形制；语义色仍走主题 token。
+      // 子代理会话只读：状态继承自主会话，按钮置灰且不响应点击。
+      const pillLabel = readOnly ? `${label}\n${t('offpeak.readOnlyHint')}` : label;
       const pill = jsx(P.Pill, {
         active: enabled,
         // 稳定测试钩子：自动化验证按这三个属性定位/断言，不依赖文案（文案随语言变，`data-*` 不会）。
         'data-dsh-offpeak-button': '',
         'data-offpeak-state': view,
         'data-offpeak-enabled': enabled ? 'true' : 'false',
+        'data-offpeak-read-only': readOnly ? 'true' : 'false',
         ...(urgency === '' ? {} : { 'data-offpeak-urgent': urgency }),
-        'aria-label': label.split('\n')[0],
-        disabled: view === 'busy',
+        'aria-label': pillLabel.split('\n')[0],
+        disabled: view === 'busy' || readOnly,
         onClick: () => {
+          if (readOnly) return;
           void props.offpeak.toggle();
         },
         style: {
@@ -2206,7 +2213,7 @@ window.__ModuleLoader__.load({
       return jsxs('span', {
         style: { display: 'inline-flex', alignItems: 'center' },
         children: [
-          jsx(P.Tooltip, { label, side: 'bottom', align: 'center', delayMs: 300, maxWidth: 320, children: anchor }),
+          jsx(P.Tooltip, { label: pillLabel, side: 'bottom', align: 'center', delayMs: 300, maxWidth: 320, children: anchor }),
           toast
         ]
       });
@@ -2297,6 +2304,10 @@ window.__ModuleLoader__.load({
         snapshot !== null && typeof snapshot === 'object'
           ? snapshot
           : { status: null, busy: false, notice: null, countdownMs: null };
+      // 子代理会话只读：不在新建页展示可切换的开关（状态由主会话决定）。
+      if (state.status !== null && typeof state.status === 'object' && state.status.readOnly === true) {
+        return jsx('span', { style: { display: 'none' }, 'data-lianggu-hero-hidden': 'read-only' });
+      }
       const view = offpeakViewState(state);
       const enabled = view !== 'off';
       const text = liangguHeroText(view, state, t);

@@ -394,7 +394,11 @@ function renderHeroToggle(module, t, options = {}) {
   const capability = options.capability === undefined ? true : options.capability;
   const view = options.view === undefined ? 'off' : options.view;
   const snapshot = snapshotOf({
-    status: statusOf({ enabled: view !== 'off', paused: view === 'paused' }),
+    status: statusOf({
+      enabled: view !== 'off',
+      paused: view === 'paused',
+      ...(options.readOnly === true ? { readOnly: true, enabledSource: 'parent', inheritedFrom: 'parent' } : {})
+    }),
     busy: view === 'busy',
     countdownMs: options.countdownMs === undefined ? (view === 'paused' ? COUNTDOWN_MS : null) : options.countdownMs
   });
@@ -607,22 +611,25 @@ test('词典：offpeak.* 在 en/zh 键集一致，中文文案是「梁谷/空�
 // #endregion
 
 // #region 纯函数
-test('formatOffpeakCountdown：>1h 小时分钟；≤1h 分钟秒（含不足 1 分钟与 1 小时整点）', () => {
+test('formatOffpeakCountdown：>1h 小时分钟；1min~1h 分钟秒；<1min 只显示秒', () => {
   const { formatOffpeakCountdown } = loadModule();
   assert.equal(formatOffpeakCountdown(COUNTDOWN_MS), '3h05m');
   assert.equal(formatOffpeakCountdown(12 * 60 * 1000 + 34 * 1000), '12m34s');
   assert.equal(formatOffpeakCountdown(59 * 60 * 1000 + 59 * 1000), '59m59s');
   assert.equal(formatOffpeakCountdown(60 * 1000), '1m00s');
-  assert.equal(formatOffpeakCountdown(59 * 1000), '0m59s');
-  assert.equal(formatOffpeakCountdown(42 * 1000), '0m42s');
-  // 1 小时整点严格按「不超过 1 小时 = 分钟秒」。
+  // 不足 1 分钟：省略「0m」，直接 `59s` / `42s`（用户 2026-11-26 要求）。
+  assert.equal(formatOffpeakCountdown(59 * 1000), '59s');
+  assert.equal(formatOffpeakCountdown(42 * 1000), '42s');
+  assert.equal(formatOffpeakCountdown(5 * 1000), '5s');
+  // 1 小时整点仍按「分钟秒」= 60m00s；超过 1 小时转小时。
   assert.equal(formatOffpeakCountdown(3600 * 1000), '60m00s');
   assert.equal(formatOffpeakCountdown(3601 * 1000), '1h00m');
-  assert.equal(formatOffpeakCountdown(0), '0m00s');
-  assert.equal(formatOffpeakCountdown(-5000), '0m00s');
-  assert.equal(formatOffpeakCountdown(Number.NaN), '0m00s');
-  assert.equal(formatOffpeakCountdown('not-a-number'), '0m00s');
-  assert.equal(formatOffpeakCountdown(undefined), '0m00s');
+  assert.equal(formatOffpeakCountdown(0), '0s');
+  assert.equal(formatOffpeakCountdown(999), '0s');
+  assert.equal(formatOffpeakCountdown(-5000), '0s');
+  assert.equal(formatOffpeakCountdown(Number.NaN), '0s');
+  assert.equal(formatOffpeakCountdown('not-a-number'), '0s');
+  assert.equal(formatOffpeakCountdown(undefined), '0s');
 });
 
 test('offpeakViewState：off / paused / idle / busy 四个状态', () => {
@@ -942,6 +949,37 @@ test('隐藏占位：能力停用 / 无 session 都隐藏且保持订阅', async
   );
 });
 // #endregion
+
+test('子智能体只读：chip 置灰不可点、提示写明继承；hero 开关隐藏', async (t) => {
+  const env = await setup();
+  t.after(env.restore);
+
+  const inherited = statusOf({
+    enabled: true,
+    enabledSource: 'parent',
+    readOnly: true,
+    inheritedFrom: 'parent',
+    paused: true,
+    idle: false,
+    cover: { agent: true, running: false, held: true, interrupted: false, queued: 0 }
+  });
+  const chip = renderChip(env.module, env.t, snapshotOf({ status: inherited, countdownMs: COUNTDOWN_MS }));
+  assert.equal(chip.button.props['data-offpeak-read-only'], 'true');
+  assert.equal(chip.button.props.disabled, true, '只读时按钮禁用');
+  assert.equal(chip.button.props['data-offpeak-state'], 'paused');
+  assert.ok(chip.label.includes('继承自主会话'), `只读提示：${chip.label}`);
+  assert.equal(chip.label.includes('不能修改'), true);
+  chip.button.props.onClick();
+  assert.deepEqual(chip.toggles, [], '只读时点击不应触发 toggle');
+
+  // hero 开关在只读会话里完全不出现。
+  const hero = renderHeroToggle(env.module, env.t, { view: 'paused', readOnly: true });
+  assert.equal(hero.buttons.length, 0);
+  assert.equal(
+    collectNodes(hero.tree, (node) => node.props['data-lianggu-hero-hidden'] === 'read-only').length,
+    1
+  );
+});
 
 // #region 控制器：RPC 与 busy 语义
 /**

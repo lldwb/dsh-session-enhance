@@ -293,3 +293,22 @@ test('安装器：webServer.register 抛错时退回 connection.rpc.handle', () 
   assert.ok(fallback, '应走 connection.rpc.handle 退路');
   assert.equal(fallback.channel, OFFPEAK_RPC_CHANNEL);
 });
+
+test('setEnabled：子代理会话只读 → READ_ONLY_INHERITED（不修改状态）', async () => {
+  const controller = {
+    status: () => ({ enabled: true, readOnly: true, inheritedFrom: 'parent' }),
+    setEnabled: () => ({ enabled: true, readOnly: true, applied: false, inheritedFrom: 'parent' }),
+    diag: () => ({}),
+  };
+  const handler = createOffpeakHandler({ controller });
+  const result = await handler('setEnabled', { sessionId: 'child', enabled: false });
+  assert.equal(result.ok, false);
+  assert.equal(result.error.code, 'READ_ONLY_INHERITED');
+  assert.deepEqual(result.error.details, {});
+  assert.match(result.error.message, /read-only|inherited/u);
+
+  // 普通会话仍可切换（对照组）。
+  const normal = createOffpeakHandler({ controller: createFakeController() });
+  const ok = await normal('setEnabled', { sessionId: 's1', enabled: true });
+  assert.equal(ok.ok, true);
+});

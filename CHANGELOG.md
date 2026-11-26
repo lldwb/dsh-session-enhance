@@ -140,6 +140,28 @@ chip 与 hero 都是 `height 24px / radius 999px / font-size 12px / hasTitle=fal
 月亮 `path`、空闲「梁谷 空闲」、busy「梁谷 …」）；真实 UI 沙箱：关态截图「☀ 梁峰」、
 点击后「☾ 梁谷 1h12m」（琥珀 pill）、再点可关；`node --check`、locale/tool-names 门禁 ✓。
 
+## 6.5.2 — 2026-11-26
+
+### 倒计时最后 60 秒在状态前加节庆 emoji（🎉 / 🎊）
+
+用户要求：`梁谷 57s` 这种临近结束的状态要加类似新年倒计时的 emoji。
+
+- 暂停态剩余 **≤60s**：状态段显示 `🎉 57s`；剩余 **≤10s**：`🎊 8s`（更喜庆）；
+- 其余状态（关/空闲/普通倒计时/busy）一律不加 emoji，保持安静；
+- 宽度不变：实测状态区 43px 下 `🎉 57s` = **37.79px**，仍在 43px 内，按钮整体保持
+  `106×24`、不截断（`scrollWidth=clientWidth=43`）；
+- emoji 与 `urgent`/`final` 呼吸动效同时生效（节庆感 + 倒计时感）。
+
+**验证**：
+
+- 单测 **309/309**（新增「节庆 emoji」用例：37s/59s→`🎉`、9s/1s→`🎊`、61s→`1m01s` 无
+  emoji、空闲/关/busy 无 emoji，chip 与 hero 都覆盖）；
+- 真实 UI 沙箱：配置高峰到 14:28，`梁谷 🎉 41s`（`data-offpeak-urgent="urgent"`）、按钮
+  `106×24`、状态区 `scrollWidth=clientWidth=43` 不截断；窗口结束后恢复 `梁谷 空闲` 无 emoji；
+  截图确认 `梁谷 🎉 41s` 显示正常；
+- `final`（🎊）级别由单测覆盖，真实窗口只抓到 urgent（如实说明）；
+- `node --check`、locale / 工具名门禁 ✓。
+
 ## 6.5.1 — 2026-11-26
 
 ### 梁谷开关改成「图标 + 名称 + 状态」三段固定布局（图标与名称不随状态移动）

@@ -498,6 +498,7 @@ TIMEOUT / TRANSPORT / EMPTY_RESPONSE / STREAM_CLOSED，并有已准入的用户�
   - 关：灰字「梁谷」（太阳图标）；
   - 开 + 高峰：琥珀色「梁谷 2m32s」（弯月+星星图标，倒计时到空闲时段开始；**剩余 > 1 小时
     显示 `3h05m`，1 分钟~1 小时显示 `12m34s`，不足 1 分钟显示 `37s`（省略 `0m`，6.5.0 起）**）；
+    剩余 **≤60s** 时状态前加节庆 emoji（`🎉 57s`，≤10s 为 `🎊 8s`，6.5.2 起），并带呼吸动效；
   - 开 + 空闲：绿色「梁谷 空闲」；
   - 切换中：置灰「梁谷 …」；失败时 chip 旁弹 Toast（带错误码），状态回退到切换前的值；
   - **三段固定布局（6.5.1）**：chip 内部是「图标 + 名称（固定 24px）+ 状态（固定起点）」，
@@ -875,6 +876,7 @@ token 本身（24 字节 / 192 bit 随机、不可枚举、可撤销），不靠
 
 | 层 | 内容 | 结果 |
 |---|---|---|
+| 6.5.2 倒计时节庆 emoji / DSH 0.2.2-rc.5 | 单测 **309/309**（新增：37s/59s→`🎉`、9s/1s→`🎊`、61s→`1m01s` 无 emoji、空闲/关/busy 无 emoji，chip 与 hero 均覆盖）；真实 UI 沙箱：`梁谷 🎉 41s`（urgent）+ 按钮 `106×24` + 状态区 `scrollWidth=clientWidth=43` 不截断；窗口结束后恢复 `梁谷 空闲` 无 emoji；截图确认；`final`（🎊）由单测覆盖（真实窗口只抓到 urgent）；locale/tool-names 门禁 ✓ | 通过 |
 | 6.5.1 三段固定布局（图标+名称+状态） / DSH 0.2.2-rc.5 | 单测 **308/308**（新增：chip 与 hero 四态 children = 图标 + 24px 名称 + `flex:1 1 auto` 状态段，名称段跨状态不变）；真实 UI 沙箱实测四态：关/暂停/再关/空闲的图标 left **661.5**、名称 left **680.5**/宽 **24**、状态段 left **708.5** 完全一致，按钮 `106×24`；locale/tool-names 门禁 ✓ | 通过 |
 | 6.5.0 子智能体只读继承 + 倒计时 `<1min` 格式 / DSH 0.2.2-rc.5 | 单测 **307/307**（controller 31：子智能体继承父启用/忽略自身记录/`setEnabled` applied:false 且 store 不变/父关同步关闭仍只读、普通 fork 不受影响；RPC 11：`READ_ONLY_INHERITED` + 对照组；client 26：只读 chip 置灰/提示/点击不 toggle、hero 隐藏；倒计时 59s/42s/5s→`59s/42s/5s`、0/999ms→`0s`）；真实 UI 沙箱：父会话开梁谷 → 模型实派子代理 → 页面内 `diag` 显示子会话 `enabledSource=parent/readOnly=true/inheritedFrom=父会话/covered=true`，`setEnabled(子会话,false)` 返回 **`READ_ONLY_INHERITED`**；倒计时实测 `梁谷 1m52s` → **`梁谷 57s`**（无 `0m`）+ `urgent`；locale/tool-names 门禁 ✓ | 通过 |
 | 6.4.1 宽度收紧 105px + 倒计时动效 / DSH 0.2.2-rc.5 | 单测 **303/303**（固定尺寸断言改 105px；紧迫级别：60s/59s→`urgent`、10s/9s→`final`、0s/61s/120s→无钩子，chip 与 hero 都覆盖）；真实 UI 沙箱：`梁谷 5m18s` 无钩子、按钮 `105×24`、文本区 `scrollWidth=clientWidth=70` 且「梁谷 60m00s」也不截断；等到 `梁谷 0m37s` 时 `data-offpeak-urgent="urgent"`、`animationName=dsh-offpeak-urgent-throb`、`1s`，宽度仍 `105×24`（`final` 级别由单测覆盖，真实窗口只抓到 urgent）；locale/tool-names 门禁 ✓ | 通过 |

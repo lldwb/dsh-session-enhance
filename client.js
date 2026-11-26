@@ -3346,7 +3346,7 @@ window.__ModuleLoader__.load({
      */
     function SideAskTextActions(props) {
       const {
-        readText, clearSelection, dismiss, inputActions, useSession, sessionId, onAsk, isChild, t
+        readText, clearSelection, dismiss, inputActions, useSession, sessionId, onAsk, t
       } = props;
       const enabled = useSession(state => state !== undefined && !state.removed
         && (state.subagent === null || state.subagent.address.mode === 'continuable'));
@@ -3355,7 +3355,9 @@ window.__ModuleLoader__.load({
       }, [enabled, dismiss]);
       if (!enabled) return null;
       const canQuote = inputActions !== undefined && typeof inputActions.insertQuote === 'function';
-      const canAsk = isChild(sessionId) !== true;
+      // 「侧边提问」**始终可用**。早先按「本会话是否登记为侧边会话」隐藏（避免嵌套），但那让
+      // 任何被记录过的会话永久失去入口，且记录表在浏览器本地、状态不可见——比嵌套本身更糟。
+      const canAsk = true;
       const runQuote = () => {
         const text = readText();
         if (text === null) { dismiss(); return; }
@@ -3718,14 +3720,12 @@ window.__ModuleLoader__.load({
           order: -20,
           locale: NS,
           inject: sessionId => ({
-            onOpen: () => { void openSideAsk(sessionId); },
-            hidden: store.isChild(sessionId)
+            onOpen: () => { void openSideAsk(sessionId); }
           })
         }, SideAskHeaderButton)));
 
         const textActionsInjected = () => ({
-          onAsk: (sessionId, text) => { void openSideAsk(sessionId, text); },
-          isChild: sessionId => store.isChild(sessionId)
+          onAsk: (sessionId, text) => { void openSideAsk(sessionId, text); }
         });
         // 接管官方「引用」表面：同 key 'quote' 用更低 priority 注册即可 shadow。
         add(ctx.slots.inject('conversation.chat.text-interaction', () => ctx.slots.register({

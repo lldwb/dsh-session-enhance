@@ -155,7 +155,9 @@ function createFakeAgent({ id, parentSession, openTurnStartSeq = null }) {
 /**
  * 造一整套夹具（控制器 + mock ctx + 可控时钟/定时器/存储/Agent 表）。
  *
- * @param {{ store?: any, storeState?: any, agents?: boolean, schedule?: any }} [options] - 覆盖项。
+ * @param {{ store?: any, storeState?: any, agents?: boolean, schedule?: any, now?: number, sessionController?: { handle: (request: any, signal: any) => Promise<any> } }} [options] - 覆盖项。
+ *   `sessionController` 用于模拟官方 continuation：传入后 `ctx.get('sessionController').prompt` 可用，
+ *   调用参数记录在 `harness.prompts`。
  * @returns {any} harness。
  */
 function createHarness(options = {}) {
@@ -213,6 +215,19 @@ function createHarness(options = {}) {
     build: 'test-build',
   });
 
+  // 官方 continuation 的服务桩：`options.sessionController` 决定它是否存在/如何响应。
+  // 记录每次 prompt 调用，供「官方优先 / 回退 followup」断言使用。
+  const prompts = [];
+  const sessionController =
+    options.sessionController === undefined
+      ? undefined
+      : {
+          prompt: async (request, signal) => {
+            prompts.push({ request, signal });
+            return options.sessionController.handle(request, signal);
+          },
+        };
+
   const ctx = {
     on(name, handler) {
       if (!handlers.has(name)) handlers.set(name, []);
@@ -223,7 +238,11 @@ function createHarness(options = {}) {
         if (index >= 0) list.splice(index, 1);
       };
     },
-    get: (key) => (key === 'agents' ? agentsService : undefined),
+    get: (key) => {
+      if (key === 'agents') return agentsService;
+      if (key === 'sessionController') return sessionController;
+      return undefined;
+    },
   };
 
   /**
@@ -278,6 +297,7 @@ function createHarness(options = {}) {
     defers,
     timers,
     handlers,
+    prompts,
     addAgent,
     emit,
     flush,
@@ -648,6 +668,165 @@ test('子代理范围（负向）：父会话既不在线也没有启用记录 �
     ['child-no-record', 'child-off'],
     'defaultEnabled=true 下两条子代理都被覆盖（不是"父会话不存在"的特例）',
   );
+});
+
+test('重启恢复：空白会话首条排队消息（延迟后仍 idle）→ 官方 continuation 唤醒一次', async () => {
+  const harness = createHarness({
+    now: IDLE_NOW,
+    sessionController: { handle: async () => ({ accepted: true }) },
+  });
+  harness.store.setEnabled('s1', true);
+  harness.attach();
+  await harness.flush();
+
+  // 应用重启后会话重新打开：空白会话的第一条消息只在 durable inbox 里，官方不会自己跑。
+  const { state } = harness.addAgent({ id: 's1' }, { created: true });
+  state.inboxTurn.push({ id: 'queued-1', role: 'user' });
+  await harness.flush();
+  harness.controller.reconcile();
+  await harness.flush();
+  // 延迟复查：给 Agent 一个自己续跑的机会。
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+
+  assert.equal(harness.prompts.length, 1, '延迟后仍空闲 → 应注入官方 continuation');
+  assert.equal(state.followups.length, 0, '官方成功就不该再 followup');
+  const { request } = harness.prompts[0];
+  assert.equal(request.sessionId, 's1');
+  assert.equal(request.mode, 'queue');
+  assert.deepEqual(request.content, []);
+});
+
+test('重启恢复：延迟窗口内 Agent 自己续跑了（running + inbox 清空）→ 不注入', async () => {
+  const harness = createHarness({
+    now: IDLE_NOW,
+    sessionController: { handle: async () => ({ accepted: true }) },
+  });
+  harness.store.setEnabled('s1', true);
+  harness.attach();
+  await harness.flush();
+
+  const { state, agent } = harness.addAgent({ id: 's1' }, { created: true });
+  state.inboxTurn.push({ id: 'queued-1', role: 'user' });
+  await harness.flush();
+  harness.controller.reconcile();
+  await harness.flush();
+
+  // 官方/驱动器自己把排队消息 claim 走了：running + inbox 空。
+  state.phase = 'running';
+  state.inboxTurn.length = 0;
+  harness.emit('agent/status', { agent, status: 'running' });
+  await harness.flush();
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+
+  assert.equal(harness.prompts.length, 0, 'Agent 自己续跑后不应再注入官方 continuation');
+  assert.equal(state.followups.length, 0, '也不应注入 followup');
+});
+
+test('重启恢复：高峰时段只 hold，不唤醒（官方/兜底都不动）', async () => {
+  const harness = createHarness({
+    sessionController: { handle: async () => ({ accepted: true }) },
+  });
+  harness.store.setEnabled('s1', true);
+  harness.attach();
+  await harness.flush();
+
+  const { state } = harness.addAgent({ id: 's1' }, { created: true });
+  state.inboxTurn.push({ id: 'queued-1', role: 'user' });
+  await harness.flush();
+
+  assert.equal(state.maintenanceRuns, 1, '高峰时段应挂 hold');
+  assert.equal(harness.controller.describe().holds.includes('s1'), true);
+  assert.equal(harness.prompts.length, 0, '高峰时段不该唤醒（官方）');
+  assert.equal(state.followups.length, 0, '高峰时段不该唤醒（兜底）');
+});
+
+test('被暂停打断：空闲后唤醒 → 官方 continuation 优先（带空 content + AbortSignal）', async () => {
+  const harness = createHarness({
+    sessionController: { handle: async () => ({ accepted: true }) },
+  });
+  harness.store.setEnabled('s1', true);
+  const { state, agent } = harness.addAgent({ id: 's1', openTurnStartSeq: 9 });
+  state.phase = 'running';
+  harness.attach();
+  await harness.flush();
+  assert.equal(state.cancelCalls.length, 1);
+  assert.equal(harness.controller.status('s1').cover.interrupted, true);
+
+  state.phase = 'idle';
+  harness.emit('agent/status', { agent, status: 'idle' });
+  await harness.flush();
+
+  // 空闲时段释放 → 官方 continuation 优先。
+  harness.clock.now = IDLE_NOW;
+  harness.controller.reconcile();
+  await harness.flush();
+
+  assert.equal(harness.prompts.length, 1, '应走官方 continuation');
+  assert.equal(state.followups.length, 0, '官方成功就不该再 followup');
+  assert.equal(harness.controller.status('s1').cover.interrupted, false, '续跑后标记清除');
+  const { request, signal } = harness.prompts[0];
+  assert.equal(request.sessionId, 's1');
+  assert.equal(request.mode, 'queue');
+  assert.deepEqual(request.content, [], '空 content = 官方「继续生成」');
+  assert.equal(typeof request.requestId, 'string');
+  assert.ok(request.requestId.startsWith('dsh-session-enhance-offpeak-'));
+  assert.ok(signal instanceof AbortSignal);
+});
+
+test('被暂停打断：官方不可用（session/agent-busy）→ 回退 followup 空 retry 消息', async () => {
+  const harness = createHarness({
+    sessionController: {
+      handle: async () => {
+        throw Object.assign(new Error('generation continuation is unavailable'), { code: 'session/agent-busy' });
+      },
+    },
+  });
+  harness.store.setEnabled('s1', true);
+  const { state, agent } = harness.addAgent({ id: 's1', openTurnStartSeq: 9 });
+  state.phase = 'running';
+  harness.attach();
+  await harness.flush();
+
+  state.phase = 'idle';
+  harness.emit('agent/status', { agent, status: 'idle' });
+  await harness.flush();
+  harness.clock.now = IDLE_NOW;
+  harness.controller.reconcile();
+  await harness.flush();
+
+  assert.equal(harness.prompts.length, 1, '应先试过官方');
+  assert.equal(state.followups.length, 1, '官方失败后必须回退提示词');
+  const message = state.followups[0];
+  assert.equal(message.role, 'user');
+  assert.deepEqual(message.content, []);
+  assert.deepEqual(message.source, { kind: 'retry', rpcId: message.id });
+});
+
+test('被暂停打断：重复 reconcile 不重复唤醒', async () => {
+  const harness = createHarness({
+    sessionController: { handle: async () => ({ accepted: true }) },
+  });
+  harness.store.setEnabled('s1', true);
+  const { state, agent } = harness.addAgent({ id: 's1', openTurnStartSeq: 9 });
+  state.phase = 'running';
+  harness.attach();
+  await harness.flush();
+  state.phase = 'idle';
+  harness.emit('agent/status', { agent, status: 'idle' });
+  await harness.flush();
+  harness.clock.now = IDLE_NOW;
+  harness.controller.reconcile();
+  await harness.flush();
+  assert.equal(harness.prompts.length, 1);
+
+  for (let round = 0; round < 5; round += 1) {
+    harness.controller.reconcile();
+    await harness.flush();
+  }
+  assert.equal(harness.prompts.length, 1, '重复 reconcile 不该重复唤醒');
+  assert.equal(state.followups.length, 0);
+  // 续跑后 interrupted=false 且 inbox 空 → 去重状态按设计被清空（没有待跑工作）。
+  assert.deepEqual(harness.controller.describe().wakeStates, []);
 });
 
 test('监听器不抛错：garbage payload / 抛错的 Agent 都被收口', async () => {

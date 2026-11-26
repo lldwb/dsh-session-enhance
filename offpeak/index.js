@@ -57,7 +57,6 @@ import { BUILD } from '../lib/build.mjs';
 import { readOption } from '../lib/compact/options.mjs';
 import { resolveDshHome } from '../lib/shares.mjs';
 import { createOffpeakController } from '../lib/offpeak/controller.mjs';
-import { createLiangguSession as createLiangguSessionImpl } from '../lib/offpeak/create.mjs';
 import { createOffpeakHandler, installOffpeakChannel } from '../lib/offpeak/rpc.mjs';
 import { createOffpeakStore, offpeakStateFilePath } from '../lib/offpeak/store.mjs';
 import {
@@ -143,25 +142,7 @@ export function apply(ctx, config) {
     build: BUILD,
   });
 
-  /**
-   * 新建一个「梁谷会话」：在源会话所在工作区建空白会话，并把梁谷开关写为启用。
-   *
-   * 实现在 `lib/offpeak/create.mjs`：冷会话（hero 上还没有 live Agent 的空白会话）也能从
-   * 持久化 header 拿到 cwd/工作区，并把新会话 attach 进工作区——否则界面无法导航过去，
-   * 表现就是“按钮点了没反应”。
-   *
-   * @param {string} sourceSessionId - 当前会话 id（用来取工作区、cwd 与 preset）。
-   * @returns {Promise<{ sessionId: string, agentPreset: string | null, workspaceId: string | null }>} 新会话。
-   */
-  const createLiangguSession = (sourceSessionId) =>
-    createLiangguSessionImpl({
-      sourceSessionId,
-      getService: (name) => (typeof ctx?.get === 'function' ? ctx.get(name) : undefined),
-      controller,
-      logger: ctx.logger,
-    });
-
-  installOffpeakChannel(ctx, createOffpeakHandler({ controller, createLiangguSession }));
+  installOffpeakChannel(ctx, createOffpeakHandler({ controller }));
 
   // 控制器自己挂 agent/created · agent/status · agent/disposed 与配置热更新事件，
   // 返回的 dispose 交给 ctx.effect（组件停用即释放全部 hold、清定时器）。

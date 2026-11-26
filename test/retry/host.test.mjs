@@ -1,9 +1,12 @@
 /**
- * 「中断重试」Host 侧：事件判定与 followup 驱动。
+ * 「中断重试」Host 侧：事件判定与「官方 continuation 优先、提示词兜底」的驱动。
  *
- * 全部用 mock（不碰真实 Cordis / Agent），钉住两个关键契约：
+ * 全部用 mock（不碰真实 Cordis / Agent），钉住关键契约：
  * 1. 只有 `aborted + reason.kind === 'user'` 才算用户中断；
- * 2. followup 消息必须带全 `id` / `role` / `content` / `source`，且 source 是 user。
+ * 2. 驱动顺序：官方 `sessionController.prompt({ … mode:'queue', content: [] })` 优先；
+ *    官方不可用 → 回退 `agent.followup`，且 followup 消息带全 `id` / `role` / `content`
+ *    / `source`（source 是 user）；
+ * 3. 只有两条都失败才返回错误。
  */
 
 import assert from 'node:assert/strict';
@@ -104,30 +107,137 @@ test('createRetryUserMessage：形状完整（0.2.2 的 followup 契约）', () 
   assert.notEqual(createRetryUserMessage().id, message.id, '每次 id 唯一');
 });
 
-test('createDriveRetry：调用 agent.followup 并把消息原样交给它', async () => {
+test('createDriveRetry：官方 continuation 成功 → 不 followup，返回 method=official', async () => {
+  const prompts = [];
+  const followups = [];
+  const agent = { followup: async (message) => { followups.push(message); } };
+  const ctx = {
+    get: (key) => {
+      if (key === 'agents') return { get: () => agent };
+      if (key === 'sessionController') {
+        return {
+          prompt: async (request, signal) => {
+            prompts.push({ request, signal });
+            return { accepted: true };
+          },
+        };
+      }
+      return undefined;
+    },
+  };
+
+  const outcome = await createDriveRetry(ctx)('s1');
+  assert.deepEqual(outcome, { ok: true, method: 'official' });
+  assert.equal(prompts.length, 1, '应优先走官方 continuation');
+  assert.deepEqual(followups, [], '官方成功就不该再发兜底提示词');
+
+  // 官方 SessionPromptRequest 形状：sessionId / requestId（uuid）/ mode / 空 content，
+  // 且第二个参数是调用方取消用的 AbortSignal（官方实现会调用 signal.throwIfAborted()）。
+  const { request, signal } = prompts[0];
+  assert.equal(request.sessionId, 's1');
+  assert.equal(typeof request.requestId, 'string');
+  assert.match(request.requestId, /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u);
+  assert.equal(request.mode, 'queue');
+  assert.deepEqual(request.content, [], '空 content = 官方「继续生成」语义');
+  assert.ok(signal instanceof AbortSignal, '必须传 AbortSignal');
+});
+
+test('createDriveRetry：官方抛错（session/agent-busy 等）→ 回退 followup，返回 method=prompt', async () => {
+  const captured = [];
+  const prompts = [];
+  const agent = { followup: async (message) => { captured.push(message); } };
+  const ctx = {
+    get: (key) => {
+      if (key === 'agents') return { get: () => agent };
+      if (key === 'sessionController') {
+        return {
+          prompt: async (request) => {
+            prompts.push(request);
+            // 官方对「inbox 已有排队输入 / 不是可继续的失败轮」回的就是这个码。
+            throw Object.assign(new Error('generation continuation is unavailable'), { code: 'session/agent-busy' });
+          },
+        };
+      }
+      return undefined;
+    },
+  };
+
+  const outcome = await createDriveRetry(ctx)('s1');
+  assert.deepEqual(outcome, { ok: true, method: 'prompt' });
+  assert.equal(prompts.length, 1, '应确实试过官方');
+  assert.equal(captured.length, 1, '官方失败后必须回退提示词');
+  assert.equal(captured[0].content[0].text, RETRY_CONTINUE_TEXT);
+});
+
+test('createDriveRetry：没有 sessionController → 直接 followup（method=prompt）', async () => {
+  const captured = [];
+  const agent = { followup: async (message) => { captured.push(message); } };
+  const ctx = { get: (key) => (key === 'agents' ? { get: () => agent } : undefined) };
+  const outcome = await createDriveRetry(ctx)('s1');
+  assert.deepEqual(outcome, { ok: true, method: 'prompt' });
+  assert.equal(captured.length, 1);
+});
+
+test('createDriveRetry：官方同步抛错（prompt 不是函数 / 坏服务）也不影响兜底', async () => {
+  const captured = [];
+  const agent = { followup: async (message) => { captured.push(message); } };
+  const ctx = {
+    get: (key) => {
+      if (key === 'agents') return { get: () => agent };
+      if (key === 'sessionController') return { prompt: 'not-a-function' };
+      return undefined;
+    },
+  };
+  const outcome = await createDriveRetry(ctx)('s1');
+  assert.deepEqual(outcome, { ok: true, method: 'prompt' });
+  assert.equal(captured.length, 1);
+});
+
+test('createDriveRetry：调用 agent.followup 并把消息原样交给它（无官方服务路径）', async () => {
   const captured = [];
   const agent = { followup: async (message) => { captured.push(message); } };
   const ctx = { get: (key) => (key === 'agents' ? { get: (id) => (id === 's1' ? agent : undefined) } : undefined) };
   const outcome = await createDriveRetry(ctx)('s1');
-  assert.deepEqual(outcome, { ok: true });
+  assert.deepEqual(outcome, { ok: true, method: 'prompt' });
   assert.equal(captured.length, 1);
   assert.equal(captured[0].role, 'user');
   assert.equal(captured[0].content[0].text, RETRY_CONTINUE_TEXT);
 });
 
-test('createDriveRetry：无 live agent / 无 followup / followup 抛错都给结构化错误', async () => {
+test('createDriveRetry：无 live agent / 无 followup / followup 抛错都给结构化错误（含 method=null）', async () => {
   const noAgent = await createDriveRetry({ get: () => ({ get: () => undefined }) })('s1');
   assert.equal(noAgent.ok, false);
   assert.equal(noAgent.code, 'NO_LIVE_AGENT');
+  assert.equal(noAgent.method, null);
+  assert.equal(noAgent.reason, 'no-live-agent');
 
   const noFollowup = await createDriveRetry({ agents: { get: () => ({}) } })('s1');
   assert.equal(noFollowup.ok, false);
   assert.equal(noFollowup.code, 'NO_FOLLOWUP');
+  assert.equal(noFollowup.method, null);
+  assert.equal(noFollowup.reason, 'followup-unavailable');
 
   const failing = await createDriveRetry({
     get: () => ({ get: () => ({ followup: async () => { throw new Error('boom'); } }) }),
   })('s1');
   assert.equal(failing.ok, false);
   assert.equal(failing.code, 'FOLLOWUP_FAILED');
+  assert.equal(failing.method, null);
+  assert.equal(failing.reason, 'followup-failed');
   assert.match(failing.message, /boom/);
+});
+
+test('createDriveRetry：官方与兜底都失败 → 返回 FOLLOWUP_FAILED（不是"部分成功"）', async () => {
+  const ctx = {
+    get: (key) => {
+      if (key === 'agents') return { get: () => ({ followup: async () => { throw new Error('agent gone'); } }) };
+      if (key === 'sessionController') return { prompt: async () => { throw new Error('no continuation'); } };
+      return undefined;
+    },
+  };
+  const outcome = await createDriveRetry(ctx)('s1');
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.code, 'FOLLOWUP_FAILED');
+  assert.equal(outcome.method, null);
+  assert.match(outcome.message, /agent gone/);
 });

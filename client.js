@@ -169,13 +169,10 @@ window.__ModuleLoader__.load({
         'Lianggu changed, but the setting could not be saved; it may reset after a restart',
       'offpeak.toast.noConnection': 'Not connected to the host; Lianggu did not change',
 
-      // 新建梁谷会话（hero 行）
-      'lianggu.new': 'New Lianggu session',
-      'lianggu.newTitle': 'New Lianggu session (Lianggu enabled)',
-      'lianggu.newBusy': 'Creating a Lianggu session…',
-      'lianggu.newFailed': 'Could not create a Lianggu session ({code})',
-      'lianggu.newNoConnection': 'Not connected to the host; the Lianggu session was not created',
-      'lianggu.created': 'Lianggu session created; opening it…',
+      // 新建会话页的「梁谷」开关（hero 行）
+      'lianggu.heroIdle': 'Idle',
+      'lianggu.heroAria': 'Lianggu switch (new sessions become Lianggu sessions when on)',
+      'lianggu.heroNewSessionHint': 'New sessions created here become Lianggu sessions while this switch is on.',
 
       // 上下文用量 + 手动压缩
       'context.label': 'Context',
@@ -303,13 +300,10 @@ window.__ModuleLoader__.load({
       'offpeak.toast.notPersisted': '已切换梁谷，但状态没能写入磁盘，重启后可能回落',
       'offpeak.toast.noConnection': '未连接到 Host，无法切换梁谷',
 
-      // 新建梁谷会话（hero 行）
-      'lianggu.new': '新建梁谷会话',
-      'lianggu.newTitle': '新建梁谷会话（自动开启梁谷）',
-      'lianggu.newBusy': '正在新建梁谷会话…',
-      'lianggu.newFailed': '新建梁谷会话失败（{code}）',
-      'lianggu.newNoConnection': '未连接到 Host，无法新建梁谷会话',
-      'lianggu.created': '已创建梁谷会话，正在打开…',
+      // 新建会话页的「梁谷」开关（hero 行）
+      'lianggu.heroIdle': '空闲',
+      'lianggu.heroAria': '梁谷开关（开启后新建的会话就是梁谷会话）',
+      'lianggu.heroNewSessionHint': '开关打开时，这里新建出来的会话就是梁谷会话。',
 
       // 上下文用量 + 手动压缩
       'context.label': '上下文',
@@ -441,8 +435,8 @@ window.__ModuleLoader__.load({
      */
     const LIANGGU_NEW_SLOT_NAME = 'conversation.hero.options';
 
-    /** 新建按钮的贡献 id。 */
-    const LIANGGU_NEW_SLOT_ID = 'lianggu-new-session';
+    /** 开关的贡献 id（`data-dsh-lianggu-hero` 定位属性与它同源）。 */
+    const LIANGGU_NEW_SLOT_ID = 'lianggu-hero-toggle';
 
     /** 该槽位目前只有本插件一个贡献，order 0 即可。 */
     const LIANGGU_NEW_SLOT_ORDER = 0;
@@ -2135,20 +2129,14 @@ window.__ModuleLoader__.load({
     }
     // #endregion
 
-    // #region 新建梁谷会话按钮（hero 行，预设右侧）
-    /** 新建按钮的初始快照。 */
-    const LIANGGU_NEW_INITIAL = Object.freeze({ busy: false, notice: null });
-
+    // #region 新建会话页的「梁谷」开关（hero 行，预设右侧）
     /**
-     * 新建按钮的图标：复用官方右上角那个方形「面板」图标（`IconPanelLeftOutlineRegular`）。
-     *
-     * 官方右上角按钮是**左侧栏图标镜像**（`ExpandButton.module.css` 里 `scaleX(-1)`，
-     * 分隔线在右）；这里做同样的镜像，保证和右上角那个方形按钮看起来一模一样。
-     * 运行时不认识这个导出时退回同款内联方形 SVG（也一起镜像）。
+     * hero 开关的图标：与页面右上角方形按钮一致的**镜像**面板图标
+     * （官方 `ExpandButton.module.css` 用 `scaleX(-1)`；内联 SVG 兜底也一起镜像）。
      *
      * @returns {any} 图标元素。
      */
-    function liangguNewIcon() {
+    function liangguHeroIcon() {
       const Icon = P.IconPanelLeftOutlineRegular;
       const glyph =
         typeof Icon === 'function'
@@ -2168,113 +2156,107 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 每个会话一份的「新建梁谷会话」快照与动作。
+     * hero 开关的文案：关 → 空串（只显示图标）；暂停 → 剩余时间；空闲 → 「空闲」；busy → 「…」。
      *
-     * 动作只做两件事：调 Host 的 `createLiangguSession`（Host 建会话 + 写梁谷启用），
-     * 成功后用 `uiWorkspace.openSession(newId)` 打开；失败写 Toast。成功不弹 Toast——
-     * 新会话本身（以及它可能立刻处于「暂停」）就是反馈。
-     *
-     * @param {any} ctx - 浏览器插件上下文。
-     * @param {string} sessionId - 当前（源）会话 id。
-     * @param {(key: string, params?: any) => string} t - 词典绑定。
-     * @returns {{ getSnapshot: () => any, subscribe: (listener: () => void) => () => void, create: () => Promise<void>, dismissNotice: (sequence: number) => void }} 控制器。
+     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
+     * @param {any} snapshot - 控制器快照。
+     * @param {(key: string, params?: any) => string} t - 词典读取器。
+     * @returns {string} 文案。
      */
-    function createLiangguNewControl(ctx, sessionId, t) {
-      const base = createSnapshotStore(LIANGGU_NEW_INITIAL);
-      let sequence = 1;
-      let disposed = false;
-      let busy = false;
-
-      /** 调 Host 的梁谷通道；没有连接时返回 undefined（调用方按 NO_CONNECTION 收口）。 */
-      const call = async (payload) => {
-        const connection = ctx.connection;
-        if (connection === undefined || connection === null) return undefined;
-        const rpc = connection.rpc;
-        if (rpc === undefined || rpc === null || typeof rpc.call !== 'function') return undefined;
-        return rpc.call(OFFPEAK_RPC_CHANNEL, 'createLiangguSession', payload);
-      };
-
-      /** 写一条失败 Toast（成功不弹）。 */
-      const notifyFailure = (code) => {
-        const text =
-          code === 'NO_CONNECTION'
-            ? t('lianggu.newNoConnection')
-            : t('lianggu.newFailed', { code: code === undefined || code === '' ? 'UNKNOWN' : code });
-        base.update((current) => ({ ...current, notice: { text, sequence: sequence++ } }));
-      };
-
-      const create = async () => {
-        if (disposed || busy || sessionId === '') return;
-        busy = true;
-        base.update((current) => ({ ...current, busy: true }));
-        try {
-          const result = await call({ sessionId });
-          if (result === undefined) {
-            notifyFailure('NO_CONNECTION');
-            return;
-          }
-          const value = result !== null && typeof result === 'object' && result.ok === true ? result.value : undefined;
-          const newId =
-            value !== null && typeof value === 'object' && typeof value.sessionId === 'string' ? value.sessionId : '';
-          if (newId === '') {
-            const error = result !== null && typeof result === 'object' ? result.error : undefined;
-            const code = error !== null && typeof error === 'object' && typeof error.code === 'string' ? error.code : '';
-            notifyFailure(code);
-            return;
-          }
-          // 新会话是**空白会话**，页面外观和当前新建页几乎一样；先给一条可见的成功提示，
-          // 再导航，避免用户以为“没反应”。
-          base.update((current) => ({
-            ...current,
-            notice: { text: t('lianggu.created'), tone: 'success', sequence: sequence++ }
-          }));
-          await new Promise((resolve) => setTimeout(resolve, 600));
-
-          // Host 已经创建好并把该会话的梁谷开关写为启用；这里只负责导航到它。
-          // 新建会话要等客户端列表刷新后才能被 openSession 找到；先刷新一次会话列表，
-          // 再按几个间隔重试导航（openSession 对同一目标幂等，列表晚到时也能补上）。
-          try {
-            if (typeof ctx.sessions?.refresh === 'function') await ctx.sessions.refresh();
-          } catch {
-            // 刷新失败不阻塞导航，下面的重试会兜住。
-          }
-          const open = () => {
-            try {
-              ctx.uiWorkspace?.openSession?.(newId);
-            } catch {
-              // 导航失败不影响创建结果：新会话已在工作区里，用户可从侧边栏打开。
-            }
-          };
-          open();
-          for (const delay of [150, 400, 900]) setTimeout(open, delay);
-        } catch {
-          notifyFailure('TRANSPORT');
-        } finally {
-          busy = false;
-          if (!disposed) base.update((current) => ({ ...current, busy: false }));
-        }
-      };
-
-      return {
-        getSnapshot: base.getSnapshot,
-        subscribe: base.subscribe,
-        create,
-        dismissNotice: (value) => {
-          const current = base.getSnapshot();
-          if (current.notice !== null && current.notice.sequence === value) base.set({ ...current, notice: null });
-        },
-        dispose: () => {
-          disposed = true;
-        }
-      };
+    function liangguHeroText(view, snapshot, t) {
+      if (view === 'paused') {
+        const countdown = snapshot === null || snapshot === undefined ? undefined : snapshot.countdownMs;
+        return typeof countdown === 'number' && Number.isFinite(countdown)
+          ? formatOffpeakCountdown(countdown)
+          : t('offpeak.chip.pausedNoEta');
+      }
+      if (view === 'idle') return t('lianggu.heroIdle');
+      if (view === 'busy') return t('offpeak.chip.busy');
+      return '';
     }
 
     /**
-     * 新建按钮的悬停/禁用样式 + heroOptions 回拉。
+     * 新建会话页的「梁谷」开关。
      *
-     * 官方 `heroOptions` 用 `margin-left:auto` 把它推到新建会话行的行尾；按需求按钮要紧挨
-     * 预设下拉框右侧，所以只在「本插件按钮存在」时把容器拉回来（`:has` 同时保证不会影响
-     * 没有本按钮的其它构建）。类名兜底那条是防 CSS Modules 哈希前缀变化。
+     * 与标题栏右上角的「梁谷」chip **同一个控制器、同一套行为**：点击只切换当前会话的
+     * 梁谷开关——不创建会话、不导航、不弹 Toast。新建页上的空白会话就是即将创建的会话，
+     * 因此开关打开时，**新建出来的会话一定是梁谷会话**；开关打开期间按钮上显示剩余时间
+     * 或「空闲」，关闭时只显示图标。
+     *
+     * @param {any} props - 槽位注入的 props。
+     * @returns {any} 开关（或隐藏占位）。
+     */
+    function LiangguHeroToggle(props) {
+      const snapshot = props.useOffpeak((value) => value);
+      const capability = props.useCapability((value) => value.offpeak);
+      const sessionId = props.sessionId;
+      const t = props.t;
+      if (sessionId === undefined || sessionId === null || String(sessionId) === '') {
+        return jsx('span', { style: { display: 'none' }, 'data-lianggu-hero-hidden': 'no-session' });
+      }
+      if (capability === false) {
+        // 与 chip 同策略：返回隐藏占位而不是 null，保持订阅不被拆掉。
+        return jsx('span', { style: { display: 'none' }, 'data-lianggu-hero-hidden': 'disabled' });
+      }
+      const state =
+        snapshot !== null && typeof snapshot === 'object'
+          ? snapshot
+          : { status: null, busy: false, notice: null, countdownMs: null };
+      const view = offpeakViewState(state);
+      const enabled = view !== 'off';
+      const text = liangguHeroText(view, state, t);
+      const baseTitle = offpeakTitle(view, state, t);
+      const title = view === 'off' ? `${baseTitle}\n${t('lianggu.heroNewSessionHint')}` : baseTitle;
+      const palette = offpeakChipPalette(view);
+      return jsx('button', {
+        type: 'button',
+        'data-dsh-lianggu-hero': '',
+        'data-lianggu-state': view,
+        'data-lianggu-enabled': enabled ? 'true' : 'false',
+        title,
+        'aria-label': t('lianggu.heroAria'),
+        disabled: view === 'busy',
+        onClick: () => {
+          void props.offpeak.toggle();
+        },
+        style: {
+          display: 'inline-flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '4px',
+          height: '28px',
+          minWidth: '28px',
+          padding: text === '' ? 0 : '0 8px',
+          boxSizing: 'border-box',
+          flex: 'none',
+          border: 'none',
+          borderRadius: text === '' ? '6px' : '999px',
+          fontFamily: 'inherit',
+          fontSize: '12px',
+          lineHeight: 1,
+          whiteSpace: 'nowrap',
+          cursor: view === 'busy' ? 'default' : 'pointer',
+          color: palette.color,
+          background: palette.background
+        },
+        children: [
+          liangguHeroIcon(),
+          text === ''
+            ? null
+            : jsx('span', {
+                style: { overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '140px', whiteSpace: 'nowrap' },
+                children: text
+              })
+        ]
+      });
+    }
+
+    /**
+     * hero 开关的悬停/禁用样式 + heroOptions 回拉。
+     *
+     * 官方 `heroOptions` 用 `margin-left:auto` 把它推到新建会话行的行尾；按需求开关要紧挨
+     * 预设下拉框右侧，所以只在「本插件开关存在」时把容器拉回来（`:has` 同时保证不会影响
+     * 没有本开关的其它构建）。类名兜底那条是防 CSS Modules 哈希前缀变化。
      *
      * @returns {() => void} 卸载函数。
      */
@@ -2282,83 +2264,18 @@ window.__ModuleLoader__.load({
       // 离线冒烟（没有 DOM）里直接跳过：样式只影响真实浏览器。
       if (typeof document === 'undefined') return () => {};
       const style = document.createElement('style');
-      style.setAttribute('data-dsh-enhance-lianggu-new-style', '');
+      style.setAttribute('data-dsh-enhance-lianggu-hero-style', '');
       style.textContent = [
-        'div:has(> [data-slot="conversation.hero.options"]):has([data-dsh-lianggu-new]){margin-left:0 !important;}',
-        '[class*="heroOptions"]:has([data-dsh-lianggu-new]){margin-left:0 !important;}',
-        '[data-dsh-lianggu-new]{transition:background-color .12s ease;}',
-        '[data-dsh-lianggu-new]:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover,rgba(128,128,128,.14));}',
-        '[data-dsh-lianggu-new]:disabled{opacity:.55;cursor:default;}'
+        'div:has(> [data-slot="conversation.hero.options"]):has([data-dsh-lianggu-hero]){margin-left:0 !important;}',
+        '[class*="heroOptions"]:has([data-dsh-lianggu-hero]){margin-left:0 !important;}',
+        '[data-dsh-lianggu-hero]{transition:background-color .12s ease,color .12s ease;}',
+        '[data-dsh-lianggu-hero]:hover:not(:disabled){filter:brightness(.96);}',
+        '[data-dsh-lianggu-hero]:disabled{opacity:.55;cursor:default;}'
       ].join('');
       document.head.appendChild(style);
       return () => {
         style.remove();
       };
-    }
-
-    /**
-     * 「新建梁谷会话」按钮。
-     *
-     * @param {any} props - 槽位注入的 props。
-     * @returns {any} 按钮（可能带 Toast）或隐藏占位。
-     */
-    function LiangguNewSessionButton(props) {
-      const state = props.useLiangguNew((value) => value);
-      const capability = props.useCapability((value) => value.offpeak);
-      const sessionId = props.sessionId;
-      const t = props.t;
-      if (sessionId === undefined || sessionId === null || String(sessionId) === '') {
-        return jsx('span', { style: { display: 'none' }, 'data-lianggu-new-hidden': 'no-session' });
-      }
-      if (capability === false) {
-        // 与分享 / 中断重试同策略：返回隐藏占位而不是 null，保持订阅不被拆掉。
-        return jsx('span', { style: { display: 'none' }, 'data-lianggu-new-hidden': 'disabled' });
-      }
-      const snapshot = state !== null && typeof state === 'object' ? state : LIANGGU_NEW_INITIAL;
-      const busy = snapshot.busy === true;
-      const title = busy ? t('lianggu.newBusy') : t('lianggu.newTitle');
-      const toast =
-        snapshot.notice === null || snapshot.notice === undefined
-          ? null
-          : jsx(
-              P.Toast,
-              {
-                text: snapshot.notice.text,
-                onDone: () => {
-                  props.liangguNew.dismissNotice(snapshot.notice.sequence);
-                },
-                ...(snapshot.notice.tone === undefined ? {} : { tone: snapshot.notice.tone })
-              },
-              snapshot.notice.sequence
-            );
-      return jsxs('span', {
-        style: { display: 'inline-flex', alignItems: 'center' },
-        children: [
-          jsx('button', {
-            type: 'button',
-            'data-dsh-lianggu-new': '',
-            'data-lianggu-new-busy': busy ? 'true' : 'false',
-            title,
-            'aria-label': title,
-            disabled: busy,
-            onClick: () => {
-              void props.liangguNew.create();
-            },
-            style: {
-              ...BUTTON_STYLE,
-              display: 'inline-flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              border: 'none',
-              borderRadius: '6px',
-              background: 'transparent',
-              cursor: busy ? 'default' : 'pointer'
-            },
-            children: liangguNewIcon()
-          }),
-          toast
-        ]
-      });
     }
     // #endregion
 
@@ -4113,12 +4030,14 @@ window.__ModuleLoader__.load({
       // chip 的 hover/disabled 规则（选择器只命中本插件自己的按钮，卸载时移除）。
       ctx.effect(() => installOffpeakStyle(), 'dsh-session-enhance: offpeak chip style');
 
-      // ---- 梁谷：新建会话页「新建梁谷会话」按钮（hero 行，预设右侧）----
+      // ---- 梁谷：新建会话页的「梁谷」开关（hero 行，预设右侧）----
       //
+      // 与标题栏右上角的「梁谷」chip 是同一个控制器、同一套行为：点击只切换当前
+      // （空白）会话的梁谷开关——不创建会话、不导航、不弹 Toast。新建页上的空白会话
+      // 就是即将创建的会话，所以开关打开时，新建出来的会话一定是梁谷会话。
       // 官方把 `conversation.hero.options` 渲染在 workspace chip 与 preset 之后的
       // `heroOptions` 容器里，但用 `margin-left:auto` 推到行尾；`installLiangguNewStyle`
-      // 在按钮存在时把容器拉回预设右侧。按钮只在「已有会话（含空白会话）」时渲染——
-      // 冷启动没有 sessionId 时 heroOptions 本身就不存在。
+      // 在开关存在时把容器拉回预设右侧。
       ctx.slots.inject(LIANGGU_NEW_SLOT_NAME, () =>
         ctx.slots.register(
           {
@@ -4127,18 +4046,18 @@ window.__ModuleLoader__.load({
             order: LIANGGU_NEW_SLOT_ORDER,
             locale: NS,
             inject: (sessionId) => {
-              const store = createLiangguNewControl(
+              const store = createOffpeakControl(
                 ctx,
                 String(sessionId === undefined || sessionId === null ? '' : sessionId),
                 t
               );
-              return { hooks: { liangguNew: store, capability: capabilityStore }, liangguNew: store };
+              return { hooks: { offpeak: store, capability: capabilityStore }, offpeak: store };
             }
           },
-          LiangguNewSessionButton
+          LiangguHeroToggle
         )
       );
-      ctx.effect(() => installLiangguNewStyle(), 'dsh-session-enhance: lianggu new session style');
+      ctx.effect(() => installLiangguNewStyle(), 'dsh-session-enhance: lianggu hero toggle style');
 
       // ---- 中断重试：官方「继续生成」覆盖不到的「用户主动停止」场景 ----
       //
@@ -4246,8 +4165,7 @@ window.__ModuleLoader__.load({
     exports.ContextSessionTracker = ContextSessionTracker;
     exports.InterruptedRetryButton = InterruptedRetryButton;
     exports.OffpeakButton = OffpeakButton;
-    exports.LiangguNewSessionButton = LiangguNewSessionButton;
-    exports.createLiangguNewControl = createLiangguNewControl;
+    exports.LiangguHeroToggle = LiangguHeroToggle;
     // 梁谷 chip 的纯函数：离线冒烟测试用它验证状态判定、倒计时格式化、时段文本与时区换算，
     // 不需要浏览器（与 `settingsBooleanField` 同一条路线）。
     exports.offpeakViewState = offpeakViewState;

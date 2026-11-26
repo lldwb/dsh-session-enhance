@@ -13,6 +13,7 @@ import test from 'node:test';
 import {
   fetchHolidayYear,
   holidayCacheFilePath,
+  HOLIDAY_CACHE_TTL_MS,
   HOLIDAY_SOURCES,
   isPlausibleHolidayTable,
   isValidHolidayDate,
@@ -227,6 +228,11 @@ test('HTTP 超时：慢响应被 abort，回退到下一个源', async () => {
   assert.notEqual(result, null, '慢源超时后仍拿到备用源的数据');
   assert.equal(result.source, 'holiday-cn-jsdelivr');
   assert.ok(Date.now() - started < 3_000, '没有等满 5 秒');
+});
+
+test('刷新频率：缓存 7 天有效（一年只更新一次表，不高频复查）', () => {
+  assert.equal(HOLIDAY_CACHE_TTL_MS, 7 * 24 * 60 * 60 * 1000);
+  assert.ok(HOLIDAY_CACHE_TTL_MS >= 24 * 60 * 60 * 1000, '至少一天，避免频繁请求');
 });
 
 test('数据源清单：timor 主源在前，且每个源都生成含年份的 URL', () => {

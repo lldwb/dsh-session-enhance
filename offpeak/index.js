@@ -244,7 +244,9 @@ export function apply(ctx, config) {
   // 返回的 dispose 交给 ctx.effect（组件停用即释放全部 hold、清定时器）。
   ctx.effect(() => controller.attach(ctx), 'dsh-session-enhance: 梁谷 hold controller');
 
-  // 自动更新：启动 3 秒后抓一次（不阻塞激活），之后每 6 小时复查；组件停用即清定时器。
+  // 自动更新：启动 3 秒后做一次检查（不阻塞激活），之后**每天**做一次本地检查；
+  // 只有缓存超过 7 天（HOLIDAY_CACHE_TTL_MS）才真正发网络请求——一年只更新一次表，
+  // 没必要高频复查。组件停用即清定时器。
   ctx.effect(() => {
     /** @type {any} */
     let timer;
@@ -253,7 +255,7 @@ export function apply(ctx, config) {
     }, 3_000);
     const interval = setInterval(() => {
       void refreshHolidays(false);
-    }, 6 * 60 * 60 * 1000);
+    }, 24 * 60 * 60 * 1000);
     timer = { kickoff, interval };
     if (typeof kickoff?.unref === 'function') kickoff.unref();
     if (typeof interval?.unref === 'function') interval.unref();

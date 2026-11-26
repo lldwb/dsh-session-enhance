@@ -3,6 +3,24 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 6.3.5 — 2026-11-26
+
+### 文档再修正：桌面应用没有刷新按钮，但 F12 能重载渲染进程
+
+6.3.4 写得过绝（“没有刷新页面入口、只能退出重开”）。用户指出桌面版内置了隐藏的 F12
+开发者工具，核对 `E:\deepseek-harness\apps\desktop\src\main.ts`：
+
+- 第 295 行 `webPreferences.devTools: true`；
+- 第 1229 行 `{ role: 'toggleDevTools', visible: false, accelerator: 'F12' }`（Windows 窗口菜单，
+  生产环境也注册），所以 **F12 可打开 DevTools**；
+- 在 DevTools Console 执行 `location.reload()`（或焦点在 DevTools 里按 Ctrl+R）只重载渲染
+  进程：重新从磁盘拉 `client.js`，**不重启宿主、不中断当前会话与子代理**。
+
+因此浏览器半改动的推荐生效方式是 **F12 → Console → `location.reload()`**；Host 半改动仍需
+重启应用。README 的「生效方式」一节已按此改写。
+
+**验证**：`node --test "test/**/*.test.mjs"` **301/301**；locale 门禁 ✓。
+
 ## 6.3.4 — 2026-11-26
 
 ### 文档修正：桌面应用没有「刷新页面」，client 改动必须退出应用再重开

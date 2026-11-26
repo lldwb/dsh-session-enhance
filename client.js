@@ -2073,7 +2073,27 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * chip 的**状态段**（固定起点、左对齐）：暂停=倒计时、空闲=「空闲」、busy=「…」、关=空串。
+     * 状态文字的「节庆 emoji」前缀（用户要求：像新年倒计时那样）。
+     *
+     * 只在暂停态且剩余 ≤60s 时出现：≤60s `🎉`、≤10s `🎊`；其余状态一律无 emoji。
+     * 实测状态区 43px 下 `🎉 57s` = 37.79px，无需加宽按钮。
+     *
+     * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
+     * @param {any} snapshot - 控制器快照。
+     * @returns {string} emoji 或空串。
+     */
+    function offpeakStateEmoji(view, snapshot) {
+      if (view !== 'paused') return '';
+      const ms = snapshot === null || snapshot === undefined ? undefined : snapshot.countdownMs;
+      if (typeof ms !== 'number' || !Number.isFinite(ms) || ms <= 0) return '';
+      if (ms <= OFFPEAK_FINAL_MS) return '🎊';
+      if (ms <= OFFPEAK_URGENT_MS) return '🎉';
+      return '';
+    }
+
+    /**
+     * chip 的**状态段**（固定起点、左对齐）：暂停=倒计时、空闲=「空闲」、busy=「…」、关=空串；
+     * 倒计时最后 60 秒会带节庆 emoji（`🎉 57s` / `🎊 8s`）。
      *
      * @param {'off'|'paused'|'idle'|'busy'} view - 状态。
      * @param {any} snapshot - 控制器快照。
@@ -2082,11 +2102,13 @@ window.__ModuleLoader__.load({
      */
     function offpeakChipState(view, snapshot, t) {
       if (view === 'busy') return t('offpeak.chip.busy');
+      const emoji = offpeakStateEmoji(view, snapshot);
       if (view === 'paused') {
         const countdown = snapshot === null || snapshot === undefined ? undefined : snapshot.countdownMs;
-        return typeof countdown === 'number' && Number.isFinite(countdown)
+        const text = typeof countdown === 'number' && Number.isFinite(countdown)
           ? formatOffpeakCountdown(countdown)
           : t('offpeak.chip.pausedNoEta');
+        return emoji === '' ? text : `${emoji} ${text}`;
       }
       if (view === 'idle') return t('lianggu.heroIdle');
       // 关：名称段已经是「梁谷」，状态段留空（保持三段固定布局）。

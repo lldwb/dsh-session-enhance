@@ -778,6 +778,35 @@ test('固定尺寸：chip 与 hero 在四种状态下宽高都不变（106 × 24
   }
 });
 
+test('节庆 emoji：暂停倒计时 ≤60s 加 🎉、≤10s 加 🎊，其余状态不加', async (t) => {
+  const env = await setup();
+  t.after(env.restore);
+  const pausedAt = (countdownMs) =>
+    renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: true, paused: true }), countdownMs }));
+
+  assert.equal(heroTextOf(pausedAt(37_000).button), '梁谷 🎉 37s');
+  assert.equal(heroTextOf(pausedAt(59_000).button), '梁谷 🎉 59s');
+  assert.equal(heroTextOf(pausedAt(9_000).button), '梁谷 🎊 9s');
+  assert.equal(heroTextOf(pausedAt(1_000).button), '梁谷 🎊 1s');
+  assert.equal(heroTextOf(pausedAt(61_000).button), '梁谷 1m01s');
+  // 空闲/关/busy 不加 emoji。
+  assert.equal(
+    heroTextOf(renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: true, paused: false }) })).button),
+    '梁谷 空闲'
+  );
+  assert.equal(heroTextOf(renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: false }) })).button), '梁谷');
+  assert.equal(
+    heroTextOf(
+      renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: true, paused: true }), busy: true })).button
+    ),
+    '梁谷 …'
+  );
+
+  // hero 开关同一套 emoji。
+  assert.equal(heroTextOf(renderHeroToggle(env.module, env.t, { view: 'paused', countdownMs: 37_000 }).button), '梁谷 🎉 37s');
+  assert.equal(heroTextOf(renderHeroToggle(env.module, env.t, { view: 'paused', countdownMs: 9_000 }).button), '梁谷 🎊 9s');
+});
+
 test('三段布局：图标 + 固定宽名称 + 状态，名称位置不随状态变化', async (t) => {
   const env = await setup();
   t.after(env.restore);

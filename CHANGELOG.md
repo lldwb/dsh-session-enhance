@@ -3,6 +3,30 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 6.3.8 — 2026-11-26
+
+### 梁谷组件的界面统一到 DSH 官方形制（官方 `Pill` + `Tooltip`）
+
+两处梁谷开关（标题栏 chip、新建会话页开关）此前各写各的内联样式，且 chip 仍用元素原生
+`title`。本版统一到 primitives 的官方组件：
+
+- **形状**：两处都用官方 `Pill`（24px 胶囊、`border-radius:999px`、12px 字号、
+  `bg-layer-2`/`active` 变体），语义色仍走主题 token（暂停 warn、空闲 success、关 muted）；
+- **提示**：两处都用官方 `Tooltip`（深色气泡、`role="tooltip"`、`side:'bottom'`、
+  `delayMs`、`maxWidth:320`），**彻底移除原生 `title`**；chip 的提示额外带队列条数；
+- **图标**：两处共用同一套 `offpeakStatusIcon`（关=太阳、开=弯月+小星星）；
+- **文案**：chip 简化为「梁谷 2m32s / 梁谷 空闲 / 梁谷 / 梁谷 …」（图标已表达状态，去掉
+  “暂停”二字）；hero 保持用户指定的「梁峰 / 梁谷 X」；
+- **修一个实现坑**：Tooltip 的锚点必须是原生元素——直接把自定义组件 `Pill` 交给
+  Tooltip 克隆时，ref/指针事件不保证落到真实按钮上（实测气泡不出来）；改为
+  `Tooltip > span > Pill` 后恢复正常。
+
+**验证**：单测 **301/301**（chip 与 hero 夹具改为从 Tooltip 子树里取 Pill；断言两处都无
+`title`、`side='bottom'`、文案与提示逐字匹配）；真实 UI 沙箱（reload 加载新代码）：
+chip 与 hero 都是 `height 24px / radius 999px / font-size 12px / hasTitle=false`；hover
+分别出现官方深色气泡「梁谷：高峰暂停 / 将在 12:00 自动恢复 / 队列中 1 条消息…」与
+「梁谷：关闭 / 点击开启…」；截图确认与标题栏其它官方控件同一形制。
+
 ## 6.3.7 — 2026-11-26
 
 ### 开启态图标：弯月 + 右上角小星星（按用户参考图）

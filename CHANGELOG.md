@@ -3,6 +3,35 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 6.8.2 — 2026-11-27
+
+### 关闭谷峰开关时也恢复「被打断的子代理」（与进入空闲一致）
+
+用户读会话 `session-dd2433a9` 后发现：子代理在 14:00 高峰被谷峰 `cancel` 后，父会话随后收到
+运行时的一条 `subagent-settled`（「Background subagent … was stopped before it finished」），
+父智能体被迫自己 `session_resume_subagents` 善后。核对日志确认：
+
+- 子代理 turn 1 于 `14:00:00` 以 `aborted + hook + offpeak-pause` 结束（我们的暂停，正确）；
+- 父会话一直 hold，这条运行时通知攒在 inbox，直到 **14:25 用户把「空闲会话」切回普通会话**
+  唤醒它时才投递出来——所以看起来像"切换开关导致的"；
+- **进入空闲时段**时 `reconcile` 会唤醒 `interrupted` 的会话（含子代理）✓；
+- **关闭开关**时只 `releaseHold` 了有 hold 的会话，而「运行中被 cancel、没有 hold」的子代理
+  只有 `interrupted` 标记 → **不会被唤醒**（缺口）。这就是父智能体必须自己去捞的原因。
+
+修正：`setEnabled(false)` 释放 hold 之后，对「不再被覆盖、没有 hold、但 `interrupted`」的会话
+（典型是正在跑的小组长/子智能体）同样 `fireWake`，与空闲恢复走同一条路径（官方 continuation
+优先，失败回退空 retry 消息）。于是「关掉谷峰」与「到空闲时间」对子代理的行为一致：**都会自动续跑**。
+
+**验证**：
+
+- 单测 **327/327**（新增：高峰下「运行中被 cancel、无 hold」的子代理，关闭父会话开关后
+  `interrupted` 被清空即已唤醒）；
+- **真实 e2e**（web 沙箱，14:41 高峰）：新会话让模型派一个 `Start-Sleep 240` 的子代理 →
+  开启谷峰 → `diag` 显示父与子都 `held: true, interrupted: true, status: idle`（都被暂停）→
+  **关闭谷峰** → 6 秒后父会话 `status: running`（继续推进），14 秒后子代理
+  `interrupted: false, status: running`（自动恢复续跑），父会话「2 轮 4 步」继续；
+- `node --check`、locale / 工具名门禁 ✓。
+
 ## 6.8.1 — 2026-11-27
 
 ### 文档：README 去掉版本标注，补齐 6.7.5–6.8.0 的发版 tag

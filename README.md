@@ -327,6 +327,8 @@ DSH 自带官方上下文 meter（composer 下方的小圆环 + 百分比），�
 
 **子代理也算「该会话」**：沿 `session.header.parentSession` 向上，任一祖先会话启用了谷峰，子树里的 live Agent 一并被 hold / cancel；祖先会话即使已经关闭（没有 live Agent），只要它的开关记录仍是启用，子代理也照样被覆盖；禁用父会话时子树一起释放。子智能体的开关是**只读**的（`session.header.origin === 'subagent'` 的会话同步主会话状态，`enabledSource: 'parent'`、`inheritedFrom` 指向直接父会话，chip 置灰不可点，直接调 `setEnabled` 会返回 `READ_ONLY_INHERITED`）；普通 fork（有 `parentSession` 但不是 `origin: subagent`）不受影响。
 
+**子代理与主会话一样「暂停 → 自动恢复」**：高峰被打断的那个回合（`interrupted`）在**两种时机**都会自动续跑，不需要父智能体去 `session_resume_subagents` 善后——① **进入空闲时段**（`reconcile` 遍历所有被覆盖的 Agent）；② **关闭谷峰开关**（`setEnabled(false)` 释放 hold 后，对「运行中被 cancel、没有 hold」的会话同样唤醒）。恢复走官方 continuation（历史里是紧凑的「已请求继续生成」），官方不可用才回退一条空 retry 消息。
+
 **开关是即时的**：高峰打开 → 立刻暂停（必要时中断当前轮）；空闲打开 → 不暂停；关闭 → 立刻释放，队列里压着的消息马上开始跑。
 
 **持久化**：每个会话的开关状态写 `<DSH_HOME>/dsh-session-enhance/offpeak.json`（原子写、容量 500、损坏时备份后从空表继续，写盘失败只让界面提示「重启后可能回落」而不阻止开关）。Host 重启后偏好还在；重开会话时按偏好自动 hold。

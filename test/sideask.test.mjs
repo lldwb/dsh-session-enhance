@@ -17,9 +17,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { buildAskPrompt, formatSideAskQuote, SIDEASK_SESSION_TOOLS } from '../lib/sideask/prompt.mjs';
+import { buildAskContext, buildAskPrompt, formatSideAskQuote, SIDEASK_SESSION_TOOLS } from '../lib/sideask/prompt.mjs';
 import { createSideAskHandler } from '../lib/sideask/rpc.mjs';
-import { createSideAskController, SIDEASK_FALLBACK_PRESET, SIDEASK_READ_ONLY_PRESET } from '../lib/sideask/host.mjs';
+import { createSideAskController, SIDEASK_CONTEXT_NAME, SIDEASK_FALLBACK_PRESET, SIDEASK_READ_ONLY_PRESET } from '../lib/sideask/host.mjs';
 
 /** 一个活会话的替身。 */
 const PARENT_ID = 'session-parent';
@@ -37,7 +37,7 @@ const CHILD_ID = 'session-child';
  * @returns {object} mock 控制器依赖与调用记录。
  */
 function mockServices(options = {}) {
-  const calls = { created: [], commandLines: [], archived: [] };
+  const calls = { created: [], commandLines: [], archived: [], promptContexts: [] };
   const services = {
     sessions: {
       get(id) {
@@ -48,7 +48,16 @@ function mockServices(options = {}) {
     },
     agents: {
       get(id) {
-        return { session: { header: { id } } };
+        // 真实 Agent 上挂着自己的 scope（agent.ctx）：侧边提问把「参考会话」系统上下文
+        // 注册在这个 scope 里，只影响该会话。`noSystemPrompt` 用来覆盖降级路径。
+        const effect = (factory) => {
+          const dispose = factory();
+          return typeof dispose === 'function' ? dispose : () => {};
+        };
+        const systemPrompt = options.noSystemPrompt === true
+          ? undefined
+          : { context: (definition) => { calls.promptContexts.push({ sessionId: id, definition }); return () => {} } };
+        return { session: { header: { id } }, ctx: { effect, systemPrompt } };
       },
     },
     commands: {
@@ -137,6 +146,46 @@ test('Host 控制器：沿用原会话的工作区与预设创建新会话，并
   assert.deepEqual(calls.created, [{ workspaceId: 'ws-1', agentPreset: 'cordis' }], '应沿用工作区与预设');
   assert.deepEqual(calls.commandLines, [{ sessionId: CHILD_ID, line: '/permission read-only' }]);
   assert.equal(controller.size, 1);
+});
+
+test('Host 控制器：把参考会话注入侧边会话自己的系统上下文（不依赖客户端预填）', async () => {
+  const { services, calls } = mockServices();
+  const controller = createSideAskController(services);
+  const result = await controller.create({ parentSessionId: PARENT_ID, locale: 'zh-CN' });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.value.contextRegistered, { registered: true }, '必须报告系统上下文注册成功');
+  assert.equal(calls.promptContexts.length, 1, '必须且只注册一份系统上下文');
+  const [registered] = calls.promptContexts;
+  assert.equal(registered.sessionId, CHILD_ID, '必须注册在侧边会话自己的 agent scope');
+  assert.equal(registered.definition.name, SIDEASK_CONTEXT_NAME);
+  assert.equal(registered.definition.required, true, '参考会话是必需上下文，不能因运行时上下文开关被丢掉');
+  assert.equal(registered.definition.interpolate, false, '文本含会话 id，不能被模板插值改写');
+  assert.ok(registered.definition.text.includes(PARENT_ID), '系统上下文必须带参考会话 id');
+  for (const tool of SIDEASK_SESSION_TOOLS) assert.ok(registered.definition.text.includes(tool));
+});
+
+test('Host 控制器：部署没有 systemPrompt 时安静降级，并如实报告原因', async () => {
+  const { services, calls } = mockServices({ noSystemPrompt: true });
+  const controller = createSideAskController(services);
+  const result = await controller.create({ parentSessionId: PARENT_ID });
+
+  assert.equal(result.ok, true, '降级不应让整个创建失败');
+  assert.equal(result.value.contextRegistered.registered, false);
+  assert.equal(result.value.contextRegistered.reason, 'SYSTEM_PROMPT_UNAVAILABLE');
+  assert.equal(calls.promptContexts.length, 0);
+});
+
+test('询问上下文：与预填提示词同源，含会话 id / 工具 / 只读约束', () => {
+  const context = buildAskContext({ parentSessionId: PARENT_ID, parentTitle: '被参考的会话', locale: 'zh-CN' });
+  assert.ok(context.includes(PARENT_ID));
+  assert.ok(context.includes('被参考的会话'));
+  for (const tool of SIDEASK_SESSION_TOOLS) assert.ok(context.includes(tool));
+  assert.match(context, /只读/);
+  assert.ok(!context.includes('我的问题：'), '系统上下文不需要「我的问题」占位（那是输入框的事）');
+
+  const english = buildAskContext({ parentSessionId: PARENT_ID, locale: 'en-US' });
+  assert.match(english, /read-only/i);
 });
 
 test('Host 控制器：原会话不在工作区时退回 cwd 创建', async () => {

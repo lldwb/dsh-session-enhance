@@ -400,7 +400,8 @@ test('continueTextOf：按原因给文案，谷峰类必须写明「高峰暂停
   assert.ok(continueTextOf('offpeak').includes('高峰暂停'));
   assert.ok(continueTextOf('offpeak').includes('不是失败'));
   assert.deepEqual(continueTextOf('offpeak'), RETRY_CONTINUE_TEXT_OFFPEAK);
-  assert.ok(continueTextOf('user').includes('被你停止'));
+  assert.ok(continueTextOf('user').includes('被用户暂停'));
+  assert.equal(continueTextOf('user').includes('被你停止'), false, '不能写成「被你停止」（会被误读成 Agent 自己停的）');
   assert.ok(continueTextOf('app').includes('应用被关闭'));
   assert.equal(continueTextOf(undefined), RETRY_CONTINUE_TEXT);
 });

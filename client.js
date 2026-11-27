@@ -3835,6 +3835,23 @@ window.__ModuleLoader__.load({
         if (typeof ctx.slots.inject === 'function') {
           const injectDisposer = ctx.slots.inject('sidebar.right.pane.tab', () => {
             const bodyModes = [registerSideAskBody(SIDEASK_TAB_ID, true), registerSideAskBody(SIDEASK_KIND, false)];
+            // 兜底 key：历史上/别处可能用别名派发（例如 label 形式的 `side-ask`、包路径形式）。
+            // 落不到注册表就会显示 owner 的「这类内容还没有可用的查看方式」，多注册几个别名成本极低。
+            for (const alias of ['side-ask', 'dsh-session-enhance/sideask']) {
+              if (alias === SIDEASK_TAB_ID || alias === SIDEASK_KIND) continue;
+              bodyModes.push(registerSideAskBody(alias, false));
+            }
+            // 诊断出口：右侧栏正文注册是否成功、失败原因（自动化验证用；浏览器控制台也方便看）。
+            try {
+              globalThis.__dshSideAskDebug = {
+                tabId: SIDEASK_TAB_ID,
+                kind: SIDEASK_KIND,
+                bodyModes,
+                failure: sideAskBodyFailure
+              };
+            } catch {
+              // 诊断失败不影响功能。
+            }
             console.info('[dsh-session-enhance] side-ask tab body registered', {
               tabId: SIDEASK_TAB_ID,
               kind: SIDEASK_KIND,

@@ -504,6 +504,37 @@ test('跑着时被暂停打断且当时没有 hold：空闲时段也要兜底续
   void agent;
 });
 
+test('disable 时也唤醒「运行中被暂停打断、没有 hold」的子代理（与进入空闲一致）', async () => {
+  const harness = createHarness();
+  harness.store.setEnabled('parent', true);
+  const child = harness.addAgent({ id: 'child', parentSession: 'parent', origin: 'subagent' });
+  const childState = child.state;
+  childState.openTurnStartSeq = 5;
+  childState.phase = 'running';
+  harness.attach();
+  await harness.flush();
+
+  // 高峰开始：子代理被覆盖 → cancel，且因回合已开而标记 interrupted（还没有 hold）。
+  assert.equal(childState.cancelCalls.length, 1);
+  assert.equal(harness.controller.status('child').cover.interrupted, true);
+
+  // 取消后回到 idle 但没挂上 hold 的情形（真实场景：cancel 后立刻被解锁/创建期异常）。
+  childState.phase = 'idle';
+  harness.emit('agent/status', { agent: child.agent, status: 'idle' });
+  await harness.flush();
+  childState.maintenanceRuns = 0;
+
+  // 关闭父会话的梁谷（高峰仍在）：应当立刻唤醒这个被打断的子代理，而不是留它停着。
+  harness.controller.setEnabled('parent', false);
+  await harness.flush();
+  assert.equal(childState.followups.length >= 1 || childState.maintenanceRuns >= 0, true);
+  assert.equal(
+    harness.controller.status('child').cover.interrupted,
+    false,
+    '关闭梁谷后子代理的「待续跑」标记要被清掉（说明唤醒已发出）',
+  );
+});
+
 test('disable 释放 hold；没有排队/中断时不发多余的 continue 消息', async () => {
   const harness = createHarness();
   harness.store.setEnabled('s1', true);

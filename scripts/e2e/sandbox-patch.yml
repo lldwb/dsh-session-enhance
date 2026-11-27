@@ -1,0 +1,57 @@
+# E2E loader patch for the "compaction request itself overflows" fixture.
+#
+# Applied as a higher-priority layer on top of a devkit sandbox profile:
+#
+#   devkit_sandbox_compose { name, patch: ["<this file, with __MOCK_PORT__ replaced>"] }
+#   devkit_sandbox_run     { name, patch: ["<same>"], task: "..." }
+#
+# or, on the raw CLI:
+#
+#   dsh --profile <sandbox-profile> --patch <patched-file> "<task>"
+#
+# An `id`-targeted patch REPLACES that row's entire `config`, so `llm-pi-ai`
+# must restate every provider it should serve. The sandbox needs exactly one:
+# the mock route below.
+#
+# The placeholder `__MOCK_PORT__` must be replaced with the port the mock
+# printed as `PORT=<n>` before this file is used (see README.md).
+#
+# ASCII only, on purpose: this file is generated/replaced by scripts and copied
+# between shells whose default encodings differ.
+
+- id: llm-pi-ai
+  name: '@deepseek-ai/dsh-llm-pi-ai'
+  config:
+    providers:
+      sub2api:
+        displayName: Sub2API
+        apiKeyEnv: SUB2API_API_KEY
+        api: anthropic-messages
+        baseURL: http://127.0.0.1:__MOCK_PORT__
+        models:
+          - id: deepseek-flash
+            name: deepseek-flash
+            contextWindow: 20000
+            maxTokens: 2048
+            input:
+              - text
+            reasoningEfforts:
+              off:
+              low: low
+              high: high
+              max: max
+
+- id: compaction-basic
+  name: '@deepseek-ai/dsh-compaction-basic'
+  config:
+    thresholdRatio: 0.5
+    headroomTokens: 2048
+    retainRatio: 0.1
+    maxTokens: 1024
+
+- id: agent-default-model
+  name: '@deepseek-ai/dsh-agent-default-model'
+  config:
+    provider: sub2api
+    model: deepseek-flash
+    reasoningEffort: low

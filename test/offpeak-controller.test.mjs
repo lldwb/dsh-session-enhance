@@ -823,7 +823,7 @@ test('重启恢复：高峰时段只 hold，不唤醒（官方/兜底都不动�
   assert.equal(state.followups.length, 0, '高峰时段不该唤醒（兜底）');
 });
 
-test('被暂停打断：恢复时先发「写明高峰暂停原因」的消息（不是笼统的继续）', async () => {
+test('被暂停打断：恢复时**先走官方 continuation**（与中断重试同一顺序）', async () => {
   const harness = createHarness({
     sessionController: { handle: async () => ({ accepted: true }) }
   });
@@ -843,9 +843,35 @@ test('被暂停打断：恢复时先发「写明高峰暂停原因」的消息�
   harness.controller.reconcile();
   await harness.flush();
 
-  // 用户 2026-11-27 要求：因谷峰暂停而中断的会话，恢复时必须写明原因，
-  // 所以这里**先**用带文案的 followup，而不是空 content 的官方 continuation。
-  assert.equal(state.followups.length, 1, '应先发写明原因的消息');
+  // 用户 2026-11-27 更正：谷峰组件的恢复也要**先官方 continuation**，官方可用时不发消息。
+  assert.equal(harness.prompts.length, 1, '必须先试官方 continuation');
+  assert.deepEqual(harness.prompts[0].request.content, [], '官方「继续生成」是空 content');
+  assert.equal(state.followups.length, 0, '官方成功就不该再发带原因的消息');
+  assert.equal(harness.controller.status('s1').cover.interrupted, false, '续跑后标记清除');
+});
+
+test('被暂停打断：官方不可用 → 回退写明「高峰暂停」的消息（不是空消息）', async () => {
+  const harness = createHarness({
+    sessionController: {
+      handle: async () => {
+        throw Object.assign(new Error('generation continuation is unavailable'), { code: 'session/agent-busy' });
+      }
+    }
+  });
+  harness.store.setEnabled('s1', true);
+  const { state, agent } = harness.addAgent({ id: 's1', openTurnStartSeq: 9 });
+  state.phase = 'running';
+  harness.attach();
+  await harness.flush();
+  state.phase = 'idle';
+  harness.emit('agent/status', { agent, status: 'idle' });
+  await harness.flush();
+  harness.clock.now = IDLE_NOW;
+  harness.controller.reconcile();
+  await harness.flush();
+
+  assert.equal(harness.prompts.length, 1, '先试过官方');
+  assert.equal(state.followups.length, 1, '官方失败后回退消息');
   const message = state.followups[0];
   assert.equal(message.role, 'user');
   assert.ok(
@@ -853,8 +879,7 @@ test('被暂停打断：恢复时先发「写明高峰暂停原因」的消息�
     `文案必须写明「高峰暂停」：${message.content[0].text}`
   );
   assert.ok(message.content[0].text.includes('不是失败'), '还要说明这不是失败');
-  assert.equal(harness.prompts.length, 0, '这条路不走官方 continuation');
-  assert.equal(harness.controller.status('s1').cover.interrupted, false, '续跑后标记清除');
+  assert.equal(harness.controller.status('s1').cover.interrupted, false);
 });
 
 test('被暂停打断：followup 不可用（没有该函数）→ 退回官方 continuation', async () => {
@@ -897,16 +922,14 @@ test('被暂停打断：重复 reconcile 不重复唤醒', async () => {
   harness.clock.now = IDLE_NOW;
   harness.controller.reconcile();
   await harness.flush();
-  assert.equal(state.followups.length, 1);
+  assert.equal(harness.prompts.length, 1, '官方 continuation 发出即算一次唤醒');
 
   for (let round = 0; round < 5; round += 1) {
     harness.controller.reconcile();
     await harness.flush();
   }
-  assert.equal(state.followups.length, 1, '重复 reconcile 不该重复唤醒');
-  // 唤醒已发出（wakeStates=issued），Agent 还没被拉起来：允许保留去重状态，
-  // 这里只验证「不会再发第二条消息」。
-  assert.equal(harness.prompts.length, 0, '这条路径不该同时走官方 continuation');
+  assert.equal(harness.prompts.length, 1, '重复 reconcile 不该重复唤醒');
+  assert.equal(state.followups.length, 0, '官方成功就不该再发消息');
 });
 
 test('监听器不抛错：garbage payload / 抛错的 Agent 都被收口', async () => {

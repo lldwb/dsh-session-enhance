@@ -14,9 +14,13 @@ import test from 'node:test';
 
 import {
   RETRY_CONTINUE_TEXT,
+  RETRY_CONTINUE_TEXT_OFFPEAK,
+  RETRY_CONTINUE_TEXT_USER,
   RETRY_MESSAGE_ID_PREFIX,
+  continueTextOf,
   createDriveRetry,
   isAppInterruption,
+  isOffpeakPause,
   scanUnfinishedTurns,
   pendingTurnOf,
   createRetryUserMessage,
@@ -370,4 +374,82 @@ test('scanUnfinishedTurns：缺服务/读日志抛错/已有记录都不炸', as
   recovery.remember('ok', { turn: 2, cause: 'user' });
   await scanUnfinishedTurns({ sessionQuery, recovery, now: Date.now() });
   assert.equal(recovery.peek('ok')?.cause, 'user', '已有记录不被扫描覆盖');
+});
+
+test('isOffpeakPause：只认 aborted + hook + offpeak-pause', () => {
+  assert.equal(isOffpeakPause({ kind: 'aborted', reason: { kind: 'hook', reason: 'offpeak-pause' } }), true);
+  assert.equal(isOffpeakPause({ kind: 'aborted', reason: { kind: 'hook', reason: 'shutdown' } }), false);
+  assert.equal(isOffpeakPause({ kind: 'aborted', reason: { kind: 'user' } }), false);
+  assert.equal(isOffpeakPause({ kind: 'completed' }), false);
+  assert.equal(isOffpeakPause(undefined), false);
+});
+
+test('handleSessionEvent：谷峰暂停记为 cause=offpeak（不是失败，也不是用户中断）', () => {
+  const recovery = new RecoveryStore();
+  handleSessionEvent(
+    recovery,
+    { id: 's1' },
+    event('turn/end', { turn: 3, reason: { kind: 'aborted', reason: { kind: 'hook', reason: 'offpeak-pause' } } })
+  );
+  const snapshot = recovery.peek('s1');
+  assert.equal(snapshot?.turn, 3);
+  assert.equal(snapshot?.cause, 'offpeak');
+});
+
+test('continueTextOf：按原因给文案，谷峰类必须写明「高峰暂停」', () => {
+  assert.ok(continueTextOf('offpeak').includes('高峰暂停'));
+  assert.ok(continueTextOf('offpeak').includes('不是失败'));
+  assert.deepEqual(continueTextOf('offpeak'), RETRY_CONTINUE_TEXT_OFFPEAK);
+  assert.ok(continueTextOf('user').includes('被你停止'));
+  assert.ok(continueTextOf('app').includes('应用被关闭'));
+  assert.equal(continueTextOf(undefined), RETRY_CONTINUE_TEXT);
+});
+
+test('createRetryUserMessage：谷峰原因的消息正文写明高峰暂停', () => {
+  const message = createRetryUserMessage('offpeak');
+  assert.equal(message.role, 'user');
+  assert.deepEqual(message.source, { kind: 'user' });
+  assert.ok(message.content[0].text.includes('高峰暂停'));
+});
+
+test('driveRetry：谷峰原因直接走带文案的 followup，不走官方 continuation', async () => {
+  const followups = [];
+  const prompts = [];
+  const ctx = {
+    get: (key) => {
+      if (key === 'agents') {
+        return {
+          get: () => ({
+            followup: async (message) => {
+              followups.push(message);
+            },
+          }),
+        };
+      }
+      if (key === 'sessionController') {
+        return {
+          prompt: async (request) => {
+            prompts.push(request);
+            return undefined;
+          },
+        };
+      }
+      return undefined;
+    },
+  };
+  const outcome = await createDriveRetry(ctx)('s1', 'offpeak');
+  assert.equal(outcome.ok, true);
+  assert.equal(outcome.method, 'prompt');
+  assert.equal(prompts.length, 0, '不该走官方空内容 continuation');
+  assert.equal(followups.length, 1);
+  assert.ok(followups[0].content[0].text.includes('高峰暂停'));
+});
+
+test('driveRetry：谷峰原因但会话已无 live agent → NO_LIVE_AGENT（不静默成功）', async () => {
+  const ctx = {
+    get: (key) => (key === 'agents' ? { get: () => undefined } : undefined),
+  };
+  const outcome = await createDriveRetry(ctx)('s1', 'offpeak');
+  assert.equal(outcome.ok, false);
+  assert.equal(outcome.code, 'NO_LIVE_AGENT');
 });

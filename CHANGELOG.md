@@ -3,6 +3,30 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 6.9.0 — 2026-11-27
+
+### 恢复/重试文案按中断原因区分：谷峰暂停要写明「高峰暂停」，不能只说「被中断」
+
+用户要求：中断由谷峰（高峰暂停）造成时，重试或恢复的提示文本必须写明原因，避免智能体误判为失败。
+
+- **谷峰组件**：新增 `OFFPEAK_PAUSED_CONTINUE_TEXT` / `createPausedContinueMessage()`；被暂停打断的
+  会话恢复时**先发这条带原因的消息**（「上一轮因谷峰「高峰暂停」而被中断，不是失败。现在高峰已结束，
+  请从中断处继续完成…」），followup 不可用才回退官方 continuation（空内容、无原因）。
+  这样「进入空闲」与「关闭开关」两条恢复路径都带原因。
+- **中断重试组件**：新增 `isOffpeakPause()` 识别 `aborted + hook + offpeak-pause`，记录 `cause: 'offpeak'`；
+  文案按原因分流（`continueTextOf`）：用户停止 / 应用关闭 / 谷峰暂停三种各一句；谷峰原因**不走**官方
+  continuation（空内容无法表达原因），直接发带文案的 followup。
+
+**验证**：
+
+- 单测 **333/333**（session-enhance）：新增 `isOffpeakPause`、`continueTextOf`、
+  `driveRetry('offpeak')` 不走官方 continuation、谷峰恢复文案包含「高峰暂停/不是失败」等断言；
+- **真实 e2e**（web 沙箱，装 commander + session-enhance）：指挥官会话高峰暂停后关闭谷峰 →
+  沙箱会话日志 seq 26 出现
+  「（上一轮因谷峰「高峰暂停」而被中断，不是失败。现在高峰已结束，请从中断处继续完成，不要复述已完成的部分。）」，
+  且该轮 `turn/end` reason 确认为 `{kind:'aborted',reason:{kind:'hook',reason:'offpeak-pause'}}`；
+- 子代理侧同理（同一条 `wakeAgent` 路径，不区分根会话/子代理）。
+
 ## 6.8.2 — 2026-11-27
 
 ### 关闭谷峰开关时也恢复「被打断的子代理」（与进入空闲一致）

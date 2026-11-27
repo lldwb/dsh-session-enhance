@@ -823,9 +823,9 @@ test('重启恢复：高峰时段只 hold，不唤醒（官方/兜底都不动�
   assert.equal(state.followups.length, 0, '高峰时段不该唤醒（兜底）');
 });
 
-test('被暂停打断：空闲后唤醒 → 官方 continuation 优先（带空 content + AbortSignal）', async () => {
+test('被暂停打断：恢复时先发「写明高峰暂停原因」的消息（不是笼统的继续）', async () => {
   const harness = createHarness({
-    sessionController: { handle: async () => ({ accepted: true }) },
+    sessionController: { handle: async () => ({ accepted: true }) }
   });
   harness.store.setEnabled('s1', true);
   const { state, agent } = harness.addAgent({ id: 's1', openTurnStartSeq: 9 });
@@ -839,55 +839,52 @@ test('被暂停打断：空闲后唤醒 → 官方 continuation 优先（带空 
   harness.emit('agent/status', { agent, status: 'idle' });
   await harness.flush();
 
-  // 空闲时段释放 → 官方 continuation 优先。
   harness.clock.now = IDLE_NOW;
   harness.controller.reconcile();
   await harness.flush();
 
-  assert.equal(harness.prompts.length, 1, '应走官方 continuation');
-  assert.equal(state.followups.length, 0, '官方成功就不该再 followup');
+  // 用户 2026-11-27 要求：因谷峰暂停而中断的会话，恢复时必须写明原因，
+  // 所以这里**先**用带文案的 followup，而不是空 content 的官方 continuation。
+  assert.equal(state.followups.length, 1, '应先发写明原因的消息');
+  const message = state.followups[0];
+  assert.equal(message.role, 'user');
+  assert.ok(
+    message.content[0].text.includes('高峰暂停'),
+    `文案必须写明「高峰暂停」：${message.content[0].text}`
+  );
+  assert.ok(message.content[0].text.includes('不是失败'), '还要说明这不是失败');
+  assert.equal(harness.prompts.length, 0, '这条路不走官方 continuation');
   assert.equal(harness.controller.status('s1').cover.interrupted, false, '续跑后标记清除');
-  const { request, signal } = harness.prompts[0];
-  assert.equal(request.sessionId, 's1');
-  assert.equal(request.mode, 'queue');
-  assert.deepEqual(request.content, [], '空 content = 官方「继续生成」');
-  assert.equal(typeof request.requestId, 'string');
-  assert.ok(request.requestId.startsWith('dsh-session-enhance-offpeak-'));
-  assert.ok(signal instanceof AbortSignal);
 });
 
-test('被暂停打断：官方不可用（session/agent-busy）→ 回退 followup 空 retry 消息', async () => {
+test('被暂停打断：followup 不可用（没有该函数）→ 退回官方 continuation', async () => {
   const harness = createHarness({
-    sessionController: {
-      handle: async () => {
-        throw Object.assign(new Error('generation continuation is unavailable'), { code: 'session/agent-busy' });
-      },
-    },
+    sessionController: { handle: async () => ({ accepted: true }) }
   });
   harness.store.setEnabled('s1', true);
   const { state, agent } = harness.addAgent({ id: 's1', openTurnStartSeq: 9 });
   state.phase = 'running';
   harness.attach();
   await harness.flush();
-
   state.phase = 'idle';
+  // 把 followup 拿掉，模拟旧运行时。
+  delete agent.followup;
   harness.emit('agent/status', { agent, status: 'idle' });
   await harness.flush();
   harness.clock.now = IDLE_NOW;
   harness.controller.reconcile();
   await harness.flush();
 
-  assert.equal(harness.prompts.length, 1, '应先试过官方');
-  assert.equal(state.followups.length, 1, '官方失败后必须回退提示词');
-  const message = state.followups[0];
-  assert.equal(message.role, 'user');
-  assert.deepEqual(message.content, []);
-  assert.deepEqual(message.source, { kind: 'retry', rpcId: message.id });
+  assert.equal(harness.prompts.length, 1, 'followup 不可用时回退官方 continuation');
+  assert.equal(harness.prompts[0].request.content.length, 0);
+  assert.equal(typeof harness.prompts[0].request.requestId, 'string');
+  assert.ok(harness.prompts[0].request.requestId.startsWith('dsh-session-enhance-offpeak-'));
+  assert.equal(harness.controller.status('s1').cover.interrupted, false);
 });
 
 test('被暂停打断：重复 reconcile 不重复唤醒', async () => {
   const harness = createHarness({
-    sessionController: { handle: async () => ({ accepted: true }) },
+    sessionController: { handle: async () => ({ accepted: true }) }
   });
   harness.store.setEnabled('s1', true);
   const { state, agent } = harness.addAgent({ id: 's1', openTurnStartSeq: 9 });
@@ -900,16 +897,16 @@ test('被暂停打断：重复 reconcile 不重复唤醒', async () => {
   harness.clock.now = IDLE_NOW;
   harness.controller.reconcile();
   await harness.flush();
-  assert.equal(harness.prompts.length, 1);
+  assert.equal(state.followups.length, 1);
 
   for (let round = 0; round < 5; round += 1) {
     harness.controller.reconcile();
     await harness.flush();
   }
-  assert.equal(harness.prompts.length, 1, '重复 reconcile 不该重复唤醒');
-  assert.equal(state.followups.length, 0);
-  // 续跑后 interrupted=false 且 inbox 空 → 去重状态按设计被清空（没有待跑工作）。
-  assert.deepEqual(harness.controller.describe().wakeStates, []);
+  assert.equal(state.followups.length, 1, '重复 reconcile 不该重复唤醒');
+  // 唤醒已发出（wakeStates=issued），Agent 还没被拉起来：允许保留去重状态，
+  // 这里只验证「不会再发第二条消息」。
+  assert.equal(harness.prompts.length, 0, '这条路径不该同时走官方 continuation');
 });
 
 test('监听器不抛错：garbage payload / 抛错的 Agent 都被收口', async () => {

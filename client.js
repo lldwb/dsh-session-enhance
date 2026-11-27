@@ -138,7 +138,7 @@ window.__ModuleLoader__.load({
 
       // 中断重试（composer 右侧）
       'retry.button': 'Retry',
-      'retry.hint': 'Previous turn was interrupted — click to retry',
+      'retry.hint': 'Previous turn did not finish (stopped, or the app was closed) — click to continue',
       'retry.busy': 'Retrying…',
       'retry.failed': 'Retry did not take effect ({code})',
 
@@ -260,7 +260,7 @@ window.__ModuleLoader__.load({
 
       // 中断重试（composer 右侧）
       'retry.button': '重试',
-      'retry.hint': '上一轮被中断 —— 点击重试',
+      'retry.hint': '上一轮没有正常结束（被停止，或应用被关闭）—— 点击继续',
       'retry.busy': '正在重试…',
       'retry.failed': '重试未生效（{code}）',
 

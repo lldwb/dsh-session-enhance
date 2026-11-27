@@ -14,15 +14,19 @@ test('默认 TTL 是 30 分钟', () => {
   assert.equal(new RecoveryStore().ttlMs, DEFAULT_RECOVERY_TTL_MS);
 });
 
-test('remember / peek：返回 sessionId、turn 与 ageMs', () => {
+test('remember / peek：返回 sessionId、turn、cause 与 ageMs', () => {
   let now = 1_000;
   const store = new RecoveryStore({ now: () => now });
   store.remember('s1', { turn: 3 });
 
   now = 1_500;
   const snapshot = store.peek('s1');
-  assert.deepEqual(snapshot, { sessionId: 's1', turn: 3, ageMs: 500 });
+  assert.deepEqual(snapshot, { sessionId: 's1', turn: 3, cause: 'user', ageMs: 500 });
   assert.equal(store.size, 1);
+
+  // 应用被关闭时来源是 app。
+  store.remember('s2', { turn: 4, cause: 'app' });
+  assert.equal(store.peek('s2')?.cause, 'app');
 });
 
 test('TTL 过期：peek 返回 undefined 并清掉记录', () => {

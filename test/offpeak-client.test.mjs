@@ -738,7 +738,7 @@ test('渲染：busy 显示「…」且禁用；失败 Toast 用 sequence 当 key
   assert.deepEqual(rendered.dismissed, [7]);
 });
 
-test('固定尺寸：chip 与 hero 在高峰/空闲/未选中/切换中都是 108 × 24', async (t) => {
+test('固定尺寸：chip 与 hero 在高峰/空闲/未选中/切换中都是 106 × 24', async (t) => {
   const env = await setup();
   t.after(env.restore);
   const states = [
@@ -749,16 +749,16 @@ test('固定尺寸：chip 与 hero 在高峰/空闲/未选中/切换中都是 10
   ];
   for (const [name, snapshot, view] of states) {
     const chip = renderChip(env.module, env.t, snapshot);
-    assert.equal(chip.button.props.style.width, '108px', `chip ${name} 宽固定`);
+    assert.equal(chip.button.props.style.width, '106px', `chip ${name} 宽固定`);
     assert.equal(chip.button.props.style.height, '24px', `chip ${name} 高固定`);
     assert.equal(chip.button.props['data-offpeak-state'], view);
     const hero = renderHeroToggle(env.module, env.t, { view });
-    assert.equal(hero.button.props.style.width, '108px', `hero ${name} 宽固定`);
+    assert.equal(hero.button.props.style.width, '106px', `hero ${name} 宽固定`);
     assert.equal(hero.button.props.style.height, '24px', `hero ${name} 高固定`);
   }
 });
 
-test('宽度预算：gap 2px、倒计时区 ≥47px（放得下 14h51m 这类长倒计时，不折叠）', async (t) => {
+test('宽度预算：gap 2px、倒计时区 ≥47px 且右对齐（长倒计时不折叠、短倒计时贴右）', async (t) => {
   const env = await setup();
   t.after(env.restore);
   const chip = renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: true, paused: false }), countdownMs: COUNTDOWN_MS }));
@@ -766,13 +766,14 @@ test('宽度预算：gap 2px、倒计时区 ≥47px（放得下 14h51m 这类长
   const hero = renderHeroToggle(env.module, env.t, { view: 'idle' });
   assert.equal(hero.button.props.style.gap, '2px');
 
-  // 108（总宽）- 16（Pill 左右 padding）- 15（图标）- 2 - 24（相位）- 2 = 49px 给倒计时。
-  const budget = 108 - 16 - 15 - 2 - 24 - 2;
+  // 106（总宽）- 16（Pill 左右 padding）- 15（图标）- 2 - 24（相位）- 2 = 47px 给倒计时。
+  const budget = 106 - 16 - 15 - 2 - 24 - 2;
   assert.ok(budget >= 47, `倒计时可用宽度 ${budget}px 至少要 47px（14h51m 实测约 45px）`);
   // 倒计时段必须是可伸缩的那一段，且允许省略号作为最后兜底。
   const children = chip.button.props.children;
   assert.equal(children[2].props.style.flex, '1 1 auto');
   assert.equal(children[2].props.style.overflow, 'hidden');
+  assert.equal(children[2].props.style.textAlign, 'right', '倒计时右对齐：短文案也贴右侧内边距');
 });
 
 test('新建页开关：失败时与 chip 一样弹 Toast（不再静默）', async (t) => {

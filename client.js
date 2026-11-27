@@ -424,12 +424,12 @@ window.__ModuleLoader__.load({
     /**
      * 两处谷峰开关的固定尺寸（用户要求：无论开关/状态/文案/倒计时怎么变，宽高都不变）。
      *
-     * 布局：padding 16 + 图标 15 + gap 2 + 相位 24 + gap 2 + 倒计时 47 = 106px…
-     * 实际取 **108px**：`14h51m` 这类长倒计时（空闲→高峰，约 45px）在 47px 里放得下；
-     * gap 从 4 收到 2（用户 2026-11-26 反馈「空闲 14h51…」被省略号折叠——原来的
-     * 106px 里倒计时只剩 43px）。相位区固定 24px，所以图标/相位位置仍不随状态变化。
+     * 布局：padding 16 + 图标 15 + gap 2 + 相位 24 + gap 2 + 倒计时 47 = 106px。
+     * 取 **106px**：最长倒计时 `14h48m` 实测 43px，47px 槽位放得下；倒计时段**右对齐**，
+     * 短倒计时（`1h36m`）也紧贴右侧内边距，不会在文字右侧留下固定空白（用户 2026-11-27）。
+     * 相位区固定 24px，所以图标/相位位置仍不随状态变化。
      */
-    const OFFPEAK_PILL_WIDTH = '108px';
+    const OFFPEAK_PILL_WIDTH = '106px';
     const OFFPEAK_PILL_HEIGHT = '24px';
     const OFFPEAK_NAME_WIDTH = '24px';
     /** 段间间距：2px（比官方的 4px 紧，给倒计时让出宽度）。 */
@@ -2193,14 +2193,15 @@ window.__ModuleLoader__.load({
             },
             children: offpeakPhaseLabel(phase, t)
           }),
-          // 倒计时段：从固定位置开始，数字变化只在右侧。
+          // 倒计时段：右对齐 → 文字紧贴右侧内边距（用户 2026-11-27：固定宽度下
+          // `textAlign:left` 会把「1h36m」之外的余量全堆在文字右侧，显得空）。
           jsx('span', {
             style: {
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               minWidth: 0,
               flex: '1 1 auto',
-              textAlign: 'left',
+              textAlign: 'right',
               fontVariantNumeric: 'tabular-nums',
               whiteSpace: 'nowrap'
             },
@@ -2339,14 +2340,14 @@ window.__ModuleLoader__.load({
             },
             children: offpeakPhaseLabel(phase, t)
           }),
-          // 倒计时段固定起点。
+          // 倒计时段右对齐（同 chip）：贴右侧内边距，消掉文字右侧的固定空白。
           jsx('span', {
             style: {
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               minWidth: 0,
               flex: '1 1 auto',
-              textAlign: 'left',
+              textAlign: 'right',
               fontVariantNumeric: 'tabular-nums',
               whiteSpace: 'nowrap'
             },

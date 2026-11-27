@@ -412,7 +412,7 @@ test('createRetryUserMessage：谷峰原因的消息正文写明高峰暂停', (
   assert.ok(message.content[0].text.includes('高峰暂停'));
 });
 
-test('driveRetry：谷峰原因直接走带文案的 followup，不走官方 continuation', async () => {
+test('driveRetry：谷峰原因也**先走官方 continuation**，成功后不发带文案消息', async () => {
   const followups = [];
   const prompts = [];
   const ctx = {
@@ -422,8 +422,8 @@ test('driveRetry：谷峰原因直接走带文案的 followup，不走官方 con
           get: () => ({
             followup: async (message) => {
               followups.push(message);
-            },
-          }),
+            }
+          })
         };
       }
       if (key === 'sessionController') {
@@ -431,23 +431,66 @@ test('driveRetry：谷峰原因直接走带文案的 followup，不走官方 con
           prompt: async (request) => {
             prompts.push(request);
             return undefined;
-          },
+          }
         };
       }
       return undefined;
-    },
+    }
+  };
+  const outcome = await createDriveRetry(ctx)('s1', 'offpeak');
+  assert.equal(outcome.ok, true);
+  assert.equal(outcome.method, 'official', '官方 continuation 优先（谷峰原因也一样）');
+  assert.equal(prompts.length, 1, '必须先试官方 continuation');
+  assert.equal(followups.length, 0, '官方成功后不再发带文案的消息');
+});
+
+test('driveRetry：官方不可用时，谷峰原因回退到写明「高峰暂停」的消息', async () => {
+  const followups = [];
+  const prompts = [];
+  const ctx = {
+    get: (key) => {
+      if (key === 'agents') {
+        return {
+          get: () => ({
+            followup: async (message) => {
+              followups.push(message);
+            }
+          })
+        };
+      }
+      if (key === 'sessionController') {
+        return {
+          prompt: async (request) => {
+            prompts.push(request);
+            throw Object.assign(new Error('session/agent-busy'), { code: 'session/agent-busy' });
+          }
+        };
+      }
+      return undefined;
+    }
   };
   const outcome = await createDriveRetry(ctx)('s1', 'offpeak');
   assert.equal(outcome.ok, true);
   assert.equal(outcome.method, 'prompt');
-  assert.equal(prompts.length, 0, '不该走官方空内容 continuation');
-  assert.equal(followups.length, 1);
-  assert.ok(followups[0].content[0].text.includes('高峰暂停'));
+  assert.equal(prompts.length, 1, '先试过官方');
+  assert.equal(followups.length, 1, '官方失败后回退消息');
+  assert.ok(followups[0].content[0].text.includes('高峰暂停'), '回退文案必须写明高峰暂停');
+  assert.ok(followups[0].content[0].text.includes('不是失败'));
 });
 
 test('driveRetry：谷峰原因但会话已无 live agent → NO_LIVE_AGENT（不静默成功）', async () => {
   const ctx = {
-    get: (key) => (key === 'agents' ? { get: () => undefined } : undefined),
+    get: (key) => {
+      if (key === 'agents') return { get: () => undefined };
+      if (key === 'sessionController') {
+        return {
+          prompt: async () => {
+            throw Object.assign(new Error('session/agent-busy'), { code: 'session/agent-busy' });
+          }
+        };
+      }
+      return undefined;
+    }
   };
   const outcome = await createDriveRetry(ctx)('s1', 'offpeak');
   assert.equal(outcome.ok, false);

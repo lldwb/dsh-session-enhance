@@ -422,17 +422,16 @@ window.__ModuleLoader__.load({
     const LIANGGU_NEW_SLOT_ORDER = 0;
 
     /**
-     * 两处谷峰开关的固定尺寸（用户要求：无论开关/状态/文案/倒计时怎么变，宽高都不变）。
+     * 两处谷峰开关的尺寸与排布（用户 2026-11-27：三段之间不能有大间隔）。
      *
-     * 布局：padding 16 + 图标 15 + gap 2 + 相位 24 + gap 2 + 倒计时 47 = 106px。
-     * 取 **106px**：最长倒计时 `14h48m` 实测 43px，47px 槽位放得下；倒计时段**右对齐**，
-     * 短倒计时（`1h36m`）也紧贴右侧内边距，不会在文字右侧留下固定空白（用户 2026-11-27）。
-     * 相位区固定 24px，所以图标/相位位置仍不随状态变化。
+     * **宽度随内容自适应**：`图标 15 + gap 2 + 相位 24 + gap 2 + 倒计时（内容宽）+ padding 16`。
+     * 之前固定 106px 时，倒计时槽 47px 里只放 ~37px 文字，多出的 ~10px 无论左对齐（堆右侧）
+     * 还是右对齐（堆在「高峰」与倒计时之间）都会显空——固定宽度下余量必然存在，所以改成
+     * 内容宽：三段紧贴（间距 2px），右侧也只需内边距。高度仍固定 24px。
      */
-    const OFFPEAK_PILL_WIDTH = '106px';
     const OFFPEAK_PILL_HEIGHT = '24px';
     const OFFPEAK_NAME_WIDTH = '24px';
-    /** 段间间距：2px（比官方的 4px 紧，给倒计时让出宽度）。 */
+    /** 段间间距：2px（比官方的 4px 紧）。 */
     const OFFPEAK_PILL_GAP = '2px';
 
     /** 倒计时进入「紧迫」的阈值：剩余 ≤ 60s 起有动效，≤ 10s 更急促。 */
@@ -2172,7 +2171,6 @@ window.__ModuleLoader__.load({
         style: {
           ...offpeakPillPalette(phase, enabled),
           flex: 'none',
-          width: OFFPEAK_PILL_WIDTH,
           height: OFFPEAK_PILL_HEIGHT,
           maxWidth: 'none',
           boxSizing: 'border-box',
@@ -2193,15 +2191,10 @@ window.__ModuleLoader__.load({
             },
             children: offpeakPhaseLabel(phase, t)
           }),
-          // 倒计时段：右对齐 → 文字紧贴右侧内边距（用户 2026-11-27：固定宽度下
-          // `textAlign:left` 会把「1h36m」之外的余量全堆在文字右侧，显得空）。
+          // 倒计时段：**内容宽**，紧跟相位（间距只有 gap 2px），不占固定槽位。
           jsx('span', {
             style: {
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              minWidth: 0,
-              flex: '1 1 auto',
-              textAlign: 'right',
+              flex: '0 0 auto',
               fontVariantNumeric: 'tabular-nums',
               whiteSpace: 'nowrap'
             },
@@ -2319,7 +2312,6 @@ window.__ModuleLoader__.load({
         style: {
           ...palette,
           flex: 'none',
-          width: OFFPEAK_PILL_WIDTH,
           height: OFFPEAK_PILL_HEIGHT,
           maxWidth: 'none',
           boxSizing: 'border-box',
@@ -2340,14 +2332,10 @@ window.__ModuleLoader__.load({
             },
             children: offpeakPhaseLabel(phase, t)
           }),
-          // 倒计时段右对齐（同 chip）：贴右侧内边距，消掉文字右侧的固定空白。
+          // 倒计时段内容宽（同 chip）：紧跟相位，三段间距只有 2px。
           jsx('span', {
             style: {
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              minWidth: 0,
-              flex: '1 1 auto',
-              textAlign: 'right',
+              flex: '0 0 auto',
               fontVariantNumeric: 'tabular-nums',
               whiteSpace: 'nowrap'
             },

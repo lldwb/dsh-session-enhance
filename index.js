@@ -20,6 +20,10 @@
  * - **分级自动压缩**（`lib/compact/host.mjs`）：`autoCompact` 打开时，在每次模型请求前
  *   按压力执行 L1 批量修剪工具结果（不调模型）/ L2 修剪+摘要（一次事务）/ L3 溢出恢复。
  *   `autoCompact` 默认关闭，可在「设置 → 插件 → 会话增强」里打开。
+ * - **溢出恢复与分块摘要兜底**：L3 按「规范 code 或明确超限文案」识别上下文超限（真实日志里
+ *   同一类失败有两种 code），并以 `prepend` 注册，抢在 `llm-retry` 等监听器之前；当压缩的
+ *   摘要请求自身再超窗时（它等于被压缩历史的重放），`lib/compact/summarizer.mjs` 会转成
+ *   纯文本分段摘要再汇总，避免整段压缩失败。两者都与 `autoCompact` 开关无关。
  *
  * 本文件同时是包根导出（`exports["."]`）：`dsh-session-enhance` 这个 specifier 解析到这里，
  * 于是单入口配置（只写一行 `dsh-session-enhance`）仍然有会话查询能力——两个组件真正

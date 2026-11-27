@@ -3,6 +3,73 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 6.10.0 — 2026-11-27
+
+### 新能力：400 上下文超限自动触发压缩；压缩请求自身超窗时改用分块摘要
+
+**症状**（用户报，两处现场均已从会话日志核对）：
+
+- `session-8ec2b056`（standard 预设，1M 窗口）turn 440：上游 400
+  `... this model's maximum context length is 1048576 tokens, but the prompt contains 1049641 input tokens ...`，
+  DSH 记为 `CONTEXT_WINDOW_EXCEEDED`，但**没有任何压缩尝试**——`llm-retry`（`mode: "always"`）
+  把同一个请求重试 6 次，最后由用户手动停止；turn 441–443 仍然同样 400。
+- 同会话手动 `/compact` 连续失败：`compaction/end.error` 分别是
+  `summarization truncated at the token cap (incomplete checkpoint)`，以及 3 次**压缩请求自己**的 400
+  （prompt 1,048,988 / 1,049,061 / 1,049,195 tokens，窗口 1,048,576），
+  用户看到「Compaction could not produce a useful summary. The attempt is recorded in the session log.」。
+
+**根因**：
+
+1. 官方摘要请求是「把被压缩范围**整段重放** + 压缩指令」，与失败的原请求几乎同尺寸
+   （只差一个尾节点与指令，净额约 650 tokens）。会话贴到窗口时，它**按构造必然再超窗**——
+   所以「再全量压缩一次」不是"稍微超一点"，而是必然重演同一个失败。
+2. 「先剪枝」是官方两条路径的既有第一步，但对本事故无效：该会话 457 条工具结果**全部**
+   低于 8K 剪枝阈值（剪枝可释放 0 字符），token 大头是 assistant / user 对话文本
+   （900,197 / 753,117 字符，工具结果仅 354,826）。
+3. 溢出判据只认 code：同一类「请求超过窗口」在真实日志里被记成两种 code——
+   `maximum context length ...` 是 `CONTEXT_WINDOW_EXCEEDED`，而
+   `Input too long: model limit N tokens, requested M tokens`、
+   `The input is longer than the model's context length` 是 `INVALID_REQUEST`。
+4. `agent/request-error` 的监听顺序使溢出恢复没有机会执行（窗口内只看到 `llm/retry`，没有压缩）。
+5. 压力压缩也会静默停摆：诊断确认停摆起点是 **turn 426**（首次真实越过 838,860 阈值；turn 396–425 未越线属正常不压），
+   此后 18 个回合每一步都越线却没有任何 `compaction/start`。引擎/锁/range 都可排除（同期手动 `/compact` 能写入
+   `compaction/start`），最合理的解释是 `tokenMeter.measure()` 的 usage 锚点在 turn 425 前后失效、退回 `chars/4`
+   启发式（中文/JSON 低估），于是估算压力低于阈值；而 `autoCompact: true` 时插件守卫又让官方压力路径让路——
+   两套保险同时失效（此项为**高度可疑但未最终证实**：宿主机不落盘日志，只能靠决策埋点复核）。
+
+**修复**：
+
+- `lib/compact/overflow.mjs`：新增超限识别。判据 = 规范 code `CONTEXT_WINDOW_EXCEEDED`
+  **或** 明确超限文案（覆盖 OpenAI / Anthropic / 网关 / xAI / DS4 等措辞）；
+  限流 / 配额 / 认证文案显式排除。
+- `lib/compact/summarizer.mjs`：新增分块摘要兜底。预算内走官方单次（保留前缀缓存复用）；
+  预算外或单次仍超窗时：消息转纯文本 transcript → 按「窗口 − 摘要输出预留 − 工具 schema −
+  指令余量」切段 → 逐段 `ctx.llm.stream` 摘要（8K 输出上限、不带工具 schema/toolHistory）→
+  汇总 → 交**官方原 summarizer** 出结构化 checkpoint。段内再次超窗则二分重试（深度 ≤ 6）、
+  单条消息超预算则头尾截断；模型调用总次数上限 48，超限直接失败，**绝不写半截摘要**。
+- `lib/compact/host.mjs`：在 compaction 引擎实例上包 `summarize()`（官方文档称其为
+  「唯一的 subclass 定制点」，与已有 `compactIfNeeded` 守卫同一手法），卸载时恢复；
+  `agent/request-error` 改为 `prepend` 注册，保证溢出恢复先于 `llm-retry` 等其他监听器；
+  **压力判定取 `max(measure().totalTokens, contextPressure().pressureTokens)`**（提供方实测不会低于真实 prompt 大小，
+  只会更早压、不会更晚）；每次决策写日志（tier / reason / total / measured / provider / baseline / pressedBy）
+  并进入 `get` RPC 的 `lastDecision`；估算明显低于实测时每 agent 告警一次；诊断接口新增
+  `summarizerPatched` 与 `chunkedFallbacks`。
+- `lib/context/host.mjs`：手动压缩（面板按钮与 `/compact`）进入前也确保补丁已安装。
+- 分块兜底与 `autoCompact` 开关**无关**：即使主动自动压缩关闭，溢出恢复仍会先压缩再重试。
+
+**验证**：
+
+- 单测 **379/379**（新增：真实日志四种超限文案与 code 不一致、限流/配额不误判、
+  cause 链与 `LlmError.failure`、分块预算/切段/二分/截断/取消/上限、预算内不改行为、
+  非超限错误不被掩盖、`prepend` 注册与补丁恢复、provider 实测压力取大与决策诊断字段）。
+- 沙箱真实 Loader 端到端（临时脚本化 mock provider，139 条合成配置）：观测到的请求序列为
+  `普通请求 → 200 tool_use`（撑出 ≥3 个 surface 节点）→ `普通请求 → 400 超限` →
+  **官方单次压缩 → 400**（复现事故）→ **分段摘要 → 200** → **结构化总摘要 → 200** →
+  `重试请求 → 200`。插件只在表层 `replaceGeneration` 前进后才返回 `retry`，
+  因此「重试确实发生」即证明压缩事务已提交；首轮沙箱还验证了插件在真实 Loader 里正常激活。
+- 端到端未改写真实会话：mock 只替换 provider 端点，压缩仍走官方 `compaction-basic` 的
+  事务与锁（`compaction/start` … `compaction/end`），插件只包 `summarize` 与 `agent/request-error`。
+
 ## 6.9.3 — 2026-11-27
 
 ### 修复：侧边提问会话「无法读取主会话内容」

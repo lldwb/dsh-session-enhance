@@ -246,13 +246,32 @@ DSH 自带官方上下文 meter（composer 下方的小圆环 + 百分比），�
 |---|---|---|---|---|
 | L1 | 微压缩 | **按需**修剪超预算工具结果：从新到旧替换，压力降回阈值以下就停（官方 `toolResultPruner.pruneContent` + 官方替换协议；前提缺失时回退 `pruneSession` 全量修剪） | 否 | ≥ 60%（`pruneRatio`） |
 | L2 | 深度压缩 | 官方 `compactIfNeeded('pressure')`：**先修剪全部可剪工具结果，再摘要最旧范围**，同一事务 | 是（1 次摘要） | ≥ 80%（`compactRatio`） |
-| L3 | 溢出恢复 | 官方 `compactIfNeeded('context-overflow')`，表层前进后重试该请求 | 是 | 提供方返回 `CONTEXT_WINDOW_EXCEEDED` |
+| L3 | 溢出恢复 | 官方 `compactIfNeeded('context-overflow')`，表层前进后重试该请求 | 是 | 提供方返回上下文超限（规范 code `CONTEXT_WINDOW_EXCEEDED`，或命中超限文案的 400/413） |
 
 **有效窗口** = 模型窗口 − 输出预留（最近请求头的 `maxTokens`）。**触发阈值**与官方 `compaction-basic` 逐字一致：`min(窗口 × 比例, 窗口 − 输出预留 − headroomTokens 65536)`，不写死 token 数。1M 窗口下两者恰好相等；小窗口下 headroom 会把阈值显著提前（128k 窗口 + 8k 预留 → 54,464 而不是 96,000）。窗口小于压缩余量时返回 `NO_PRESSURE_BUDGET`（官方在同样配置下抛 `TargetPressureConfigError`，不压缩）。
 
 **批处理（一次性断点）**：历史替换会让「从第一个被替换 token 起」的前缀缓存失效。所以 L2 不拆成「先修剪、下轮再摘要」——官方 `compactIfNeeded('pressure')` 在**同一个压缩事务**（一次 `compaction/start` … `compaction/end`）里先剪全部、再摘要，只换一次表层；L1 按需修剪，从新到旧替换、省够就停（剪得越靠前，失效的前缀缓存越多，「省够就停」同时降低不可逆损失与缓存代价）；自动模式下 L1 / L2 都在**同一个 `agent/pre-step`**（下一次请求发出前）完成，下一次请求看到的是最终表层，因此只产生一个缓存断点。
 
+**压力取「估算」与「提供方报告的用量」的较大值**：`tokenMeter.measure()` 在 usage 锚点不可用时会退回 `chars/4` 启发式（中文 / JSON 会低估）。只看估算可能让压力判定偏低、该压时不压，所以判定压力取 `max(measure().totalTokens, contextPressure().pressureTokens)`——后者由提供方返回，不会低于真实 prompt 大小，取大只会更早压、不会更晚。每次决策（`tier` / `reason` / `total` / `measured` / `provider` / `baseline` / `pressedBy`）都会写日志，并进入 `get` RPC 的 `lastDecision`，用于回答「这一轮为什么没压」。
+
 **动作行的预警后缀**：压力 ≥ 有效窗口 90% 时，面板那一行显示「上下文即将用尽」。
+
+### 压缩请求自身超窗时：分块摘要兜底
+
+官方摘要请求是「把被压缩范围**整段重放** + 压缩指令」，与触发它的原请求几乎同尺寸：会话贴到窗口上限时，摘要请求同样会超窗。此时**先剪枝也无法解决**——工具结果通常早已被剪过，剩下的大头是 assistant / user 对话文本。
+
+本插件在压缩引擎实例上包一层 `summarize()`（官方文档称它是「唯一的 subclass 定制点」）：
+
+1. **预算内**：原样走官方单次摘要（保留前缀缓存复用，行为与没装插件一致）；
+2. **预算外，或单次仍超窗**：把被压缩消息转成纯文本 transcript → 按「窗口 − 摘要输出预留 − 工具 schema − 指令余量」切段 → 逐段用 `ctx.llm.stream` 出小摘要（输出上限 8K、不带工具 schema）→ 段摘要足够小就直接拼、放不下再逐级合并 → 最后把「系统提示 + 汇总」交给**官方原 summarizer** 出结构化 checkpoint；
+3. **段内再次超窗**：二分该段重试（深度 ≤ 6）；单条消息就超预算时头尾截断并标注（只影响本次摘要输入，不改会话）；模型调用总次数有上限（48 次）。
+   整个压缩仍是**一个事务**（一次 `compaction/start` … `compaction/end`、一次表层替换）；任何一步走到上限都**失败退出**，绝不写半截摘要。
+
+覆盖所有入口：自动压力压缩（L2）、溢出恢复（L3）、手动 `/compact`（面板按钮与打字命令）与切模型的压力检查都走同一个 `summarize`，所以「Compaction could not produce a useful summary」这类自身超窗失败在四条路径上一并消失。
+
+**溢出判据不只看 code**：同一类「请求超过模型窗口」在不同上游文案下会被记成不同 code——`maximum context length …` 是 `CONTEXT_WINDOW_EXCEEDED`，而 `Input too long: model limit N tokens, requested M tokens`、`The input is longer than the model's context length` 可能是 `INVALID_REQUEST`。只认 code 会漏判（重发同一请求永远不会成功），所以插件按「规范 code **或** 明确超限文案」判定，并排除限流 / 配额措辞。
+
+**监听顺序**：`agent/request-error` 用 `prepend` 注册。`llm-retry` 的 `mode: "always"` 等监听器也会处理同一个失败；顺序不对时溢出恢复可能被挤到后面甚至不执行，因此本插件必须排在前面。
 
 ### 开关与阈值
 
@@ -294,7 +313,10 @@ DSH 自带官方上下文 meter（composer 下方的小圆环 + 百分比），�
 - **没有「Snip 历史剪除」**：DSH 表层只能「替换」不能「删除」；直接写事件会绕过 compaction seam，要自己复刻锁与工具配对，风险大于收益。
 - **没有单独的「上下文折叠」**：DSH 的 seam 只有「摘要替换」一种写操作；官方 `compactIfNeeded` 本身就是「摘要最旧范围 + 逐字保留近期尾部」。
 - **不阻塞请求**：DSH 没有「阻塞 API 调用」的 seam，所以预警只显示提示，不会拦下请求。
-- **摘要内容由官方决定**：摘要提示词、保留比例与压缩后内容由官方 `compaction-basic` 负责（结构化 8 段检查点，保留文件路径、错误与用户原话），本插件不替换它；插件只负责「什么时候压、压哪一级」。
+- **摘要内容由官方决定**：官方单次路径的摘要提示词、保留比例与压缩后内容由 `compaction-basic` 负责（结构化 8 段检查点，保留文件路径、错误与用户原话）；分块兜底路径的段摘要由本插件生成，但最终 checkpoint 仍由官方 summarizer 产出，格式与旁注惯例不变。
+- **分块兜底会放弃前缀缓存**：它只在「单次摘要必然/已经超窗」时才启动，代价是多次模型调用与整段重新计费；正常压缩仍复用同一前缀的缓存。
+- **极端会话仍可能失败**：系统提示词 + 工具 schema 本身就超过窗口、或整段内容无法再切分时，分块也救不了——此时按原样报错，不写半截摘要。
+- **不改变提供方的重试策略**：若某个 provider 配了 `retryPolicy: { mode: always }`，确定性失败（含超限）在压缩失败后仍会被它反复重试。本插件只能在压缩成功时抢先返回重试；要避免空转，应把该 provider 的策略改为 `normal`，或不要在 `always` 模式下长时间挂着失败轮次。
 
 ## 谷峰插件
 
@@ -329,7 +351,7 @@ DSH 自带官方上下文 meter（composer 下方的小圆环 + 百分比），�
 
 **子代理与主会话一样「暂停 → 自动恢复」**：高峰被打断的那个回合（`interrupted`）在**两种时机**都会自动续跑，不需要父智能体去 `session_resume_subagents` 善后——① **进入空闲时段**（`reconcile` 遍历所有被覆盖的 Agent）；② **关闭谷峰开关**（`setEnabled(false)` 释放 hold 后，对「运行中被 cancel、没有 hold」的会话同样唤醒）。
 
-> **恢复顺序与「中断重试」组件一致**（用户 2026-11-27 明确）：**先试官方 continuation**（历史里是紧凑的「已请求继续生成」）；官方不可用才 `agent.followup(...)` —— 被高峰暂停打断的会话发一条**写明原因**的消息（「上一轮因谷峰「高峰暂停」而被中断，不是失败。现在高峰已结束，请从中断处继续完成…」），只是排队提示则发空 retry 消息。
+> **恢复顺序与「中断重试」组件一致**：**先试官方 continuation**（历史里是紧凑的「已请求继续生成」）；官方不可用才 `agent.followup(...)` —— 被高峰暂停打断的会话发一条**写明原因**的消息（「上一轮因谷峰「高峰暂停」而被中断，不是失败。现在高峰已结束，请从中断处继续完成…」），只是排队提示则发空 retry 消息。
 
 **开关是即时的**：高峰打开 → 立刻暂停（必要时中断当前轮）；空闲打开 → 不暂停；关闭 → 立刻释放，队列里压着的消息马上开始跑。
 

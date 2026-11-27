@@ -144,6 +144,7 @@ test('options：readOption 兼容 volatile 引用与普通值', () => {
 function makeDriverEnvironment(options = {}) {
   let auto = options.auto === true;
   let totalTokens = options.totalTokens ?? 0;
+  let providerPressure = options.providerPressure;
   const calls = { prune: 0, compactIfNeeded: [], compactNow: 0, measure: 0 };
   const engine = {
     compactIfNeeded: async (agent, trigger, signal) => {
@@ -165,13 +166,19 @@ function makeDriverEnvironment(options = {}) {
   const meter = {
     measure: () => {
       calls.measure += 1;
-      return { totalTokens };
-    }
+      return { totalTokens, baseline: { kind: options.baselineKind ?? 'usage' } };
+    },
+    ...(options.providerPressureEnabled === false
+      ? {}
+      : {
+          contextPressure: () => ({ pressureTokens: providerPressure })
+        })
   };
   const services = {
     compaction: engine,
     toolResultPruner: pruner,
     tokenMeter: meter,
+    ...(options.services ?? {}),
     // `agents` 只在测「修剪必须先有开放 turn」时注入；省略时 serviceOf 返回 undefined，
     // 驱动器的 isTurnOpen 回退为 true（保持既有用例的行为）。
     ...(options.agents === undefined ? {} : { agents: options.agents }),
@@ -193,6 +200,9 @@ function makeDriverEnvironment(options = {}) {
     },
     setTotalTokens: (value) => {
       totalTokens = value;
+    },
+    setProviderPressure: (value) => {
+      providerPressure = value;
     }
   };
 }
@@ -622,4 +632,292 @@ test('driver：agents 服务缺失时保持旧行为（无法判断就不阻断�
 
   assert.equal(decision.pruned, 1);
   assert.equal(session.appended.filter((event) => event.surfaceOp !== undefined).length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// 触发层：code + 文案双判据（真实日志里同一类超限有两种 code）
+// ---------------------------------------------------------------------------
+
+/**
+ * 造一个「可摘要」的 agent：带 routed provider/model、窗口与输出预留。
+ *
+ * @param {{ window?: number, maxTokens?: number }} [options] - 窗口参数。
+ * @returns {any} agent。
+ */
+function makeSummarizableAgent({ window = 20_000, maxTokens = 0 } = {}) {
+  return {
+    options: { provider: 'test', model: 'test-model' },
+    session: {
+      id: 's-summarizable',
+      requestContext: () => ({ contextWindow: window }),
+      requestHeader: () => ({ config: { provider: 'test', model: 'test-model', maxTokens } }),
+      surface: { replaceGeneration: 1 }
+    },
+    ctx: { get: () => undefined }
+  };
+}
+
+/**
+ * 造一个会流式返回段摘要的 llm 服务。
+ *
+ * @param {string[]} [record] - 记录每次调用 options 的数组。
+ * @returns {any} llm 服务。
+ */
+function makeStreamingLlm(record = []) {
+  return {
+    async *stream(options) {
+      record.push(options);
+      yield { type: 'block-start', index: 0, blockType: 'text' };
+      yield { type: 'text-delta', index: 0, text: 'segment summary text' };
+      yield { type: 'block-end', index: 0, block: { type: 'text', text: 'segment summary text' } };
+      yield { type: 'finish', reason: { kind: 'stop' } };
+    }
+  };
+}
+
+/** 造一个官方 SummaryResult 形状的返回值。 */
+function makeSummaryResult() {
+  return {
+    summary: [{ type: 'text', text: 'final summary' }],
+    rawOutput: [{ type: 'text', text: 'final summary' }],
+    llmStreamCall: true,
+    provider: 'test',
+    model: 'test-model',
+    maxTokens: 1024
+  };
+}
+
+test('driver：request-error 用 prepend 注册（溢出恢复要抢在 llm-retry 之前）', () => {
+  const env = makeDriverEnvironment({ auto: false });
+  env.driver.attach();
+  const entry = env.ctx.collected.events.find((event) => event.name === 'agent/request-error');
+  assert.ok(entry !== undefined);
+  assert.deepEqual(entry.options, { prepend: true });
+});
+
+test('driver：INVALID_REQUEST + 超限文案也触发溢出恢复（真实日志 11-23 的措辞）', async () => {
+  const env = makeDriverEnvironment({ auto: false });
+  const agent = makeAgent({ generation: 1 });
+  env.engine.compactIfNeeded = async (target, trigger, signal) => {
+    env.calls.compactIfNeeded.push({ trigger, signal });
+    agent.session.surface.replaceGeneration += 1;
+    return { shadowedSeqs: [1], shadowedTokenCount: 10 };
+  };
+  const result = await env.driver.onRequestError(
+    {
+      agent,
+      failure: {
+        code: 'INVALID_REQUEST',
+        status: 400,
+        message:
+          '400 {"error":{"message":"Upstream request failed: [invalid_request_error] Input too long: model limit 1048576 tokens, requested 1052445 tokens trace_id: 76a0814c8b3d6ad06ef5927dbecd94cd","type":"invalid_request_error"},"type":"error"}'
+      },
+      signal: { aborted: false }
+    },
+    async () => undefined
+  );
+  assert.deepEqual(result, { kind: 'retry' });
+  assert.equal(env.calls.compactIfNeeded.length, 1);
+});
+
+test('driver：普通 INVALID_REQUEST（非超限文案）不触发溢出恢复', async () => {
+  const env = makeDriverEnvironment({ auto: false });
+  const agent = makeAgent();
+  let nextCalled = 0;
+  const result = await env.driver.onRequestError(
+    {
+      agent,
+      failure: { code: 'INVALID_REQUEST', status: 400, message: 'tools.0.input_schema is invalid' },
+      signal: { aborted: false }
+    },
+    async () => {
+      nextCalled += 1;
+      return undefined;
+    }
+  );
+  assert.equal(nextCalled, 1);
+  assert.equal(result, undefined);
+  assert.equal(env.calls.compactIfNeeded.length, 0);
+});
+
+// ---------------------------------------------------------------------------
+// 分块摘要兜底：包住引擎 summarize，预算内单次、预算外/超限时 map-reduce
+// ---------------------------------------------------------------------------
+
+test('driver：ensureSummarizer 包装引擎 summarize，卸载时恢复', () => {
+  const env = makeDriverEnvironment({ auto: false });
+  const agent = makeSummarizableAgent();
+  const original = async () => makeSummaryResult();
+  env.engine.summarize = original;
+  env.engine.config = { maxTokens: 1024 };
+
+  const disposers = env.driver.attach();
+  env.driver.ensureSummarizer(agent);
+
+  assert.notEqual(env.engine.summarize, original);
+  assert.equal(env.driver.diag().summarizerPatched, 1);
+
+  for (const dispose of disposers) dispose();
+  assert.equal(env.engine.summarize, original);
+});
+
+test('driver：预算内的摘要原样走官方单次（不触发分块）', async () => {
+  const llmCalls = [];
+  const env = makeDriverEnvironment({ auto: false, services: { llm: makeStreamingLlm(llmCalls) } });
+  const agent = makeSummarizableAgent();
+  let originalCalls = 0;
+  env.engine.summarize = async () => {
+    originalCalls += 1;
+    return makeSummaryResult();
+  };
+  env.engine.config = { maxTokens: 1024 };
+  env.driver.ensureSummarizer(agent);
+
+  const result = await env.engine.summarize(
+    { messages: [{ role: 'user', content: [{ type: 'text', text: 'x'.repeat(400) }] }] },
+    agent
+  );
+
+  assert.equal(originalCalls, 1);
+  assert.equal(llmCalls.length, 0);
+  assert.equal(result.llmStreamCall, true);
+  assert.equal(env.driver.diag().chunkedFallbacks, 0);
+});
+
+test('driver：预估超预算时直接分块，段摘要走 llm.stream，总摘要走官方 summarizer', async () => {
+  const llmCalls = [];
+  const env = makeDriverEnvironment({ auto: false, services: { llm: makeStreamingLlm(llmCalls) } });
+  const agent = makeSummarizableAgent();
+  let originalCalls = 0;
+  const synthesizeInputs = [];
+  env.engine.summarize = async (input) => {
+    originalCalls += 1;
+    synthesizeInputs.push(input);
+    return makeSummaryResult();
+  };
+  env.engine.config = { maxTokens: 1024 };
+  env.driver.ensureSummarizer(agent);
+
+  const result = await env.engine.summarize(
+    {
+      messages: [
+        { role: 'system', content: [{ type: 'text', text: 'S'.repeat(40) }] },
+        ...Array.from({ length: 5 }, (_, index) => ({
+          role: 'user',
+          content: [{ type: 'text', text: `m${index}-` + 'x'.repeat(30_000) }]
+        }))
+      ]
+    },
+    agent
+  );
+
+  assert.ok(llmCalls.length >= 2, `expected several segment calls, got ${llmCalls.length}`);
+  // 段请求不带工具、带 purpose=compaction。
+  assert.equal(llmCalls[0].purpose, 'compaction');
+  assert.equal('tools' in llmCalls[0], false);
+  assert.match(llmCalls[0].messages[0].content[0].text, /condensing one segment/);
+  // 只做一次总摘要，且输入是「system + 段摘要」，不再带原始正文。
+  assert.equal(originalCalls, 1);
+  assert.equal(synthesizeInputs[0].messages[0].role, 'system');
+  assert.match(synthesizeInputs[0].messages[1].content[0].text, /consolidated summaries/);
+  // 结果不再声称只由一次 llm.stream 产生。
+  assert.equal('llmStreamCall' in result, false);
+  assert.equal(env.driver.diag().chunkedFallbacks, 1);
+});
+
+test('driver：官方单次摘要自己抛超限时回退到分块', async () => {
+  const llmCalls = [];
+  const env = makeDriverEnvironment({ auto: false, services: { llm: makeStreamingLlm(llmCalls) } });
+  const agent = makeSummarizableAgent();
+  let originalCalls = 0;
+  env.engine.summarize = async () => {
+    originalCalls += 1;
+    if (originalCalls === 1) {
+      const error = new Error("400 ... this model's maximum context length is 1048576 tokens, but the prompt contains 1049641 input tokens");
+      error.code = 'CONTEXT_WINDOW_EXCEEDED';
+      throw error;
+    }
+    return makeSummaryResult();
+  };
+  env.engine.config = { maxTokens: 1024 };
+  env.driver.ensureSummarizer(agent);
+
+  // 估算在预算内（小输入），但官方单次仍然超限 → 必须分块兜底。
+  const result = await env.engine.summarize(
+    { messages: [{ role: 'user', content: [{ type: 'text', text: 'y'.repeat(400) }] }] },
+    agent
+  );
+
+  assert.equal(originalCalls, 2, 'first attempt + final synthesis');
+  assert.ok(llmCalls.length >= 1);
+  assert.equal('llmStreamCall' in result, false);
+  assert.equal(env.driver.diag().chunkedFallbacks, 1);
+});
+
+test('driver：非超限错误不会被分块掩盖（原样抛给引擎）', async () => {
+  const llmCalls = [];
+  const env = makeDriverEnvironment({ auto: false, services: { llm: makeStreamingLlm(llmCalls) } });
+  const agent = makeSummarizableAgent();
+  env.engine.summarize = async () => {
+    const error = new Error('401 Unauthorized');
+    error.code = 'AUTH';
+    throw error;
+  };
+  env.engine.config = { maxTokens: 1024 };
+  env.driver.ensureSummarizer(agent);
+
+  await assert.rejects(
+    () => env.engine.summarize({ messages: [{ role: 'user', content: [{ type: 'text', text: 'z'.repeat(400) }] }] }, agent),
+    /401 Unauthorized/
+  );
+  assert.equal(llmCalls.length, 0);
+  assert.equal(env.driver.diag().chunkedFallbacks, 0);
+});
+
+// ---------------------------------------------------------------------------
+// 压力测量的安全网：估算 vs 提供方实测取大（真实事故的停摆根因）
+// ---------------------------------------------------------------------------
+
+test('driver：provider 实测压力高于估算时按实测决策（估算法失效不再导致停摆）', () => {
+  // 真实事故：turn 426 起 provider usage 已 839,046（> 838,860 阈值），
+  // 但 tokenMeter 的 usage 锚点失效后退回 chars/4 启发式，估算明显更低 → 一直不压。
+  const env = makeDriverEnvironment({ auto: true, totalTokens: 500_000, providerPressure: 900_000 });
+  const agent = makeAgent();
+  const decision = env.driver.decide(agent);
+  assert.equal(decision.tier, TIER.COMPACT);
+  assert.equal(decision.pressedBy, 'provider');
+  assert.equal(decision.measuredTokens, 500_000);
+  assert.equal(decision.providerPressureTokens, 900_000);
+});
+
+test('driver：估算更高时仍以估算为准（不会被较小的 provider 值拉低）', () => {
+  const env = makeDriverEnvironment({ auto: true, totalTokens: 650_000, providerPressure: 600_000 });
+  const agent = makeAgent();
+  const decision = env.driver.decide(agent);
+  assert.equal(decision.tier, TIER.PRUNE);
+  assert.equal(decision.pressedBy, 'estimate');
+  assert.equal(decision.providerPressureTokens, 600_000);
+});
+
+test('driver：没有 contextPressure 投影时退化为纯估算（旧行为不变）', () => {
+  const env = makeDriverEnvironment({
+    auto: true,
+    totalTokens: 900_000,
+    providerPressureEnabled: false
+  });
+  const agent = makeAgent();
+  const decision = env.driver.decide(agent);
+  assert.equal(decision.tier, TIER.COMPACT);
+  assert.equal(decision.pressedBy, 'estimate');
+  assert.equal(decision.providerPressureTokens, null);
+});
+
+test('driver：决策的诊断字段进入 statusFor（事后可查「为什么没压」）', async () => {
+  const env = makeDriverEnvironment({ auto: true, totalTokens: 500_000, providerPressure: 900_000 });
+  const agent = makeAgent();
+  await env.driver.onPreStep({ agent, signal: { aborted: false } }, async () => undefined);
+  const status = env.driver.statusFor(agent);
+  assert.equal(status.lastDecision.pressedBy, 'provider');
+  assert.equal(status.lastDecision.providerPressureTokens, 900_000);
+  assert.equal(status.lastDecision.baselineKind, 'usage');
 });

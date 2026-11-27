@@ -738,7 +738,7 @@ test('渲染：busy 显示「…」且禁用；失败 Toast 用 sequence 当 key
   assert.deepEqual(rendered.dismissed, [7]);
 });
 
-test('尺寸：chip 与 hero 高度固定 24px，宽度随内容自适应（不再有固定宽度槽位）', async (t) => {
+test('尺寸：chip 与 hero 固定 103 × 24（宽度按最长文案定，不随状态变化）', async (t) => {
   const env = await setup();
   t.after(env.restore);
   const states = [
@@ -749,16 +749,16 @@ test('尺寸：chip 与 hero 高度固定 24px，宽度随内容自适应（不�
   ];
   for (const [name, snapshot, view] of states) {
     const chip = renderChip(env.module, env.t, snapshot);
-    assert.equal(chip.button.props.style.width, undefined, `chip ${name} 不设固定宽度（随内容收缩）`);
+    assert.equal(chip.button.props.style.width, '103px', `chip ${name} 宽固定`);
     assert.equal(chip.button.props.style.height, '24px', `chip ${name} 高固定`);
     assert.equal(chip.button.props['data-offpeak-state'], view);
     const hero = renderHeroToggle(env.module, env.t, { view });
-    assert.equal(hero.button.props.style.width, undefined, `hero ${name} 不设固定宽度`);
+    assert.equal(hero.button.props.style.width, '103px', `hero ${name} 宽固定`);
     assert.equal(hero.button.props.style.height, '24px', `hero ${name} 高固定`);
   }
 });
 
-test('三段紧凑：gap 2px + 倒计时内容宽（不占固定槽位，消灭中间/右侧空白）', async (t) => {
+test('固定又紧凑：gap 2px + 倒计时槽 44px 且居中（短文案左右各差约 3px）', async (t) => {
   const env = await setup();
   t.after(env.restore);
   const chip = renderChip(env.module, env.t, snapshotOf({ status: statusOf({ enabled: true, paused: true }), countdownMs: COUNTDOWN_MS }));
@@ -769,11 +769,10 @@ test('三段紧凑：gap 2px + 倒计时内容宽（不占固定槽位，消灭�
   const children = chip.button.props.children;
   assert.equal(children.length, 3, '图标 / 相位 / 倒计时');
   assert.equal(children[1].props.style.width, '24px', '相位固定 24px');
-  assert.equal(children[2].props.style.flex, '0 0 auto', '倒计时按内容宽，不撑满');
-  assert.equal(children[2].props.style.overflow, undefined, '不再需要省略号裁剪');
-  // 峰值最长文案 `14h48m` 也只是一段内容宽，不会再被固定槽位的余量隔开。
-  const longText = chipTextOf(chip.button);
-  assert.ok(longText.includes('3h05m'));
+  assert.equal(children[2].props.style.flex, '1 1 auto', '倒计时占固定槽');
+  assert.equal(children[2].props.style.textAlign, 'center', '槽内居中：余量左右均分，不在一侧留空档');
+  // 103（总宽）- 16（padding）- 15（图标）- 2 - 24（相位）- 2 = 44px 槽；最长文案 43px。
+  assert.equal(103 - 16 - 15 - 2 - 24 - 2, 44);
 });
 
 test('新建页开关：失败时与 chip 一样弹 Toast（不再静默）', async (t) => {
@@ -824,7 +823,7 @@ test('三段布局：图标 + 固定宽相位 + 倒计时，相位位置不随�
     assert.equal(children[1].props.style.width, '24px');
     assert.equal(children[1].props.style.flex, 'none');
     assert.equal(children[1].props.children, expectedPhase, '相位段位置固定、只换文字');
-    assert.equal(children[2].props.style.flex, '0 0 auto');
+    assert.equal(children[2].props.style.flex, '1 1 auto');
   }
 
   // hero 同结构。

@@ -422,13 +422,16 @@ window.__ModuleLoader__.load({
     const LIANGGU_NEW_SLOT_ORDER = 0;
 
     /**
-     * 两处谷峰开关的尺寸与排布（用户 2026-11-27：三段之间不能有大间隔）。
+     * 两处谷峰开关的尺寸与排布（用户 2026-11-27：既固定又紧凑）。
      *
-     * **宽度随内容自适应**：`图标 15 + gap 2 + 相位 24 + gap 2 + 倒计时（内容宽）+ padding 16`。
-     * 之前固定 106px 时，倒计时槽 47px 里只放 ~37px 文字，多出的 ~10px 无论左对齐（堆右侧）
-     * 还是右对齐（堆在「高峰」与倒计时之间）都会显空——固定宽度下余量必然存在，所以改成
-     * 内容宽：三段紧贴（间距 2px），右侧也只需内边距。高度仍固定 24px。
+     * **固定 103px** = padding 16 + 图标 15 + gap 2 + 相位 24 + gap 2 + 倒计时槽 44：
+     * 槽宽按**最长文案**定（`14h48m` / `59m59s` 实测 43px，留 1px 余量）；更短的倒计时
+     * （`1h23m` ≈ 37px）在槽内**居中**，左右各只差约 3px —— 既不像左对齐那样把 6px 全堆
+     * 在右侧，也不像右对齐那样堆在相位与倒计时之间，肉眼几乎看不出空档。
+     *
+     * 高度固定 24px；相位区固定 24px，所以图标/相位位置也不随状态变化。
      */
+    const OFFPEAK_PILL_WIDTH = '103px';
     const OFFPEAK_PILL_HEIGHT = '24px';
     const OFFPEAK_NAME_WIDTH = '24px';
     /** 段间间距：2px（比官方的 4px 紧）。 */
@@ -2171,6 +2174,7 @@ window.__ModuleLoader__.load({
         style: {
           ...offpeakPillPalette(phase, enabled),
           flex: 'none',
+          width: OFFPEAK_PILL_WIDTH,
           height: OFFPEAK_PILL_HEIGHT,
           maxWidth: 'none',
           boxSizing: 'border-box',
@@ -2191,10 +2195,12 @@ window.__ModuleLoader__.load({
             },
             children: offpeakPhaseLabel(phase, t)
           }),
-          // 倒计时段：**内容宽**，紧跟相位（间距只有 gap 2px），不占固定槽位。
+          // 倒计时段：固定槽内居中（44px 槽按最长文案定，短文案左右各差约 3px，看不出空档）。
           jsx('span', {
             style: {
-              flex: '0 0 auto',
+              flex: '1 1 auto',
+              minWidth: 0,
+              textAlign: 'center',
               fontVariantNumeric: 'tabular-nums',
               whiteSpace: 'nowrap'
             },
@@ -2312,6 +2318,7 @@ window.__ModuleLoader__.load({
         style: {
           ...palette,
           flex: 'none',
+          width: OFFPEAK_PILL_WIDTH,
           height: OFFPEAK_PILL_HEIGHT,
           maxWidth: 'none',
           boxSizing: 'border-box',
@@ -2332,10 +2339,12 @@ window.__ModuleLoader__.load({
             },
             children: offpeakPhaseLabel(phase, t)
           }),
-          // 倒计时段内容宽（同 chip）：紧跟相位，三段间距只有 2px。
+          // 倒计时段固定槽内居中（同 chip）。
           jsx('span', {
             style: {
-              flex: '0 0 auto',
+              flex: '1 1 auto',
+              minWidth: 0,
+              textAlign: 'center',
               fontVariantNumeric: 'tabular-nums',
               whiteSpace: 'nowrap'
             },

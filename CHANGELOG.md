@@ -3,6 +3,23 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 6.7.8 — 2026-11-27
+
+### 侧边提问正文多注册两个别名 key + 暴露诊断出口
+
+用户截图反馈：右侧栏「侧边提问」标签打开了，但正文显示「这类内容还没有可用的查看方式」
+（右侧栏 owner 的 `tab.unavailable` 兜底 ⇒ 派发 key 没有命中任何正文注册）。
+
+- 正文改为注册 **4 个 key**：`dsh-session-enhance/side-ask`（definition.id，正常路径）、
+  `sideask`（tab.kind 兜底）、以及 `side-ask` / `dsh-session-enhance/sideask` 两个别名；
+- 新增诊断出口 `globalThis.__dshSideAskDebug = { tabId, kind, bodyModes, failure }`，
+  桌面端 F12 Console 里可直接读，判断是「注册失败」还是「派发 key 不匹配」。
+
+**验证**：单测 **321/321**；沙箱（web，加载当前 client.js）实测
+`bodyModes: ["session","plain","plain","plain"]`、`failure: null` —— 四个 key 全部注册成功。
+桌面端若仍显示兜底，请读 `__dshSideAskDebug`：`failure` 非空 = 注册报错（贴给我），
+`bodyModes` 全部有值却仍兜底 = 派发 key 是别的字符串（也请贴给我，我按它补注册）。
+
 ## 6.7.7 — 2026-11-27
 
 ### 固定 103px + 倒计时居中：既固定尺寸，又没有可见空档

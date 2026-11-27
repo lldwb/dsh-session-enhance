@@ -3,6 +3,36 @@
 本插件的改动都记在这里；版本号遵循 `.` 分段语义（大版本 = 结构性/破坏性，中版本 = 新能力，
 小版本 = 修复与文档）。
 
+## 6.8.0 — 2026-11-27
+
+### 「中断重试」扩到应用中断：关应用 / 重启电脑 / 关机后的未完成轮次也能继续
+
+用户要求：适用范围从「只有用户点停止」扩展到也覆盖应用被关闭、电脑重启/关机；提示词改成
+「应用被关闭」这类说法，而不是「被用户中断」。
+
+- **识别三种中断形态**：
+  1. 用户点停止：`aborted + reason.kind === 'user'`（保持）；
+  2. 应用优雅退出：`aborted + reason.kind === 'disposed'`（新增）；
+  3. 应用被强制结束：DSH 下次启动重放日志时补写 `turn/end { reason: { kind: 'interrupted' } }`
+     （新增，实测确认；本机杀进程复现）；
+- **启动扫描兜底**（新增 `scanUnfinishedTurns()` + `pendingTurnOf()`）：Host 启动后读最近
+  72 小时内更新过的会话（最多 60 份日志），找出「最后一轮没有 `turn/end`」或「以 interrupted
+  结束」的回合，补一条 `cause: 'app'` 的可重试记录；单份日志读失败跳过，不影响其它会话；
+- **提示词**：`RETRY_CONTINUE_TEXT` 改为「上一轮因应用被关闭或中断而没有完成。请从中断处继续完成，
+  不要复述已完成的部分。」；按钮 tooltip 改为「上一轮没有正常结束（被停止，或应用被关闭）—— 点击继续」；
+- 记录快照新增 `cause`（`user` / `app`），便于后续区分展示。
+
+**验证**：
+
+- 单测 **326/326**（新增：disposed / interrupted 判定、`pendingTurnOf` 的未闭合与 interrupted 两种
+  形态、启动扫描的时间窗/条数上限/坏日志跳过/已有记录不覆盖；`RETRY_CONTINUE_TEXT` 断言包含
+  「应用被关闭」）；
+- **真实 e2e**（web 沙箱）：新建会话 → 让模型跑 `Start-Sleep 180` → 任务运行中 `taskkill /T /F`
+  杀掉宿主进程（模拟应用被关闭）→ 重启沙箱：日志里出现 `turn/end { reason: { kind: 'interrupted' } }`，
+  `diag.storeSize = 1`（启动扫描补记成功），打开该会话后 composer 右侧出现「重试」按钮
+  （`data-interrupted-retry="ready"`，tooltip = 新文案）；截图确认；
+- `node --check`、locale / 工具名门禁 ✓。
+
 ## 6.7.8 — 2026-11-27
 
 ### 侧边提问正文多注册两个别名 key + 暴露诊断出口
